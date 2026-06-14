@@ -50,6 +50,28 @@ describe("computeScoreboard — fautes / extra / missed", () => {
     expect(s.accuracy).toBe(50);
   });
 
+  it("curseur libre : corriger un mot antérieur retire sa pénalité du WPM net, pas de l'ACC", () => {
+    // "ab cd" : on tape "xb" (1 faute), espace, puis on revient corriger en "ab", espace, "cd".
+    const s = computeScoreboard(
+      base({
+        targetText: "ab cd",
+        keystrokes: log(
+          [100, "x"], [200, "b"], [300, " "],
+          [400, "", "backspace"], // buffer vide → rouvre "xb"
+          [500, "", "backspace"], // "xb" → "x"
+          [600, "", "backspace"], // "x" → ""
+          [700, "a"], [800, "b"], [900, " "],
+          [1000, "c"], [1100, "d"],
+        ),
+        endedAtMs: 1100,
+      }),
+    );
+    // État final "ab cd" parfait → aucun extra/missed ; la frappe "x" reste comptée en incorrect.
+    expect(s.characters).toEqual({ correct: 7, incorrect: 1, extra: 0, missed: 0 });
+    expect(s.accuracy).toBe(87.5); // 7 / 8 frappes (la faute corrigée pèse encore)
+    expect(s.wpm).toBe(54.5); // 5 chars corrects à l'état final (la faute ne pèse plus)
+  });
+
   it("Missed : espace anticipé sur 'cat dog'", () => {
     const s = computeScoreboard(
       base({

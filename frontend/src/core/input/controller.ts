@@ -18,7 +18,7 @@ export interface InputView {
   wordIndex: number;
   /** Ce que le joueur a tapé pour le mot courant (peut dépasser la longueur cible → Extra). */
   typed: string;
-  /** Mots déjà verrouillés (par espace). Figés : backspace ne peut plus y revenir (curseur borné). */
+  /** Mots déjà verrouillés (par espace). Curseur libre : le backspace peut rouvrir le dernier (pile). */
   lockedWords: string[];
 }
 

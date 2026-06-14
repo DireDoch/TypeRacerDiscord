@@ -3,7 +3,7 @@
 //
 //  Machine d'état : idle → countdown(3s) → running → finished.
 //  Câble le core/ pur : generateText (texte seedé), RunClock (t=0 monotone),
-//  FreeInput (curseur borné au mot, log brut). À la fin : api.submitRun → résultats.
+//  FreeInput (curseur libre, log brut). À la fin : api.submitRun → résultats.
 //
 //  t=0 = fin du décompte (PAS la 1re frappe). Le temps de réaction est compté, comme
 //  figé dans CONTEXT.md. Seul countdown→running appelle clock.start().

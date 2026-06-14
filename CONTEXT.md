@@ -104,11 +104,15 @@ caractère cible (terminer plus vite ⇒ meilleur WPM). Zen / Time infini = inst
 `Shift+Enter`, transmis par le client via `endedAtMs` dans `POST /api/runs`.
 
 **Modèle de curseur (saisie libre).**
-Borné au mot courant : l'espace verrouille le mot et avance ; un mot verrouillé est
-figé (le backspace n'y revient pas). Extra (frappes au-delà de la longueur) plafonnées
-au buffer (~longueur du mot) ; au-delà, la frappe est journalisée et compte comme
-incorrecte mais n'entre pas dans le buffer. À l'espace : chars cibles restants = Missed,
-chars en trop = Extra.
+Curseur **libre** : le backspace peut revenir dans les mots précédents, **qu'ils contiennent
+une erreur ou non**. L'espace verrouille le mot et avance ; le backspace en début de buffer
+**rouvre le dernier mot verrouillé** (son contenu redevient éditable) ; Ctrl+Backspace en début
+de buffer **supprime le mot précédent entier**. Le retour se fait mot par mot, de la droite
+vers la gauche (modèle de pile). Extra (frappes au-delà de la longueur) plafonnées au buffer
+(~longueur du mot) ; au-delà, la frappe est journalisée et compte comme incorrecte mais n'entre
+pas dans le buffer. **Extra/Missed sont évalués à l'ÉTAT FINAL** sur tous les mots atteints :
+un mot rouvert puis corrigé voit son décompte recalculé (sa pénalité disparaît du WPM net), mais
+la **frappe fautive reste comptée dans l'ACC** (par frappe, historique).
 
 **Règles de comptage.**
 WPM (net) = caractères corrects à l'**état final** ÷ 5 ÷ minutes (espaces séparateurs
@@ -119,8 +123,9 @@ Breakdown : Correct/Incorrect par frappe ; Extra/Missed à l'état final.
 
 **Série par seconde.**
 Un point par seconde entière + un point final à la durée exacte. WPM/Raw = cumulatifs
-depuis t=0, exactitude évaluée à l'instant N (quasi-monotone grâce au curseur borné, le
-dernier point ≈ WPM headline). Errors = locales à la fenêtre `[N-1, N)`. Burst = max des
+depuis t=0, exactitude évaluée à l'instant N. Le curseur **libre** autorise le retour en
+arrière : la courbe WPM peut donc localement **re-baisser** quand on corrige un mot antérieur
+(le dernier point ≈ WPM headline). Errors = locales à la fenêtre `[N-1, N)`. Burst = max des
 WPM des mots **complétés** dans la seconde (chrono depuis la 1re frappe du mot,
 hésitation inter-mot exclue) ; report de la valeur précédente si aucun mot complété.
 

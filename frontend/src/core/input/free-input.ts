@@ -1,9 +1,12 @@
 // =============================================================================
 //  free-input.ts — FreeInput : saisie libre Monkeytype (Practice, MVP).
 //
-//  Modèle de CURSEUR BORNÉ AU MOT (décision (a)) :
-//   - l'espace verrouille le mot courant et avance ; un mot verrouillé est FIGÉ ;
-//   - le backspace ne peut PAS revenir sur un mot verrouillé ;
+//  Modèle de CURSEUR LIBRE (modèle de pile, décision CONTEXT.md) :
+//   - l'espace verrouille le mot courant et avance ;
+//   - le backspace en début de buffer ROUVRE le dernier mot verrouillé (son contenu
+//     redevient éditable), qu'il contienne une erreur ou non ; Ctrl+Backspace en début
+//     de buffer SUPPRIME le mot précédent entier ;
+//   - le retour se fait mot par mot, de la droite vers la gauche (pile `locked`) ;
 //   - les frappes au-delà de (longueur cible + plafond) sont JOURNÉES (pour que le
 //     recompute Rust les compte comme Extra/incorrect) mais NON ajoutées au buffer.
 //
@@ -41,16 +44,31 @@ export class FreeInput implements InputController {
   handleKey(key: string, ctrl: boolean, now: number): Keystroke | null {
     // --- Backspace mot (Ctrl+Backspace) -----------------------------------
     if (key === "Backspace" && ctrl) {
-      if (this.typed.length === 0) return null; // borné : ne franchit pas le mot verrouillé
-      this.typed = "";
-      return { t: now, k: "", ctrl: "backspace-word" };
+      if (this.typed.length > 0) {
+        this.typed = "";
+        return { t: now, k: "", ctrl: "backspace-word" };
+      }
+      if (this.locked.length > 0) {
+        // Curseur libre : supprime le mot précédent entier.
+        this.locked.pop();
+        this.typed = "";
+        return { t: now, k: "", ctrl: "backspace-word" };
+      }
+      return null; // début du tout premier mot : rien à effacer
     }
 
     // --- Backspace simple --------------------------------------------------
     if (key === "Backspace") {
-      if (this.typed.length === 0) return null; // borné
-      this.typed = this.typed.slice(0, -1);
-      return { t: now, k: "", ctrl: "backspace" };
+      if (this.typed.length > 0) {
+        this.typed = this.typed.slice(0, -1);
+        return { t: now, k: "", ctrl: "backspace" };
+      }
+      if (this.locked.length > 0) {
+        // Curseur libre : rouvre le dernier mot verrouillé (contenu réédité).
+        this.typed = this.locked.pop()!;
+        return { t: now, k: "", ctrl: "backspace" };
+      }
+      return null; // début du tout premier mot : rien à effacer
     }
 
     // --- Espace : verrouille le mot et avance ------------------------------

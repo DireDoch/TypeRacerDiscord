@@ -1,7 +1,7 @@
 // =============================================================================
 //  stats/scoreboard.ts — calcul du Scoreboard (RÉFÉRENCE de l'algorithme).
 //
-//  Rejoue le keystroke log avec le modèle de curseur borné au mot et produit le
+//  Rejoue le keystroke log avec le modèle de curseur LIBRE (pile) et produit le
 //  Scoreboard complet. C'est la version TS de référence ; `backend/src/domain/
 //  {replay,stats}.rs` doit la reproduire bit pour bit (les chiffres autoritaires).
 //
@@ -101,23 +101,23 @@ interface ReplayResult {
 
 function replayTarget(targetText: string, keys: Keystroke[]): ReplayResult {
   const target = targetText.length ? targetText.split(" ") : [];
-  let wordIndex = 0;
+  // Curseur libre : `locked` est une PILE des mots verrouillés (le backspace peut en
+  // rouvrir le sommet). `wordIndex` = locked.length. Mêmes règles que FreeInput.
+  const locked: string[] = [];
   let typed = "";
   let wordStartT: number | null = null; // 1re frappe du mot courant (chrono Burst)
 
-  let frozenCorrect = 0; // chars corrects des mots verrouillés (+ espaces)
+  let frozenCorrect = 0; // chars corrects des mots verrouillés (+ espaces séparateurs) — réversible
   let rawChars = 0;
   let correctKeys = 0;
   let incorrectKeys = 0;
-  let extra = 0;
-  let missed = 0;
 
   const snapshots: Snapshot[] = [];
   const errorEvents: number[] = [];
   const completions: Completion[] = [];
 
   const snap = (t: number) =>
-    snapshots.push({ t, correctChars: frozenCorrect + wordCorrect(typed, target[wordIndex] ?? ""), rawChars });
+    snapshots.push({ t, correctChars: frozenCorrect + wordCorrect(typed, target[locked.length] ?? ""), rawChars });
 
   const completeWord = (t: number, len: number) => {
     if (wordStartT !== null && t > wordStartT) {
@@ -126,29 +126,46 @@ function replayTarget(targetText: string, keys: Keystroke[]): ReplayResult {
   };
 
   for (const k of keys) {
-    const tgt = target[wordIndex] ?? "";
+    const tgt = target[locked.length] ?? "";
 
     if (k.ctrl === "backspace-word") {
-      typed = "";
+      if (typed.length > 0) {
+        typed = "";
+      } else if (locked.length > 0) {
+        // Supprime le mot précédent entier : on retire sa contribution figée.
+        const w = locked.pop()!;
+        frozenCorrect -= wordCorrect(w, target[locked.length] ?? "") + 1;
+        typed = "";
+      }
       wordStartT = null;
       snap(k.t);
       continue;
     }
     if (k.ctrl === "backspace") {
-      typed = typed.slice(0, -1);
-      if (typed.length === 0) wordStartT = null;
+      if (typed.length > 0) {
+        typed = typed.slice(0, -1);
+        if (typed.length === 0) wordStartT = null;
+      } else if (locked.length > 0) {
+        // Rouvre le mot précédent : on annule sa contribution figée et il redevient le buffer.
+        const w = locked.pop()!;
+        frozenCorrect -= wordCorrect(w, target[locked.length] ?? "") + 1;
+        typed = w;
+        wordStartT = null;
+      }
       snap(k.t);
       continue;
     }
     if (k.k === " ") {
+      if (typed.length === 0) {
+        snap(k.t); // espace en tête (ne devrait pas être loggé) : ignoré
+        continue;
+      }
       // Verrouille le mot courant.
-      extra += Math.max(0, typed.length - tgt.length);
-      missed += Math.max(0, tgt.length - typed.length);
       frozenCorrect += wordCorrect(typed, tgt) + 1; // +1 = l'espace séparateur (correct)
       correctKeys++; // l'espace compte comme frappe correcte
       rawChars++;
       completeWord(k.t, tgt.length);
-      wordIndex++;
+      locked.push(typed);
       typed = "";
       wordStartT = null;
       snap(k.t);
@@ -169,8 +186,17 @@ function replayTarget(targetText: string, keys: Keystroke[]): ReplayResult {
     }
   }
 
-  // Mot final (non verrouillé) : exactitude figée à l'état final.
-  const lastTgt = target[wordIndex] ?? "";
+  // État final : Extra/Missed recalculés sur TOUS les mots atteints (verrouillés + courant).
+  // Un mot rouvert puis corrigé voit donc son décompte mis à jour (curseur libre).
+  let extra = 0;
+  let missed = 0;
+  for (let i = 0; i < locked.length; i++) {
+    const t = target[i] ?? "";
+    extra += Math.max(0, locked[i].length - t.length);
+    missed += Math.max(0, t.length - locked[i].length);
+  }
+  // Mot final (non verrouillé) : exactitude figée à l'état final (Missed non compté, comme avant).
+  const lastTgt = target[locked.length] ?? "";
   const finalWordCorrect = wordCorrect(typed, lastTgt);
   const correctChars = frozenCorrect + finalWordCorrect;
   extra += Math.max(0, typed.length - lastTgt.length);

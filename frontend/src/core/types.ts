@@ -10,7 +10,7 @@
 //   - WPM  = chars corrects à l'ÉTAT FINAL ÷ 5 ÷ minutes (style Monkeytype).
 //   - ACC  = frappes correctes ÷ total frappes, PAR FRAPPE. Backspace neutre.
 //            Extra (au-delà du mot) = frappe incorrecte.
-//   - Curseur borné au mot courant (backspace ne franchit pas un espace validé).
+//   - Curseur libre : le backspace peut rouvrir les mots précédents (pile), avec ou sans erreur.
 //   - Génération de texte SEEDÉE et déterministe.
 // =============================================================================
 

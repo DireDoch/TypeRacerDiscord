@@ -14,7 +14,7 @@ function play(fi: FreeInput, s: string): Keystroke[] {
   return log;
 }
 
-describe("FreeInput — curseur borné au mot", () => {
+describe("FreeInput — curseur libre", () => {
   it("verrouille les mots à l'espace", () => {
     const fi = new FreeInput(["the", "cat"]);
     play(fi, "the cat");
@@ -23,11 +23,31 @@ describe("FreeInput — curseur borné au mot", () => {
     expect(fi.isComplete()).toBe(true);
   });
 
-  it("le backspace ne franchit pas un mot verrouillé", () => {
+  it("le backspace rouvre le mot précédent (avec ou sans erreur)", () => {
     const fi = new FreeInput(["the", "cat"]);
-    play(fi, "the c<<<<<"); // 5 backspaces : ne doit effacer que "c"
-    expect(fi.view().lockedWords).toEqual(["the"]);
+    play(fi, "the c"); // verrouille "the", buffer "c"
+    play(fi, "<"); // efface "c" → buffer vide
+    play(fi, "<"); // rouvre "the" : il redevient éditable
+    expect(fi.view().lockedWords).toEqual([]);
+    expect(fi.view().typed).toBe("the");
+    play(fi, "<"); // on peut maintenant éditer ce mot pourtant correct
+    expect(fi.view().typed).toBe("th");
+  });
+
+  it("le backspace au tout début ne fait rien", () => {
+    const fi = new FreeInput(["the"]);
+    const log = play(fi, "<"); // rien à effacer
+    expect(log).toHaveLength(0);
     expect(fi.view().typed).toBe("");
+  });
+
+  it("Ctrl+Backspace en début de buffer supprime le mot précédent entier", () => {
+    const fi = new FreeInput(["the", "cat"]);
+    play(fi, "the "); // verrouille "the", buffer vide
+    const k = fi.handleKey("Backspace", true, 500);
+    expect(k).toEqual({ t: 500, k: "", ctrl: "backspace-word" });
+    expect(fi.view().lockedWords).toEqual([]);
+    expect(fi.view().typed).toBe(""); // mot précédent supprimé, pas rouvert
   });
 
   it("ignore l'espace en tête / double espace", () => {
