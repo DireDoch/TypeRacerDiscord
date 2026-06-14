@@ -1,0 +1,125 @@
+// =============================================================================
+//  domain/types.rs — types de domaine partagés.
+//
+//  MIROIR Rust de `frontend/src/core/types.ts` (pas de générateur ; on tient la
+//  parité à la main, comme figé dans CONTEXT.md). Les noms de champs JSON sont en
+//  camelCase pour matcher le contrat de Docs/API.md et le client TS.
+//
+//  Règles de calcul : voir domain/replay.rs (port de stats/scoreboard.ts).
+// =============================================================================
+
+use serde::{Deserialize, Serialize};
+
+// ----------------------------------------------------------------------------
+//  Mode / Setting / Config bucket
+// ----------------------------------------------------------------------------
+
+/// Le Mode décide quel texte est présenté et quand le Run se termine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    Time,
+    Words,
+    Quotes,
+    Zen,
+}
+
+/// Configuration d'un Run = le Config bucket (ce qui rend deux Runs comparables).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunConfig {
+    pub mode: Mode,
+    /// time : secondes (0 = infini) · words : nb mots · quotes/zen : 0.
+    pub mode_value: i64,
+    pub language: String,
+    pub punctuation: bool,
+    pub numbers: bool,
+}
+
+// ----------------------------------------------------------------------------
+//  Keystroke log (matière première du recompute autoritaire)
+// ----------------------------------------------------------------------------
+
+/// Touche de contrôle modifiant le buffer. Pas de navigation curseur en MVP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ControlKey {
+    Backspace,
+    BackspaceWord,
+}
+
+/// Un événement clavier brut : { t, k } pour un caractère, { t, k:"", ctrl } pour un contrôle.
+/// `t` = ms depuis t=0 (fin du décompte).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Keystroke {
+    pub t: f64,
+    /// Caractère imprimable (espace inclus). Vide "" pour une touche de contrôle.
+    pub k: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ctrl: Option<ControlKey>,
+}
+
+// ----------------------------------------------------------------------------
+//  Scoreboard autoritaire (produit par le recompute)
+// ----------------------------------------------------------------------------
+
+/// Décompte final des caractères. correct/incorrect par frappe ; extra/missed à l'état final.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CharacterBreakdown {
+    pub correct: i64,
+    pub incorrect: i64,
+    pub extra: i64,
+    pub missed: i64,
+}
+
+/// Un point de la série par seconde (colonne `per_second` de la DB).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PerSecondPoint {
+    pub t: f64,
+    pub wpm: f64,
+    pub raw: f64,
+    pub errors: i64,
+    pub burst: f64,
+}
+
+/// Les chiffres de record, produits exclusivement par le recompute.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Scoreboard {
+    pub wpm: f64,
+    pub raw: f64,
+    pub accuracy: f64,
+    pub characters: CharacterBreakdown,
+    pub duration_ms: f64,
+    pub per_second: Vec<PerSecondPoint>,
+    pub pb_eligible: bool,
+}
+
+// ----------------------------------------------------------------------------
+//  DTOs HTTP (contrat complet : Docs/API.md)
+// ----------------------------------------------------------------------------
+
+/// POST /api/runs — corps de requête. Identité via header Authorization (pas dans le corps).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmitRunRequest {
+    pub config: RunConfig,
+    pub seed: i64,
+    /// Texte cible complet (mots joints par espaces). "" pour Zen.
+    pub target_text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quote_id: Option<String>,
+    pub keystrokes: Vec<Keystroke>,
+    /// Instant de fin en ms depuis t=0 (Shift+Enter pour Zen / Time infini).
+    pub ended_at_ms: f64,
+}
+
+/// POST /api/runs — réponse (scoreboard autoritaire + verdict PB).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmitRunResponse {
+    pub run_id: String,
+    pub scoreboard: Scoreboard,
+    pub is_personal_best: bool,
+    pub previous_pb_wpm: Option<f64>,
+}
