@@ -1,0 +1,26 @@
+# Secrets — JAMAIS commiter
+.env
+.env.*
+!.env.example
+
+# Node / Vite (frontend)
+node_modules/
+dist/
+.vite/
+*.local
+
+# Rust (backend)
+target/
+**/*.rs.bk
+
+# SQLite
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+
+# OS / éditeurs
+.DS_Store
+.idea/
+.vscode/
+*.swp
