@@ -81,6 +81,67 @@ _Avoid_: Peak WPM, Spike.
 **Character breakdown**:
 The final tally `Correct / Incorrect / Extra / Missed`. Correct/Incorrect are counted per-keystroke (a fixed mistake still counts); Extra (typed past a word's length) and Missed (skipped target characters) are evaluated at the end.
 
+## Décisions d'implémentation (session grilling)
+
+Décisions prises au-delà du brief initial, qui font désormais autorité pour le code.
+Détails de contrat dans `Docs/API.md`, frontière multijoueur dans `Docs/PHASE2.md`.
+
+**Keystroke log (format).**
+Option « événements bruts » : liste ordonnée de `{ t, k, ctrl? }`. `t` = ms depuis t=0.
+`k` = caractère imprimable (espace inclus) ; `ctrl` = `"backspace"` ou `"backspace-word"`
+(k vaut alors `""`). Touches capturées : imprimables + Backspace + Ctrl+Backspace
+uniquement (pas de navigation au curseur). Voir `frontend/src/core/types.ts`.
+
+**Origine du temps (t=0).**
+t=0 = fin du compte à rebours de 3 s (PAS la 1re frappe). Horloge **monotone**
+(`performance.now()`, jamais `Date.now()`). Le temps de réaction est compté. En solo
+t=0 est un événement local ; en Phase 2 ce sera le `RaceStart` serveur — seul
+`RunClock.start()` (`core/clock.ts`) bascule.
+
+**Borne de fin / durée.**
+Time fini = `modeValue` (durée fixe). Words/Quotes = instant de complétion du dernier
+caractère cible (terminer plus vite ⇒ meilleur WPM). Zen / Time infini = instant du
+`Shift+Enter`, transmis par le client via `endedAtMs` dans `POST /api/runs`.
+
+**Modèle de curseur (saisie libre).**
+Borné au mot courant : l'espace verrouille le mot et avance ; un mot verrouillé est
+figé (le backspace n'y revient pas). Extra (frappes au-delà de la longueur) plafonnées
+au buffer (~longueur du mot) ; au-delà, la frappe est journalisée et compte comme
+incorrecte mais n'entre pas dans le buffer. À l'espace : chars cibles restants = Missed,
+chars en trop = Extra.
+
+**Règles de comptage.**
+WPM (net) = caractères corrects à l'**état final** ÷ 5 ÷ minutes (espaces séparateurs
+comptés comme corrects). Raw (gross) = toutes les frappes imprimables ÷ 5 ÷ minutes.
+ACC = frappes correctes ÷ total frappes, **par frappe** ; le **Backspace est neutre**
+(ni numérateur ni dénominateur) ; une frappe **Extra compte comme incorrecte**.
+Breakdown : Correct/Incorrect par frappe ; Extra/Missed à l'état final.
+
+**Série par seconde.**
+Un point par seconde entière + un point final à la durée exacte. WPM/Raw = cumulatifs
+depuis t=0, exactitude évaluée à l'instant N (quasi-monotone grâce au curseur borné, le
+dernier point ≈ WPM headline). Errors = locales à la fenêtre `[N-1, N)`. Burst = max des
+WPM des mots **complétés** dans la seconde (chrono depuis la 1re frappe du mot,
+hésitation inter-mot exclue) ; report de la valeur précédente si aucun mot complété.
+
+**Génération de texte.**
+Fonction pure et **seedée** (déterministe, portable Rust en Phase 2). En MVP le client
+envoie `seed` + `targetText` complet (et `quoteId` pour Quotes) ; le backend recompute
+sur le texte reçu. En Phase 2 le serveur possède le seed/texte (vérité non forgeable).
+Règles par défaut (paramétrables) : Punctuation = phrases de 4–10 jetons, majuscule en
+tête, fin `.`/`?`/`!` (70/15/15 %), virgule 12 %, guillemets 5 %, parenthèses 4 % ;
+Numbers = ~17 % de jetons-nombres autonomes de 1–4 chiffres.
+
+**Identité.**
+`player_id` jamais envoyé dans le corps : résolu côté serveur depuis le header
+`Authorization: Bearer <discord_access_token>` (scope `identify`). Toujours en string.
+
+**Architecture.**
+`core/` (domaine pur) miroir manuel entre TS et Rust (en-tête « miroir de … » dans
+chaque fichier), pas de générateur de types. Pas de workspace npm racine. `live-stats`
+ne duplique pas le replay complet (la vérité vient du recompute Rust en fin de Run).
+`stats/scoreboard.ts` est la **référence** de l'algorithme que le port Rust reproduit.
+
 ## Example dialogue
 
 > **Dev:** When the player finishes, do we show them the live WPM?
