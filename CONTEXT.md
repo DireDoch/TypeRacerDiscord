@@ -140,12 +140,45 @@ Numbers = ~17 % de jetons-nombres autonomes de 1–4 chiffres.
 **Identité.**
 `player_id` jamais envoyé dans le corps : résolu côté serveur depuis le header
 `Authorization: Bearer <discord_access_token>` (scope `identify`). Toujours en string.
+Le serveur résout via `GET /users/@me` (cache court en mémoire) et expose l'échange du
+code OAuth en **`POST /token`** (nommé « GET » par convention Discord, mais porte un corps
+JSON). **Mode dev** : si `DISCORD_CLIENT_ID/SECRET` sont absents de l'env, le Bearer token
+sert directement de `player_id` (test local au curl) et `/token` renvoie `503`. L'identité
+est un extracteur Axum (`FromRequestParts`) qui s'exécute **avant** le parsing du corps →
+`401` si le token est absent, même sur un corps invalide.
 
 **Architecture.**
 `core/` (domaine pur) miroir manuel entre TS et Rust (en-tête « miroir de … » dans
 chaque fichier), pas de générateur de types. Pas de workspace npm racine. `live-stats`
 ne duplique pas le replay complet (la vérité vient du recompute Rust en fin de Run).
 `stats/scoreboard.ts` est la **référence** de l'algorithme que le port Rust reproduit.
+
+## État d'implémentation (avancement)
+
+Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
+
+**Frontend (`frontend/`).**
+- `core/` domaine pur, testé (clock, types, input `free`/`blocking`-stub, text-gen seedé,
+  `stats/scoreboard`) — la **référence** de l'algo.
+- UI Practice (`src/ui/`, `main.ts`, Vite) : machine d'état idle→countdown→running→finished,
+  graphe chart.js. Lancement `npm run dev`.
+- `src/api.ts` recompute encore **EN LOCAL** (stub) — à remplacer par `POST /api/runs`. Pas
+  encore branché au backend ni à l'Embedded App SDK.
+
+**Backend (`backend/`, Rust : Axum + sqlx/SQLite + reqwest).**
+- `domain/types.rs` (miroir de `types.ts`) + `domain/replay.rs` (port de `scoreboard.ts`,
+  recompute autoritaire) — tests de parité avec `scoreboard.test.ts`.
+- `store.rs` : persistance SQLite (table unique `runs`, migration `0001`), PB **dérivé**
+  (MAX wpm par bucket `WHERE pb_eligible = 1`, pas de table PB), historique filtrable.
+- `discord.rs` : OAuth (`POST /token`) + identité via `/users/@me` (cache court), mode dev.
+- Endpoints : `GET /api/health`, `POST /token`, `POST /api/runs` (recompute + persistance +
+  verdict PB), `GET /api/history`.
+- `ws/` : esquisse Phase 2, **non câblée**.
+
+**Reste à faire (MVP).**
+- `GET /api/quote` (proxy API-Ninjas) ; service des fichiers statiques Vite (origine unique).
+- Câbler le frontend sur le backend (`api.ts` → `POST /api/runs` + header Bearer) et brancher
+  l'Embedded App SDK Discord côté client.
 
 ## Example dialogue
 
