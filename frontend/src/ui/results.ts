@@ -28,13 +28,28 @@ Chart.register(
   Legend,
 );
 
+/** Attribution d'une Quote (Mode Quotes uniquement) affichée sous le scoreboard. */
+export interface QuoteAttribution {
+  author: string;
+  wikipediaUrl: string;
+}
+
 export function renderResults(
   root: HTMLElement,
   res: SubmitRunResponse,
   onRestart: () => void,
+  quote?: QuoteAttribution,
 ): void {
   const sb = res.scoreboard;
   const c = sb.characters;
+
+  const attribution = quote
+    ? `<p class="quote-author">— ${escapeHtml(quote.author)}${
+        quote.wikipediaUrl
+          ? ` · <a href="${escapeHtml(quote.wikipediaUrl)}" target="_blank" rel="noopener noreferrer">en savoir plus</a>`
+          : ""
+      }</p>`
+    : "";
 
   root.innerHTML = `
     <section class="results">
@@ -48,6 +63,8 @@ export function renderResults(
           <span class="value">${sb.accuracy}%</span>
         </div>
       </div>
+
+      ${attribution}
 
       <div class="chart-wrap"><canvas id="resultChart"></canvas></div>
 
@@ -66,6 +83,14 @@ export function renderResults(
 
   drawChart(root.querySelector<HTMLCanvasElement>("#resultChart")!, sb.perSecond);
   root.querySelector<HTMLButtonElement>("#restart")!.addEventListener("click", onRestart);
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function pbLabel(res: SubmitRunResponse): string {

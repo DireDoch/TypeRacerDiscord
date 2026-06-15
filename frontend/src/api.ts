@@ -1,44 +1,39 @@
 // =============================================================================
 //  api.ts — frontière HTTP côté client (contrat dans Docs/API.md).
 //
-//  ÉTAT MVP : le backend Rust n'est pas encore câblé. `submitRun` recompute donc le
-//  scoreboard EN LOCAL via computeScoreboard (la référence de l'algorithme), pour que
-//  l'écran de résultats fonctionne dès aujourd'hui. Le jour où POST /api/runs existe,
-//  on remplace le corps de `submitRun` par le fetch — le reste de l'app ne bouge pas
-//  (mêmes types SubmitRunRequest / SubmitRunResponse).
+//  Le scoreboard est désormais AUTORITAIRE : `submitRun` POST le keystroke log brut
+//  à `/api/runs` et le backend Rust recompute (anti-triche + persistance + verdict PB).
+//  Le recompute local (`computeScoreboard`) n'est plus appelé ici — il reste la
+//  RÉFÉRENCE de l'algo (tests de parité), pas le chemin de production.
+//
+//  Identité : le Bearer token vient de discord.ts (handshake Embedded App SDK, ou
+//  token de dev hors Discord). Jamais de player_id dans le corps.
 // =============================================================================
 
-import type { SubmitRunRequest, SubmitRunResponse } from "./core/types";
-import { computeScoreboard } from "./core/stats/scoreboard";
+import type { Quote, SubmitRunRequest, SubmitRunResponse } from "./core/types";
+import { getAuthToken } from "./discord";
 
-/** true tant que le backend autoritaire n'est pas branché (affiché dans l'UI). */
-export const AUTHORITATIVE_BACKEND = false;
+/** Le scoreboard affiché provient maintenant du backend autoritaire. */
+export const AUTHORITATIVE_BACKEND = true;
 
-/**
- * Soumet un Run et renvoie le scoreboard autoritaire + verdict PB.
- *
- * MVP : recompute local (anti-triche absent, pas de persistance, PB toujours « inconnu »).
- * TODO Phase backend : remplacer par
- *   const res = await fetch("/api/runs", {
- *     method: "POST",
- *     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
- *     body: JSON.stringify(req),
- *   });
- *   return res.json();
- */
+/** Soumet un Run et renvoie le scoreboard autoritaire + verdict PB (POST /api/runs). */
 export async function submitRun(req: SubmitRunRequest): Promise<SubmitRunResponse> {
-  const scoreboard = computeScoreboard({
-    mode: req.config.mode,
-    modeValue: req.config.modeValue,
-    targetText: req.targetText,
-    keystrokes: req.keystrokes,
-    endedAtMs: req.endedAtMs,
+  const token = await getAuthToken();
+  const res = await fetch("/api/runs", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(req),
   });
+  if (!res.ok) throw new Error(`POST /api/runs → ${res.status}`);
+  return res.json();
+}
 
-  return {
-    runId: `local_${Date.now()}`,
-    scoreboard,
-    isPersonalBest: false, // inconnu sans backend (le PB se dérive en base)
-    previousPbWpm: null,
-  };
+/** Récupère une Quote pour un Run en Mode Quotes (proxy serveur API-Ninjas). */
+export async function fetchQuote(): Promise<Quote> {
+  const res = await fetch("/api/quote");
+  if (!res.ok) throw new Error(`GET /api/quote → ${res.status}`);
+  return res.json();
 }

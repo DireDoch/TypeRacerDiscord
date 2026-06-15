@@ -127,6 +127,12 @@ body {
   text-align: center;
   padding: 1rem 0;
 }
+.loading {
+  font-size: 1.1rem;
+  color: var(--sub);
+  text-align: center;
+  padding: 1.5rem 0;
+}
 
 .hint {
   color: var(--sub);
@@ -179,6 +185,18 @@ body {
 .notice {
   color: var(--error);
   font-size: 0.8rem;
+}
+.quote-author {
+  color: var(--sub);
+  font-size: 1rem;
+  margin: 0;
+}
+.quote-author a {
+  color: var(--main);
+  text-decoration: none;
+}
+.quote-author a:hover {
+  text-decoration: underline;
 }
 button.primary {
   align-self: center;

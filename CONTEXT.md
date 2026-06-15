@@ -162,8 +162,16 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
   `stats/scoreboard`) — la **référence** de l'algo.
 - UI Practice (`src/ui/`, `main.ts`, Vite) : machine d'état idle→countdown→running→finished,
   graphe chart.js. Lancement `npm run dev`.
-- `src/api.ts` recompute encore **EN LOCAL** (stub) — à remplacer par `POST /api/runs`. Pas
-  encore branché au backend ni à l'Embedded App SDK.
+- `src/api.ts` branché sur le backend autoritaire : `submitRun` → `POST /api/runs` avec header
+  `Authorization: Bearer <token>` ; `fetchQuote` → `GET /api/quote`. Le recompute local reste
+  la **référence** (tests de parité), plus le chemin de prod.
+- Mode **Quotes** câblé dans l'UI Practice : bouton `quotes` (longueur + Settings masqués),
+  `reset()` async qui `fetchQuote()` (état chargement/erreur), `quoteId` envoyé à `POST /api/runs`,
+  auteur + lien Wikipedia affichés sur l'écran de résultats.
+- `src/discord.ts` : identité via Embedded App SDK (`ready`→`authorize`→`POST /token`→
+  `authenticate`), import dynamique du SDK. **Mode dev** hors Discord (pas de `frame_id` ou
+  `VITE_DISCORD_CLIENT_ID` absent) : token de test (`dev-player-1`) accepté tel quel par le
+  backend dev comme `player_id`. Handshake amorcé tôt dans `main.ts` (non bloquant, mémoïsé).
 
 **Backend (`backend/`, Rust : Axum + sqlx/SQLite + reqwest).**
 - `domain/types.rs` (miroir de `types.ts`) + `domain/replay.rs` (port de `scoreboard.ts`,
@@ -171,14 +179,19 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
 - `store.rs` : persistance SQLite (table unique `runs`, migration `0001`), PB **dérivé**
   (MAX wpm par bucket `WHERE pb_eligible = 1`, pas de table PB), historique filtrable.
 - `discord.rs` : OAuth (`POST /token`) + identité via `/users/@me` (cache court), mode dev.
-- Endpoints : `GET /api/health`, `POST /token`, `POST /api/runs` (recompute + persistance +
-  verdict PB), `GET /api/history`.
+- `quote.rs` : `GET /api/quote`, proxy API-Ninjas (clé `X-Api-Key` côté serveur, `id` opaque
+  dérivé du texte, `wikipediaUrl` construit depuis l'auteur). Clé absente → `502`.
+- Endpoints : `GET /api/health`, `GET /api/quote`, `POST /token`, `POST /api/runs` (recompute +
+  persistance + verdict PB), `GET /api/history`.
+- Origine unique : le build Vite (`STATIC_DIR`, défaut `../frontend/dist`) est servi en
+  `fallback_service` (ServeDir → `index.html` pour le routage SPA). `dotenvy` charge `backend/.env`.
 - `ws/` : esquisse Phase 2, **non câblée**.
 
 **Reste à faire (MVP).**
-- `GET /api/quote` (proxy API-Ninjas) ; service des fichiers statiques Vite (origine unique).
-- Câbler le frontend sur le backend (`api.ts` → `POST /api/runs` + header Bearer) et brancher
-  l'Embedded App SDK Discord côté client.
+- Renseigner `DISCORD_CLIENT_ID/SECRET` (backend `.env`) + `VITE_DISCORD_CLIENT_ID` (frontend)
+  pour activer l'OAuth réel — la forme des endpoints ne change pas (mode dev tant qu'absents).
+- UI Zen et Time infini (la barre de config propose time/words/quotes ; pas encore Zen ni la
+  valeur `0` de Time infini, qui finissent sur Shift+Enter).
 
 ## Example dialogue
 

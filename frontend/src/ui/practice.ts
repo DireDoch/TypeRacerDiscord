@@ -15,7 +15,7 @@ import { FreeInput } from "../core/input/free-input";
 import type { InputController } from "../core/input/controller";
 import { generateText, initialWordCount } from "../core/text-gen";
 import { liveWpm } from "../live-stats";
-import { submitRun } from "../api";
+import { submitRun, fetchQuote } from "../api";
 import { renderResults } from "./results";
 
 const TIME_VALUES = [15, 30, 60, 120];
@@ -38,33 +38,74 @@ export class Practice {
   private log: KeystrokeLog = [];
   private rafId = 0;
 
+  // Mode Quotes : la Quote vient de GET /api/quote (pas de génération seedée).
+  private quoteId?: string;
+  private quoteAuthor?: string;
+  private quoteWikipediaUrl?: string;
+  private loadingQuote = false;
+  private quoteError = false;
+  /** Jeton anti-course : un reset() asynchrone obsolète (mode rechangé) s'auto-annule. */
+  private resetSeq = 0;
+
   constructor(private readonly root: HTMLElement) {
     this.onKeyDown = this.onKeyDown.bind(this);
     document.addEventListener("keydown", this.onKeyDown);
   }
 
   mount(): void {
-    this.reset();
+    void this.reset();
   }
 
   // --- Cycle de vie d'un Run --------------------------------------------------
 
-  private reset(): void {
+  private async reset(): Promise<void> {
+    const seq = ++this.resetSeq;
     cancelAnimationFrame(this.rafId);
     this.phase = "idle";
     this.seed = (Math.random() * 0x7fffffff) | 0;
-    this.targetWords =
-      this.config.mode === "time" || this.config.mode === "words"
-        ? generateText(this.config, initialWordCount(this.config), this.seed)
-        : [];
-    this.controller = new FreeInput(this.targetWords);
     this.clock.reset();
     this.log = [];
+    this.quoteId = undefined;
+    this.quoteAuthor = undefined;
+    this.quoteWikipediaUrl = undefined;
+    this.quoteError = false;
+
+    if (this.config.mode === "quotes") {
+      // La Quote est récupérée côté serveur (proxy API-Ninjas) — pas de génération locale.
+      this.targetWords = [];
+      this.controller = new FreeInput([]);
+      this.loadingQuote = true;
+      this.render();
+      try {
+        const quote = await fetchQuote();
+        if (seq !== this.resetSeq) return; // un reset() plus récent a pris la main.
+        this.quoteId = quote.id;
+        this.quoteAuthor = quote.author;
+        this.quoteWikipediaUrl = quote.wikipediaUrl;
+        this.targetWords = quote.text.split(" ").filter((w) => w.length > 0);
+      } catch {
+        if (seq !== this.resetSeq) return;
+        this.loadingQuote = false;
+        this.quoteError = true;
+        this.render();
+        return;
+      }
+      this.loadingQuote = false;
+    } else {
+      this.targetWords =
+        this.config.mode === "time" || this.config.mode === "words"
+          ? generateText(this.config, initialWordCount(this.config), this.seed)
+          : [];
+    }
+
+    this.controller = new FreeInput(this.targetWords);
     this.render();
   }
 
   private startCountdown(): void {
     if (this.phase !== "idle") return;
+    // Rien à taper encore : Quote en cours de chargement, en erreur, ou Mode sans texte.
+    if (this.loadingQuote || this.targetWords.length === 0) return;
     this.phase = "countdown";
     let n = 3;
     this.renderCountdown(n);
@@ -110,11 +151,16 @@ export class Practice {
       config: this.config,
       seed: this.seed,
       targetText: this.targetWords.join(" "),
+      quoteId: this.config.mode === "quotes" ? this.quoteId : undefined,
       keystrokes: this.log,
       endedAtMs,
     });
 
-    renderResults(this.root, res, () => this.reset());
+    const attribution =
+      this.config.mode === "quotes" && this.quoteAuthor
+        ? { author: this.quoteAuthor, wikipediaUrl: this.quoteWikipediaUrl ?? "" }
+        : undefined;
+    renderResults(this.root, res, () => void this.reset(), attribution);
   }
 
   // --- Clavier ----------------------------------------------------------------
@@ -123,12 +169,12 @@ export class Practice {
     // Tab = recommencer, depuis n'importe quel état.
     if (e.key === "Tab") {
       e.preventDefault();
-      this.reset();
+      void this.reset();
       return;
     }
 
     if (this.phase === "finished") {
-      if (e.key === "Enter") this.reset();
+      if (e.key === "Enter") void this.reset();
       return;
     }
 
@@ -171,7 +217,7 @@ export class Practice {
       <section class="practice">
         ${this.configBarHtml()}
         <div class="live-bar" id="liveBar">${this.liveBarHtml(0)}</div>
-        <div class="words" id="words" tabindex="0">${this.wordsHtml()}</div>
+        <div class="words" id="words" tabindex="0">${this.wordsAreaHtml()}</div>
         <p class="hint">${this.hintText()}</p>
       </section>
     `;
@@ -203,8 +249,19 @@ export class Practice {
     } else if (this.config.mode === "words") {
       const done = this.controller.view().wordIndex;
       progress = `<span class="timer">${done}/${this.config.modeValue}</span>`;
+    } else if (this.config.mode === "quotes") {
+      const done = this.controller.view().wordIndex;
+      progress = `<span class="timer">${done}/${this.targetWords.length}</span>`;
     }
     return `${progress}<span class="live-wpm">${wpm} wpm</span>`;
+  }
+
+  /** Contenu de la zone #words selon l'état (chargement Quote / erreur / mots). */
+  private wordsAreaHtml(): string {
+    if (this.loadingQuote) return `<div class="loading">Chargement d'une citation…</div>`;
+    if (this.quoteError)
+      return `<div class="loading">Impossible de charger la citation. Tab pour réessayer.</div>`;
+    return this.wordsHtml();
   }
 
   private wordsHtml(): string {
@@ -219,7 +276,10 @@ export class Practice {
   }
 
   private hintText(): string {
-    if (this.phase === "idle") return "Clique ou tape pour démarrer · Tab pour regénérer";
+    if (this.phase === "idle") {
+      const regen = this.config.mode === "quotes" ? "Tab pour une autre citation" : "Tab pour regénérer";
+      return `Clique ou tape pour démarrer · ${regen}`;
+    }
     if (this.phase === "running") return "Tab pour recommencer";
     return "";
   }
@@ -227,6 +287,8 @@ export class Practice {
   // --- Barre de configuration -------------------------------------------------
 
   private configBarHtml(): string {
+    // Quotes : longueur et Settings ne s'appliquent pas (le Player tape la Quote entière).
+    const isQuotes = this.config.mode === "quotes";
     const values = this.config.mode === "time" ? TIME_VALUES : WORD_VALUES;
     const valueBtns = values
       .map(
@@ -234,17 +296,22 @@ export class Practice {
           `<button data-value="${v}" class="${this.config.modeValue === v ? "on" : ""}">${v}</button>`,
       )
       .join("");
+    const valueGroup = isQuotes ? "" : `<div class="group">${valueBtns}</div>`;
+    const settingsGroup = isQuotes
+      ? ""
+      : `<div class="group">
+          <button data-toggle="punctuation" class="${this.config.punctuation ? "on" : ""}">punctuation</button>
+          <button data-toggle="numbers" class="${this.config.numbers ? "on" : ""}">numbers</button>
+        </div>`;
     return `
       <div class="config">
         <div class="group">
           <button data-mode="time" class="${this.config.mode === "time" ? "on" : ""}">time</button>
           <button data-mode="words" class="${this.config.mode === "words" ? "on" : ""}">words</button>
+          <button data-mode="quotes" class="${isQuotes ? "on" : ""}">quotes</button>
         </div>
-        <div class="group">${valueBtns}</div>
-        <div class="group">
-          <button data-toggle="punctuation" class="${this.config.punctuation ? "on" : ""}">punctuation</button>
-          <button data-toggle="numbers" class="${this.config.numbers ? "on" : ""}">numbers</button>
-        </div>
+        ${valueGroup}
+        ${settingsGroup}
       </div>
     `;
   }
@@ -254,21 +321,22 @@ export class Practice {
       b.addEventListener("click", () => {
         const mode = b.dataset.mode as RunConfig["mode"];
         this.config.mode = mode;
-        this.config.modeValue = mode === "time" ? 30 : 25;
-        this.reset();
+        // time : 30 s · words : 25 mots · quotes : longueur dictée par la Quote (0).
+        this.config.modeValue = mode === "time" ? 30 : mode === "words" ? 25 : 0;
+        void this.reset();
       }),
     );
     this.root.querySelectorAll<HTMLButtonElement>("[data-value]").forEach((b) =>
       b.addEventListener("click", () => {
         this.config.modeValue = Number(b.dataset.value);
-        this.reset();
+        void this.reset();
       }),
     );
     this.root.querySelectorAll<HTMLButtonElement>("[data-toggle]").forEach((b) =>
       b.addEventListener("click", () => {
         const key = b.dataset.toggle as "punctuation" | "numbers";
         this.config[key] = !this.config[key];
-        this.reset();
+        void this.reset();
       }),
     );
   }

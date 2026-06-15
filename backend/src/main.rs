@@ -8,12 +8,16 @@
 //   - GET  /api/health    : sonde
 //
 //  Identité : résolue côté serveur depuis `Authorization: Bearer <token>` (jamais le
-//  corps). Voir discord.rs (mode dev si secrets absents). Reste à venir : GET /api/quote
-//  (proxy API-Ninjas) et service des fichiers statiques du build Vite (origine unique).
+//  corps). Voir discord.rs (mode dev si secrets absents).
+//
+//  ORIGINE UNIQUE : en plus de /api et /token, ce serveur sert le build statique de Vite
+//  (fallback ServeDir → index.html pour le routage SPA). En dev on passe plutôt par le
+//  proxy Vite (port 5173 → 8080) ; en prod le frontend et l'API partagent le même hôte.
 // =============================================================================
 
 mod discord;
 mod domain;
+mod quote;
 mod store;
 mod ws; // frontière Phase 2 (esquisse, non câblée — voir Docs/PHASE2.md)
 
@@ -29,31 +33,47 @@ use axum::{
 };
 use serde::Deserialize;
 use sqlx::sqlite::SqlitePool;
+use tower_http::services::{ServeDir, ServeFile};
 
 use discord::{AuthError, DiscordConfig, Identity};
 use domain::replay::{compute_scoreboard, ScoreInput};
 use domain::types::{
     HistoryResponse, SubmitRunRequest, SubmitRunResponse, TokenRequest, TokenResponse,
 };
+use quote::{QuoteClient, QuoteResponse};
 
 #[derive(Clone)]
 struct AppState {
     pool: SqlitePool,
     identity: Arc<Identity>,
+    quotes: Arc<QuoteClient>,
 }
 
 #[tokio::main]
 async fn main() {
+    // Charge backend/.env si présent (sinon on lit l'environnement du process tel quel).
+    let _ = dotenvy::dotenv();
+
     let pool = store::init_pool().await;
     let identity = Arc::new(Identity::new(DiscordConfig::from_env()));
-    let state = AppState { pool, identity };
+    let quotes = Arc::new(QuoteClient::from_env());
+    let state = AppState { pool, identity, quotes };
+
+    // Build statique de Vite (origine unique). Surcoûtable via STATIC_DIR.
+    let static_dir =
+        std::env::var("STATIC_DIR").unwrap_or_else(|_| "../frontend/dist".to_string());
+    let spa = ServeDir::new(&static_dir)
+        .fallback(ServeFile::new(format!("{static_dir}/index.html")));
 
     let app = Router::new()
         .route("/api/health", get(health))
+        .route("/api/quote", get(quote_handler))
         .route("/token", post(token))
         .route("/api/runs", post(submit_run))
         .route("/api/history", get(history))
-        .with_state(state);
+        .with_state(state)
+        // Tout ce qui ne matche pas une route API → fichiers statiques (puis index.html).
+        .fallback_service(spa);
 
     let addr = "127.0.0.1:8080";
     let listener = tokio::net::TcpListener::bind(addr)
@@ -65,6 +85,18 @@ async fn main() {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+/// GET /api/quote — proxy vers API-Ninjas (clé injectée côté serveur). 502 si amont KO.
+async fn quote_handler(
+    State(state): State<AppState>,
+) -> Result<Json<QuoteResponse>, StatusCode> {
+    state
+        .quotes
+        .fetch()
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::BAD_GATEWAY)
 }
 
 /// POST /token — échange le code OAuth contre un access_token (secret client serveur).
