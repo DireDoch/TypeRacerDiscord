@@ -1,0 +1,230 @@
+// =============================================================================
+//  store.rs — persistance SQLite (sqlx) : table UNIQUE `runs`.
+//
+//  Le PB n'a PAS de table (CONTEXT.md) : il se dérive par MAX(wpm) GROUP BY bucket
+//  WHERE pb_eligible = 1 (index idx_runs_pb). Schéma : backend/migrations/0001_init.sql.
+//  Requêtes en runtime (pas les macros compile-time) pour ne pas dépendre d'une DB
+//  présente au build.
+// =============================================================================
+
+use std::str::FromStr;
+
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::{QueryBuilder, Row, Sqlite};
+
+use crate::domain::types::{CharacterBreakdown, HistoryEntry, PerSecondPoint, RunConfig, Scoreboard};
+
+/// Ouvre le pool, crée le fichier au besoin et applique les migrations embarquées.
+pub async fn init_pool() -> SqlitePool {
+    let url = std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:typeracer.db".to_string());
+    let opts = SqliteConnectOptions::from_str(&url)
+        .expect("DATABASE_URL invalide")
+        .create_if_missing(true);
+    let pool = SqlitePoolOptions::new()
+        .connect_with(opts)
+        .await
+        .expect("connexion SQLite");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("application des migrations");
+    pool
+}
+
+/// PB courant du bucket (MAX wpm parmi les Runs éligibles), ou None s'il n'y en a pas.
+/// À appeler AVANT d'insérer le nouveau Run pour obtenir le « précédent ».
+pub async fn previous_pb(
+    pool: &SqlitePool,
+    player_id: &str,
+    config: &RunConfig,
+) -> Result<Option<f64>, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT MAX(wpm) AS pb FROM runs
+         WHERE player_id = ? AND mode = ? AND mode_value = ?
+           AND language = ? AND punctuation = ? AND numbers = ? AND pb_eligible = 1",
+    )
+    .bind(player_id)
+    .bind(config.mode.as_str())
+    .bind(config.mode_value)
+    .bind(&config.language)
+    .bind(config.punctuation as i64)
+    .bind(config.numbers as i64)
+    .fetch_one(pool)
+    .await?;
+    row.try_get::<Option<f64>, _>("pb")
+}
+
+/// Insère un Run (le log brut n'est PAS persisté ; seule la série `per_second` dérivée l'est).
+pub async fn insert_run(
+    pool: &SqlitePool,
+    run_id: &str,
+    player_id: &str,
+    created_at: i64,
+    config: &RunConfig,
+    sb: &Scoreboard,
+) -> Result<(), sqlx::Error> {
+    let per_second_json = serde_json::to_string(&sb.per_second).unwrap_or_else(|_| "[]".to_string());
+    sqlx::query(
+        "INSERT INTO runs
+            (id, player_id, created_at, mode, mode_value, language, punctuation, numbers,
+             wpm, raw, accuracy, chars_correct, chars_incorrect, chars_extra, chars_missed,
+             duration_ms, per_second, pb_eligible)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    )
+    .bind(run_id)
+    .bind(player_id)
+    .bind(created_at)
+    .bind(config.mode.as_str())
+    .bind(config.mode_value)
+    .bind(&config.language)
+    .bind(config.punctuation as i64)
+    .bind(config.numbers as i64)
+    .bind(sb.wpm)
+    .bind(sb.raw)
+    .bind(sb.accuracy)
+    .bind(sb.characters.correct)
+    .bind(sb.characters.incorrect)
+    .bind(sb.characters.extra)
+    .bind(sb.characters.missed)
+    .bind(sb.duration_ms.round() as i64) // colonne INTEGER : ms entières
+    .bind(per_second_json)
+    .bind(sb.pb_eligible as i64)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Historique du joueur (plus récent d'abord), filtrable par bucket partiel (mode / modeValue).
+pub async fn history(
+    pool: &SqlitePool,
+    player_id: &str,
+    mode: Option<&str>,
+    mode_value: Option<i64>,
+    limit: i64,
+) -> Result<Vec<HistoryEntry>, sqlx::Error> {
+    let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
+        "SELECT id, created_at, mode, mode_value, language, punctuation, numbers,
+                wpm, raw, accuracy, chars_correct, chars_incorrect, chars_extra, chars_missed,
+                duration_ms, per_second, pb_eligible
+         FROM runs WHERE player_id = ",
+    );
+    qb.push_bind(player_id.to_string());
+    if let Some(m) = mode {
+        qb.push(" AND mode = ").push_bind(m.to_string());
+    }
+    if let Some(mv) = mode_value {
+        qb.push(" AND mode_value = ").push_bind(mv);
+    }
+    qb.push(" ORDER BY created_at DESC LIMIT ").push_bind(limit);
+
+    let rows = qb.build().fetch_all(pool).await?;
+    rows.iter().map(row_to_entry).collect()
+}
+
+fn row_to_entry(row: &sqlx::sqlite::SqliteRow) -> Result<HistoryEntry, sqlx::Error> {
+    let mode_s: String = row.try_get("mode")?;
+    let per_second_s: String = row.try_get("per_second")?;
+    let per_second: Vec<PerSecondPoint> = serde_json::from_str(&per_second_s).unwrap_or_default();
+
+    Ok(HistoryEntry {
+        run_id: row.try_get("id")?,
+        created_at: row.try_get("created_at")?,
+        config: RunConfig {
+            mode: crate::domain::types::Mode::from_db(&mode_s).unwrap_or(crate::domain::types::Mode::Words),
+            mode_value: row.try_get("mode_value")?,
+            language: row.try_get("language")?,
+            punctuation: row.try_get::<i64, _>("punctuation")? != 0,
+            numbers: row.try_get::<i64, _>("numbers")? != 0,
+        },
+        wpm: row.try_get("wpm")?,
+        raw: row.try_get("raw")?,
+        accuracy: row.try_get("accuracy")?,
+        characters: CharacterBreakdown {
+            correct: row.try_get("chars_correct")?,
+            incorrect: row.try_get("chars_incorrect")?,
+            extra: row.try_get("chars_extra")?,
+            missed: row.try_get("chars_missed")?,
+        },
+        duration_ms: row.try_get::<i64, _>("duration_ms")? as f64,
+        per_second,
+        pb_eligible: row.try_get::<i64, _>("pb_eligible")? != 0,
+    })
+}
+
+// ----------------------------------------------------------------------------
+//  Tests (SQLite en mémoire, 1 seule connexion pour partager la base)
+// ----------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::types::{Mode, Scoreboard};
+
+    async fn mem_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        pool
+    }
+
+    fn cfg() -> RunConfig {
+        RunConfig {
+            mode: Mode::Time,
+            mode_value: 30,
+            language: "english".into(),
+            punctuation: false,
+            numbers: false,
+        }
+    }
+
+    fn sb(wpm: f64, pb_eligible: bool) -> Scoreboard {
+        Scoreboard {
+            wpm,
+            raw: wpm,
+            accuracy: 100.0,
+            characters: CharacterBreakdown { correct: 10, incorrect: 0, extra: 0, missed: 0 },
+            duration_ms: 30000.0,
+            per_second: vec![PerSecondPoint { t: 1.0, wpm, raw: wpm, errors: 0, burst: wpm }],
+            pb_eligible,
+        }
+    }
+
+    #[tokio::test]
+    async fn pb_derive_et_historique() {
+        let pool = mem_pool().await;
+        let c = cfg();
+
+        // Aucun Run → pas de PB.
+        assert_eq!(previous_pb(&pool, "p1", &c).await.unwrap(), None);
+
+        insert_run(&pool, "r1", "p1", 1000, &c, &sb(50.0, true)).await.unwrap();
+        insert_run(&pool, "r2", "p1", 2000, &c, &sb(70.0, true)).await.unwrap();
+        // Run d'un autre joueur : ne doit pas influencer le PB de p1.
+        insert_run(&pool, "r3", "p2", 3000, &c, &sb(200.0, true)).await.unwrap();
+
+        assert_eq!(previous_pb(&pool, "p1", &c).await.unwrap(), Some(70.0));
+
+        // Historique p1 : 2 entrées, plus récent d'abord.
+        let h = history(&pool, "p1", None, None, 50).await.unwrap();
+        assert_eq!(h.len(), 2);
+        assert_eq!(h[0].run_id, "r2");
+        assert_eq!(h[1].run_id, "r1");
+
+        // Filtre par bucket inexistant → vide.
+        let h2 = history(&pool, "p1", Some("words"), None, 50).await.unwrap();
+        assert!(h2.is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_non_eligible_exclu_du_pb() {
+        let pool = mem_pool().await;
+        let c = cfg();
+        insert_run(&pool, "r1", "p1", 1000, &c, &sb(999.0, false)).await.unwrap(); // non éligible
+        assert_eq!(previous_pb(&pool, "p1", &c).await.unwrap(), None);
+        // Mais reste dans l'historique.
+        assert_eq!(history(&pool, "p1", None, None, 50).await.unwrap().len(), 1);
+    }
+}

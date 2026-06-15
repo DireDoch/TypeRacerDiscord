@@ -24,6 +24,29 @@ pub enum Mode {
     Zen,
 }
 
+impl Mode {
+    /// Représentation stockée en base / utilisée dans les requêtes SQL (= valeur JSON).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Mode::Time => "time",
+            Mode::Words => "words",
+            Mode::Quotes => "quotes",
+            Mode::Zen => "zen",
+        }
+    }
+
+    /// Reconstruit un Mode depuis la colonne `mode` (lecture d'historique).
+    pub fn from_db(s: &str) -> Option<Mode> {
+        match s {
+            "time" => Some(Mode::Time),
+            "words" => Some(Mode::Words),
+            "quotes" => Some(Mode::Quotes),
+            "zen" => Some(Mode::Zen),
+            _ => None,
+        }
+    }
+}
+
 /// Configuration d'un Run = le Config bucket (ce qui rend deux Runs comparables).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -122,4 +145,38 @@ pub struct SubmitRunResponse {
     pub scoreboard: Scoreboard,
     pub is_personal_best: bool,
     pub previous_pb_wpm: Option<f64>,
+}
+
+/// GET /api/history — un Run passé (perSecond inclus pour re-tracer le graphe sans recompute).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryEntry {
+    pub run_id: String,
+    pub created_at: i64,
+    pub config: RunConfig,
+    pub wpm: f64,
+    pub raw: f64,
+    pub accuracy: f64,
+    pub characters: CharacterBreakdown,
+    pub duration_ms: f64,
+    pub per_second: Vec<PerSecondPoint>,
+    pub pb_eligible: bool,
+}
+
+/// GET /api/history — réponse.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryResponse {
+    pub entries: Vec<HistoryEntry>,
+}
+
+/// POST /token — corps de requête (code OAuth fourni par l'Embedded App SDK).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenRequest {
+    pub code: String,
+}
+
+/// POST /token — réponse (access_token Discord ; le secret client reste serveur).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenResponse {
+    pub access_token: String,
 }

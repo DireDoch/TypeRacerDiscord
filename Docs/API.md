@@ -27,7 +27,8 @@ Termes : voir `CONTEXT.md`. Types miroir : `frontend/src/core/types.ts` ↔ `bac
 ## `GET /token` — échange OAuth2
 
 Échange le `code` d'autorisation (obtenu par l'Embedded App SDK) contre un `access_token`.
-Le secret client reste serveur. (Nommé `GET` par convention Discord ; corps JSON accepté.)
+Le secret client reste serveur. (Nommé `GET` par convention Discord ; **implémenté en `POST /token`**
+car il porte un corps JSON. Renvoie `503` si l'OAuth n'est pas configuré côté serveur — mode dev.)
 
 **Requête**
 ```json
