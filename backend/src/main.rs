@@ -26,8 +26,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{
     async_trait,
-    extract::{FromRequestParts, Query, State},
+    extract::{ws::WebSocketUpgrade, FromRequestParts, Query, State},
     http::{header::AUTHORIZATION, request::Parts, StatusCode},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -47,6 +48,7 @@ struct AppState {
     pool: SqlitePool,
     identity: Arc<Identity>,
     quotes: Arc<QuoteClient>,
+    rooms: ws::Rooms,
 }
 
 #[tokio::main]
@@ -57,7 +59,8 @@ async fn main() {
     let pool = store::init_pool().await;
     let identity = Arc::new(Identity::new(DiscordConfig::from_env()));
     let quotes = Arc::new(QuoteClient::from_env());
-    let state = AppState { pool, identity, quotes };
+    let rooms = ws::new_rooms();
+    let state = AppState { pool, identity, quotes, rooms };
 
     // Build statique de Vite (origine unique). Surcoûtable via STATIC_DIR.
     let static_dir =
@@ -71,6 +74,7 @@ async fn main() {
         .route("/token", post(token))
         .route("/api/runs", post(submit_run))
         .route("/api/history", get(history))
+        .route("/ws", get(ws_handler))
         .with_state(state)
         // Tout ce qui ne matche pas une route API → fichiers statiques (puis index.html).
         .fallback_service(spa);
@@ -152,6 +156,25 @@ async fn submit_run(
         is_personal_best,
         previous_pb_wpm: previous,
     }))
+}
+
+#[derive(Debug, Deserialize)]
+struct WsQuery {
+    token: String,
+}
+
+/// GET /ws — connexion Race. L'identité est résolue AVANT l'upgrade depuis
+/// `?token=` (l'API WebSocket du navigateur ne permet pas d'en-tête Authorization).
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    Query(q): Query<WsQuery>,
+    State(state): State<AppState>,
+) -> Response {
+    let player_id = match state.identity.resolve_player_id(&q.token).await {
+        Ok(id) => id,
+        Err(e) => return auth_status(e).into_response(),
+    };
+    ws.on_upgrade(move |socket| ws::handle_socket(socket, state.rooms.clone(), player_id))
 }
 
 #[derive(Debug, Deserialize)]

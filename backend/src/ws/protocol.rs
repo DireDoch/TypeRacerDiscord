@@ -9,13 +9,17 @@
 
 #![allow(dead_code)]
 
+use serde::{Deserialize, Serialize};
+
 /// Identifiant de salon vocal Discord (snowflake) — clé d'une Room.
 pub type ChannelId = String;
 /// Discord user ID (snowflake), toujours en string.
 pub type PlayerId = String;
 
 /// Messages Client → Serveur.
-#[derive(Debug)]
+/// Wire : JSON internally-tagged, ex. `{ "type": "JoinRoom", "channelId": "123" }`.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all_fields = "camelCase")]
 pub enum ClientEvent {
     /// Rejoindre/instancier la Room du salon courant.
     JoinRoom { channel_id: ChannelId },
@@ -29,7 +33,8 @@ pub enum ClientEvent {
 }
 
 /// Messages Serveur → Client.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all_fields = "camelCase")]
 pub enum ServerEvent {
     /// État de la Room après un join (joueurs présents, config, seed).
     RoomState {
