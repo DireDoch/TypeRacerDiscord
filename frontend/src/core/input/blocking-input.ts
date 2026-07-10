@@ -1,12 +1,14 @@
 // =============================================================================
 //  blocking-input.ts — BlockingInput : saisie bloquante TypeRacer (Race, Phase 2).
 //
-//  Modèle de CURSEUR NON LIBRE :
-//   - une frappe incorrecte est acceptée UNE fois (visible en erreur) puis BLOQUE :
-//     tant qu'elle n'est pas corrigée (backspace), la frappe suivante est ignorée ;
-//   - le buffer ne dépasse jamais la longueur cible ⇒ Pas d'Extra possible ;
-//   - l'espace n'avance QUE si le mot courant est tapé exactement (sinon ignoré) ;
-//   - pas de retour aux mots précédents : une fois verrouillé, un mot est figé.
+//  Modèle TypeRacer (≠ FreeInput/Monkeytype qui tolère les fautes) :
+//   - saisie LIBRE dans le mot courant : on peut taper des caractères fautifs, ils
+//     s'affichent en rouge (le rendu casse à la 1re divergence) jusqu'au plafond ;
+//   - l'espace n'avance QUE si le mot courant est tapé EXACTEMENT (sinon ignoré) —
+//     il faut donc corriger (backspace) avant de continuer ;
+//   - pas de retour aux mots précédents : une fois verrouillé, un mot est figé
+//     (curseur NON libre, contrairement à FreeInput) ;
+//   - le texte final est donc toujours parfait ⇒ la course est de la vitesse pure.
 //
 //  Même interface que FreeInput (InputController) : rebranché sans toucher au
 //  reste (UI, horloge, log). Le contrôleur ne calcule aucune stat ; le recompute
@@ -33,9 +35,10 @@ export class BlockingInput implements InputController {
     return this.target[this.wordIndex] ?? "";
   }
 
-  /** true si le buffer est un préfixe correct du mot cible (aucune erreur en attente). */
-  private isCleanPrefix(): boolean {
-    return this.currentTarget().startsWith(this.typed);
+  /** Plafond du buffer courant (borne les caractères fautifs / Extra) : ~2× la cible. */
+  private maxBuffer(): number {
+    const t = this.currentTarget();
+    return t.length + Math.max(4, t.length);
   }
 
   handleKey(key: string, ctrl: boolean, now: number): Keystroke | null {
@@ -48,7 +51,7 @@ export class BlockingInput implements InputController {
       return null; // pas de retour aux mots précédents (curseur non libre)
     }
 
-    // --- Backspace simple : recule dans le mot courant (débloque une erreur) --
+    // --- Backspace simple : recule dans le mot courant ----------------------
     if (key === "Backspace") {
       if (this.typed.length > 0) {
         this.typed = this.typed.slice(0, -1);
@@ -69,12 +72,11 @@ export class BlockingInput implements InputController {
 
     // --- Caractère imprimable ----------------------------------------------
     if (key.length === 1) {
-      // Bloqué tant qu'une erreur est en attente, ou que le mot est déjà complet.
-      if (!this.isCleanPrefix() || this.typed.length >= this.currentTarget().length) {
-        return null;
+      // Saisie libre dans le mot (fautes autorisées, rendues en rouge) sous le plafond.
+      // Toujours journalisé : le recompute Rust compte correct/incorrect/Extra.
+      if (this.typed.length < this.maxBuffer()) {
+        this.typed += key;
       }
-      // Accepte la frappe (correcte ou fautive) : journalisée pour le recompute.
-      this.typed += key;
       return { t: now, k: key };
     }
 
