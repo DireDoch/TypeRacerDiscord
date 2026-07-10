@@ -120,6 +120,26 @@ describe("computeScoreboard — Zen et éligibilité PB", () => {
     expect(s.pbEligible).toBe(false);
   });
 
+  it("Zen : le retour arrière efface (WPM = état visible, Raw = effort brut)", () => {
+    // "teh" → 2× backspace → "he" ⇒ visible "the" (3 chars) ; 5 frappes au total.
+    const s = computeScoreboard({
+      mode: "zen",
+      modeValue: 0,
+      targetText: "",
+      keystrokes: log(
+        [100, "t"], [200, "e"], [300, "h"],
+        [400, "", "backspace"], [500, "", "backspace"],
+        [600, "h"], [700, "e"],
+      ),
+      endedAtMs: 1000,
+    });
+    expect(s.wpm).toBe(36); // 3 chars visibles / 5 / (1/60)
+    expect(s.raw).toBe(60); // 5 frappes / 5 / (1/60)
+    expect(s.accuracy).toBe(100);
+    expect(s.characters).toEqual({ correct: 5, incorrect: 0, extra: 0, missed: 0 });
+    expect(s.pbEligible).toBe(false);
+  });
+
   it("Time infini exclu des PB ; Time fini éligible", () => {
     const k = log([100, "a"]);
     expect(computeScoreboard(base({ mode: "time", modeValue: 0, keystrokes: k })).pbEligible).toBe(false);

@@ -224,49 +224,90 @@ fn replay_target(target_text: &str, keys: &[Keystroke]) -> ReplayResult {
 }
 
 // ----------------------------------------------------------------------------
-//  Replay — Zen (pas de texte cible : tout est correct)
+//  Replay — Zen (pas de texte cible : tout caractère GARDÉ est correct)
 // ----------------------------------------------------------------------------
+//
+//  Même modèle de pile que replay_target, mais sans cible : WPM = état visible final
+//  (le retour arrière EFFACE, il ne compte pas), Raw = toutes les frappes imprimables
+//  (l'effort, effacé inclus), ACC = 100 % (rien n'est faux sans cible).
+//  ponytail: mécanique de pile dupliquée de replay_target (~15 l.) — la partager
+//  forcerait à toucher l'algo autoritaire testé ; copie locale préférée à la parité fragile.
 
 fn replay_zen(keys: &[Keystroke]) -> ReplayResult {
-    let mut count: i64 = 0;
+    let mut locked: Vec<String> = Vec::new();
+    let mut typed = String::new();
     let mut word_start_t: Option<f64> = None;
-    let mut word_len: i64 = 0;
+
+    let mut frozen_visible: i64 = 0; // chars visibles des mots verrouillés (+ séparateurs), réversible
+    let mut raw_chars: i64 = 0; // toutes les frappes imprimables (jamais décrémenté)
+    let mut keys_typed: i64 = 0; // frappes imprimables = frappes correctes (aucune cible → rien de faux)
+
     let mut snapshots: Vec<Snapshot> = Vec::new();
     let mut completions: Vec<Completion> = Vec::new();
+    let mut push_snap = |snapshots: &mut Vec<Snapshot>, t: f64, visible: i64, typed: &str, raw: i64| {
+        snapshots.push(Snapshot { t, correct_chars: visible + clen(typed), raw_chars: raw });
+    };
 
     for k in keys {
-        if k.ctrl.is_some() {
-            continue; // Backspace neutre, ignoré (Zen ACC 100 %)
-        }
-        if k.k == " " {
-            if let Some(ws) = word_start_t {
-                if k.t > ws && word_len > 0 {
-                    completions.push(Completion {
-                        t: k.t,
-                        word_wpm: round1(word_len as f64 / 5.0 / ((k.t - ws) / 60000.0)),
-                    });
+        match k.ctrl {
+            Some(ControlKey::BackspaceWord) => {
+                if clen(&typed) > 0 {
+                    typed.clear();
+                } else if let Some(w) = locked.pop() {
+                    frozen_visible -= clen(&w) + 1;
+                    typed.clear();
                 }
+                word_start_t = None;
+                push_snap(&mut snapshots, k.t, frozen_visible, &typed, raw_chars);
+                continue;
             }
-            count += 1; // l'espace compte comme caractère
-            snapshots.push(Snapshot { t: k.t, correct_chars: count, raw_chars: count });
+            Some(ControlKey::Backspace) => {
+                if clen(&typed) > 0 {
+                    typed.pop();
+                    if clen(&typed) == 0 {
+                        word_start_t = None;
+                    }
+                } else if let Some(w) = locked.pop() {
+                    frozen_visible -= clen(&w) + 1; // retire le mot + son séparateur
+                    typed = w; // rouvert, éditable
+                    word_start_t = None;
+                }
+                push_snap(&mut snapshots, k.t, frozen_visible, &typed, raw_chars);
+                continue;
+            }
+            None => {}
+        }
+
+        if k.k == " " {
+            if clen(&typed) == 0 {
+                push_snap(&mut snapshots, k.t, frozen_visible, &typed, raw_chars);
+                continue;
+            }
+            frozen_visible += clen(&typed) + 1; // mot + séparateur, tous visibles/corrects
+            keys_typed += 1; // l'espace = frappe correcte
+            raw_chars += 1;
+            complete_word(&mut completions, word_start_t, k.t, clen(&typed));
+            locked.push(std::mem::take(&mut typed));
             word_start_t = None;
-            word_len = 0;
+            push_snap(&mut snapshots, k.t, frozen_visible, &typed, raw_chars);
             continue;
         }
+
         if clen(&k.k) == 1 {
             if word_start_t.is_none() {
                 word_start_t = Some(k.t);
             }
-            word_len += 1;
-            count += 1;
-            snapshots.push(Snapshot { t: k.t, correct_chars: count, raw_chars: count });
+            keys_typed += 1;
+            raw_chars += 1;
+            typed.push_str(&k.k); // pas de plafond (aucune cible)
+            push_snap(&mut snapshots, k.t, frozen_visible, &typed, raw_chars);
         }
     }
 
     ReplayResult {
-        correct_chars: count,
-        raw_chars: count,
-        breakdown: CharacterBreakdown { correct: count, incorrect: 0, extra: 0, missed: 0 },
+        correct_chars: frozen_visible + clen(&typed),
+        raw_chars,
+        breakdown: CharacterBreakdown { correct: keys_typed, incorrect: 0, extra: 0, missed: 0 },
         snapshots,
         error_events: Vec::new(),
         completions,
@@ -535,6 +576,28 @@ mod tests {
         assert_eq!(s.characters, CharacterBreakdown { correct: 7, incorrect: 0, extra: 0, missed: 0 });
         assert_eq!(s.accuracy, 100.0);
         assert_eq!(s.wpm, 84.0);
+        assert!(!s.pb_eligible);
+    }
+
+    #[test]
+    fn zen_retour_arriere_etat_visible() {
+        // "teh" → 2× backspace → "he" ⇒ visible "the" (3 chars) ; effort brut = 5 frappes.
+        let s = compute_scoreboard(&input(
+            Mode::Zen,
+            0,
+            "",
+            log(&[
+                (100.0, "t", None), (200.0, "e", None), (300.0, "h", None),
+                (400.0, "", Some(ControlKey::Backspace)),
+                (500.0, "", Some(ControlKey::Backspace)),
+                (600.0, "h", None), (700.0, "e", None),
+            ]),
+            1000.0,
+        ));
+        assert_eq!(s.wpm, 36.0); // 3 chars visibles ÷ 5 ÷ (1/60)
+        assert_eq!(s.raw, 60.0); // 5 frappes ÷ 5 ÷ (1/60)
+        assert_eq!(s.accuracy, 100.0);
+        assert_eq!(s.characters, CharacterBreakdown { correct: 5, incorrect: 0, extra: 0, missed: 0 });
         assert!(!s.pb_eligible);
     }
 

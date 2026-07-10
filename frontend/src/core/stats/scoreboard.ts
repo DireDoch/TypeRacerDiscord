@@ -216,40 +216,77 @@ function replayTarget(targetText: string, keys: Keystroke[]): ReplayResult {
 }
 
 // ----------------------------------------------------------------------------
-//  Replay — Zen (pas de texte cible : tout est correct)
+//  Replay — Zen (pas de texte cible : tout caractère GARDÉ est correct)
 // ----------------------------------------------------------------------------
+//
+//  Même modèle de pile que replayTarget, mais sans cible : WPM = état visible final
+//  (le retour arrière EFFACE, il ne compte pas), Raw = toutes les frappes imprimables
+//  (l'effort, effacé inclus), ACC = 100 % (rien n'est faux sans cible). La courbe WPM
+//  peut donc re-baisser quand on efface, comme le curseur libre.
 
 function replayZen(keys: Keystroke[]): ReplayResult {
-  let count = 0;
+  const locked: string[] = [];
+  let typed = "";
   let wordStartT: number | null = null;
-  let wordLen = 0;
+
+  let frozenVisible = 0; // chars visibles des mots verrouillés (+ séparateurs), réversible
+  let rawChars = 0; // toutes les frappes imprimables (jamais décrémenté)
+  let keysTyped = 0; // frappes imprimables = frappes correctes (aucune cible → rien de faux)
+
   const snapshots: Snapshot[] = [];
   const completions: Completion[] = [];
+  const snap = (t: number) => snapshots.push({ t, correctChars: frozenVisible + typed.length, rawChars });
 
   for (const k of keys) {
-    if (k.ctrl) continue; // Backspace neutre, ignoré (Zen ACC 100 %)
-    if (k.k === " ") {
-      if (wordStartT !== null && k.t > wordStartT && wordLen > 0) {
-        completions.push({ t: k.t, wordWpm: round1(wordLen / 5 / ((k.t - wordStartT) / 60000)) });
-      }
-      count++; // l'espace compte comme caractère
-      snapshots.push({ t: k.t, correctChars: count, rawChars: count });
+    if (k.ctrl === "backspace-word") {
+      if (typed.length > 0) typed = "";
+      else if (locked.length > 0) frozenVisible -= locked.pop()!.length + 1;
       wordStartT = null;
-      wordLen = 0;
+      snap(k.t);
+      continue;
+    }
+    if (k.ctrl === "backspace") {
+      if (typed.length > 0) {
+        typed = typed.slice(0, -1);
+        if (typed.length === 0) wordStartT = null;
+      } else if (locked.length > 0) {
+        frozenVisible -= locked[locked.length - 1].length + 1; // retire le mot + son séparateur
+        typed = locked.pop()!; // rouvert, éditable
+        wordStartT = null;
+      }
+      snap(k.t);
+      continue;
+    }
+    if (k.k === " ") {
+      if (typed.length === 0) {
+        snap(k.t); // espace en tête ignoré
+        continue;
+      }
+      frozenVisible += typed.length + 1; // mot + séparateur, tous visibles/corrects
+      keysTyped++; // l'espace = frappe correcte
+      rawChars++;
+      if (wordStartT !== null && k.t > wordStartT) {
+        completions.push({ t: k.t, wordWpm: round1(typed.length / 5 / ((k.t - wordStartT) / 60000)) });
+      }
+      locked.push(typed);
+      typed = "";
+      wordStartT = null;
+      snap(k.t);
       continue;
     }
     if (k.k.length === 1) {
       if (wordStartT === null) wordStartT = k.t;
-      wordLen++;
-      count++;
-      snapshots.push({ t: k.t, correctChars: count, rawChars: count });
+      keysTyped++;
+      rawChars++;
+      typed += k.k; // pas de plafond (aucune cible)
+      snap(k.t);
     }
   }
 
   return {
-    correctChars: count,
-    rawChars: count,
-    breakdown: { correct: count, incorrect: 0, extra: 0, missed: 0 },
+    correctChars: frozenVisible + typed.length,
+    rawChars,
+    breakdown: { correct: keysTyped, incorrect: 0, extra: 0, missed: 0 },
     snapshots,
     errorEvents: [],
     completions,

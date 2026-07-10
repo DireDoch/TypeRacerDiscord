@@ -27,10 +27,18 @@ const WORD_VALUES = [10, 25, 50];
 const ENDLESS_LOOKAHEAD = 30;
 const ENDLESS_BATCH = 40;
 
+/**
+ * Valeur par défaut d'un Mode : time → 30 s, words → 25 mots, quotes/zen → 0 (sans objet).
+ * Source unique (init du Run + changement de Mode dans la barre de config).
+ */
+function defaultModeValue(mode: RunConfig["mode"]): number {
+  return mode === "time" ? 30 : mode === "words" ? 25 : 0;
+}
+
 export class Practice {
   private config: RunConfig = {
     mode: "time",
-    modeValue: 30,
+    modeValue: defaultModeValue("time"),
     language: "english",
     punctuation: false,
     numbers: false,
@@ -389,8 +397,7 @@ export class Practice {
       b.addEventListener("click", () => {
         const mode = b.dataset.mode as RunConfig["mode"];
         this.config.mode = mode;
-        // time : 30 s · words : 25 mots · quotes : longueur dictée par la Quote (0).
-        this.config.modeValue = mode === "time" ? 30 : mode === "words" ? 25 : 0;
+        this.config.modeValue = defaultModeValue(mode); // quotes/zen : longueur sans objet (0).
         void this.reset();
       }),
     );
