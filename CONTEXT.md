@@ -187,11 +187,16 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
   `fallback_service` (ServeDir → `index.html` pour le routage SPA). `dotenvy` charge `backend/.env`.
 - `ws/` : esquisse Phase 2, **non câblée**.
 
+- Modes **Zen** et **Time infini** câblés dans l'UI Practice : bouton `zen` (aucun texte cible,
+  affichage du texte tapé, tout compte comme correct — miroir `replay_zen`) ; valeur `∞` (0) du
+  Mode `time` (horloge désactivée, flux de mots re-généré en continu avec le MÊME Rng, chrono qui
+  monte). Les deux finissent sur `Shift+Enter` (`endedAtMs`) et sont exclus des PB. Longueur et
+  Settings masqués pour Zen. `liveWpmZen` alimente le compteur live.
+
 **Reste à faire (MVP).**
 - Renseigner `DISCORD_CLIENT_ID/SECRET` (backend `.env`) + `VITE_DISCORD_CLIENT_ID` (frontend)
   pour activer l'OAuth réel — la forme des endpoints ne change pas (mode dev tant qu'absents).
-- UI Zen et Time infini (la barre de config propose time/words/quotes ; pas encore Zen ni la
-  valeur `0` de Time infini, qui finissent sur Shift+Enter).
+  Côté portail Discord : Activities > Enable, URL Mappings `/` → URL du tunnel (voir plus bas).
 
 ## Example dialogue
 

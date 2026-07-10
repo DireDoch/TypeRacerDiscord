@@ -2,7 +2,7 @@
 //  ui/practice.ts — écran de Practice (saisie libre, solo, MVP).
 //
 //  Machine d'état : idle → countdown(3s) → running → finished.
-//  Câble le core/ pur : generateText (texte seedé), RunClock (t=0 monotone),
+//  Câble le core/ pur : generateWithRng (texte seedé), RunClock (t=0 monotone),
 //  FreeInput (curseur libre, log brut). À la fin : api.submitRun → résultats.
 //
 //  t=0 = fin du décompte (PAS la 1re frappe). Le temps de réaction est compté, comme
@@ -13,13 +13,19 @@ import type { RunConfig, RunPhase, KeystrokeLog, Keystroke } from "../core/types
 import { RunClock } from "../core/clock";
 import { FreeInput } from "../core/input/free-input";
 import type { InputController } from "../core/input/controller";
-import { generateText, initialWordCount } from "../core/text-gen";
-import { liveWpm } from "../live-stats";
+import { generateWithRng, initialWordCount } from "../core/text-gen";
+import { Rng } from "../core/text-gen/rng";
+import { liveWpm, liveWpmZen } from "../live-stats";
 import { submitRun, fetchQuote } from "../api";
 import { renderResults } from "./results";
 
-const TIME_VALUES = [15, 30, 60, 120];
+// 0 = Time infini (horloge désactivée, mots en flux continu, fin sur Shift+Enter).
+const TIME_VALUES = [15, 30, 60, 120, 0];
 const WORD_VALUES = [10, 25, 50];
+
+/** Marge de mots gardée en avance du curseur en Time infini (retop du flux). */
+const ENDLESS_LOOKAHEAD = 30;
+const ENDLESS_BATCH = 40;
 
 export class Practice {
   private config: RunConfig = {
@@ -33,6 +39,8 @@ export class Practice {
   private phase: RunPhase = "idle";
   private seed = 0;
   private targetWords: string[] = [];
+  /** Rng du Run courant, conservé pour re-générer des lots en Time infini (déterminisme). */
+  private rng: Rng | null = null;
   private controller: InputController = new FreeInput([]);
   private clock = new RunClock();
   private log: KeystrokeLog = [];
@@ -65,6 +73,7 @@ export class Practice {
     this.seed = (Math.random() * 0x7fffffff) | 0;
     this.clock.reset();
     this.log = [];
+    this.rng = null;
     this.quoteId = undefined;
     this.quoteAuthor = undefined;
     this.quoteWikipediaUrl = undefined;
@@ -91,21 +100,43 @@ export class Practice {
         return;
       }
       this.loadingQuote = false;
+    } else if (this.config.mode === "time" || this.config.mode === "words") {
+      // Rng conservé : Time infini re-génère des lots en CONTINUANT la même suite.
+      this.rng = new Rng(this.seed);
+      this.targetWords = generateWithRng(this.config, initialWordCount(this.config), this.rng);
     } else {
-      this.targetWords =
-        this.config.mode === "time" || this.config.mode === "words"
-          ? generateText(this.config, initialWordCount(this.config), this.seed)
-          : [];
+      // Zen : aucun texte cible. Le joueur tape librement, fin sur Shift+Enter.
+      this.targetWords = [];
     }
 
     this.controller = new FreeInput(this.targetWords);
     this.render();
   }
 
+  /** Modes à durée variable, sans fin naturelle : terminés uniquement sur Shift+Enter. */
+  private isEndless(): boolean {
+    return (
+      this.config.mode === "zen" ||
+      (this.config.mode === "time" && this.config.modeValue === 0)
+    );
+  }
+
+  /** Time infini : garde toujours des mots en avance du curseur (flux continu). */
+  private retopIfNeeded(): void {
+    if (this.config.mode !== "time" || this.config.modeValue !== 0 || !this.rng) return;
+    if (this.targetWords.length - this.controller.view().wordIndex > ENDLESS_LOOKAHEAD) return;
+    for (const w of generateWithRng(this.config, ENDLESS_BATCH, this.rng)) {
+      this.targetWords.push(w); // même tableau que FreeInput.target (référence partagée).
+    }
+    this.renderWords();
+  }
+
   private startCountdown(): void {
     if (this.phase !== "idle") return;
-    // Rien à taper encore : Quote en cours de chargement, en erreur, ou Mode sans texte.
-    if (this.loadingQuote || this.targetWords.length === 0) return;
+    // Rien à taper encore : Quote en chargement/erreur, ou Mode à texte cible sans mots.
+    // Zen n'a jamais de cible mais démarre quand même (le joueur tape librement).
+    if (this.loadingQuote) return;
+    if (this.targetWords.length === 0 && this.config.mode !== "zen") return;
     this.phase = "countdown";
     let n = 3;
     this.renderCountdown(n);
@@ -138,6 +169,7 @@ export class Practice {
       return;
     }
 
+    this.retopIfNeeded(); // Time infini : alimente le flux de mots.
     this.updateLiveBar(elapsed);
     this.rafId = requestAnimationFrame(() => this.loop());
   }
@@ -201,10 +233,12 @@ export class Practice {
       const k: Keystroke | null = this.controller.handleKey(e.key, e.ctrlKey, this.clock.elapsed());
       if (k) this.log.push(k);
 
-      if (this.controller.isComplete()) {
+      // Endless (Zen / Time infini) : jamais de fin naturelle → seul Shift+Enter termine.
+      if (!this.isEndless() && this.controller.isComplete()) {
         this.finish();
         return;
       }
+      this.retopIfNeeded(); // Time infini : réalimente si le curseur approche du bout.
       this.renderWords();
       this.updateLiveBar(this.clock.elapsed());
     }
@@ -227,7 +261,7 @@ export class Practice {
 
   private renderWords(): void {
     const el = this.root.querySelector<HTMLElement>("#words");
-    if (el) el.innerHTML = this.wordsHtml();
+    if (el) el.innerHTML = this.config.mode === "zen" ? this.zenHtml() : this.wordsHtml();
   }
 
   private renderCountdown(n: number): void {
@@ -241,9 +275,19 @@ export class Practice {
   }
 
   private liveBarHtml(elapsed: number): string {
-    const wpm = this.phase === "running" ? liveWpm(this.targetWords, this.controller.view(), elapsed) : 0;
+    let wpm = 0;
+    if (this.phase === "running") {
+      wpm =
+        this.config.mode === "zen"
+          ? liveWpmZen(this.controller.view(), elapsed)
+          : liveWpm(this.targetWords, this.controller.view(), elapsed);
+    }
+    const elapsedS = Math.floor(elapsed / 1000);
     let progress = "";
-    if (this.config.mode === "time" && this.config.modeValue > 0) {
+    if (this.config.mode === "zen" || (this.config.mode === "time" && this.config.modeValue === 0)) {
+      // Endless : le chrono MONTE (pas de cible de temps). ∞ rappelle le mode.
+      progress = `<span class="timer">${elapsedS}s ∞</span>`;
+    } else if (this.config.mode === "time") {
       const remaining = Math.max(0, Math.ceil(this.config.modeValue - elapsed / 1000));
       progress = `<span class="timer">${remaining}s</span>`;
     } else if (this.config.mode === "words") {
@@ -261,6 +305,7 @@ export class Practice {
     if (this.loadingQuote) return `<div class="loading">Chargement d'une citation…</div>`;
     if (this.quoteError)
       return `<div class="loading">Impossible de charger la citation. Tab pour réessayer.</div>`;
+    if (this.config.mode === "zen") return this.zenHtml();
     return this.wordsHtml();
   }
 
@@ -275,40 +320,63 @@ export class Practice {
       .join("");
   }
 
+  /**
+   * Rendu du Mode Zen : aucun texte cible à l'écran, on affiche uniquement ce que le
+   * joueur tape (tout est « correct » — miroir de replay_zen). Le curseur suit le buffer.
+   */
+  private zenHtml(): string {
+    if (this.phase === "idle") {
+      return `<div class="loading">Zen · tape librement — Shift+Enter pour terminer.</div>`;
+    }
+    const view = this.controller.view();
+    const caret = this.phase === "running" ? `<span class="caret"></span>` : "";
+    const words = view.lockedWords
+      .map((w) => `<span class="word"><span class="correct">${escapeText(w)}</span></span> `)
+      .join("");
+    const current = `<span class="word"><span class="correct">${escapeText(view.typed)}</span>${caret}</span>`;
+    return words + current;
+  }
+
   private hintText(): string {
     if (this.phase === "idle") {
+      if (this.config.mode === "zen") return "Clique ou tape pour démarrer · Shift+Enter pour terminer";
       const regen = this.config.mode === "quotes" ? "Tab pour une autre citation" : "Tab pour regénérer";
       return `Clique ou tape pour démarrer · ${regen}`;
     }
-    if (this.phase === "running") return "Tab pour recommencer";
+    if (this.phase === "running") {
+      return this.isEndless() ? "Shift+Enter pour terminer · Tab pour recommencer" : "Tab pour recommencer";
+    }
     return "";
   }
 
   // --- Barre de configuration -------------------------------------------------
 
   private configBarHtml(): string {
-    // Quotes : longueur et Settings ne s'appliquent pas (le Player tape la Quote entière).
-    const isQuotes = this.config.mode === "quotes";
+    // Quotes (texte imposé) et Zen (aucun texte) : ni longueur ni Settings applicables.
+    const noText = this.config.mode === "quotes" || this.config.mode === "zen";
     const values = this.config.mode === "time" ? TIME_VALUES : WORD_VALUES;
     const valueBtns = values
       .map(
         (v) =>
-          `<button data-value="${v}" class="${this.config.modeValue === v ? "on" : ""}">${v}</button>`,
+          `<button data-value="${v}" class="${this.config.modeValue === v ? "on" : ""}">${v === 0 ? "∞" : v}</button>`,
       )
       .join("");
-    const valueGroup = isQuotes ? "" : `<div class="group">${valueBtns}</div>`;
-    const settingsGroup = isQuotes
+    const valueGroup = noText ? "" : `<div class="group">${valueBtns}</div>`;
+    const settingsGroup = noText
       ? ""
       : `<div class="group">
           <button data-toggle="punctuation" class="${this.config.punctuation ? "on" : ""}">punctuation</button>
           <button data-toggle="numbers" class="${this.config.numbers ? "on" : ""}">numbers</button>
         </div>`;
+    const modeBtn = (m: RunConfig["mode"]) =>
+      `<button data-mode="${m}" class="${this.config.mode === m ? "on" : ""}">${m}</button>`;
     return `
       <div class="config">
         <div class="group">
-          <button data-mode="time" class="${this.config.mode === "time" ? "on" : ""}">time</button>
-          <button data-mode="words" class="${this.config.mode === "words" ? "on" : ""}">words</button>
-          <button data-mode="quotes" class="${isQuotes ? "on" : ""}">quotes</button>
+          ${modeBtn("time")}
+          ${modeBtn("words")}
+          ${modeBtn("quotes")}
+          ${modeBtn("zen")}
         </div>
         ${valueGroup}
         ${settingsGroup}
@@ -364,4 +432,11 @@ function escapeChar(ch: string): string {
   if (ch === ">") return "&gt;";
   if (ch === "&") return "&amp;";
   return ch;
+}
+
+/** Échappe une chaîne entière (Zen : le texte tapé par le joueur). */
+function escapeText(s: string): string {
+  let out = "";
+  for (const ch of s) out += escapeChar(ch);
+  return out;
 }

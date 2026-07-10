@@ -33,3 +33,16 @@ export function liveWpm(targetWords: string[], view: InputView, elapsedMs: numbe
   if (minutes <= 0) return 0;
   return Math.round(correct / 5 / minutes);
 }
+
+/**
+ * WPM live pour Zen : pas de texte cible, donc TOUTE frappe imprimable compte
+ * (miroir de `replay_zen` côté Rust). On somme les chars des mots verrouillés
+ * (+ séparateur) et du buffer courant. Non autoritaire — feedback d'affichage.
+ */
+export function liveWpmZen(view: InputView, elapsedMs: number): number {
+  let chars = view.typed.length;
+  for (const w of view.lockedWords) chars += w.length + 1; // +1 = espace séparateur
+  const minutes = elapsedMs / 60000;
+  if (minutes <= 0) return 0;
+  return Math.round(chars / 5 / minutes);
+}

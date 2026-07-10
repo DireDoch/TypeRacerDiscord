@@ -37,6 +37,9 @@ export class FreeInput implements InputController {
 
   /** Buffer maximal accepté pour le mot courant (plafond d'Extra). */
   private maxBuffer(): number {
+    // Zen (aucun texte cible) : pas de plafond, le mot tapé s'affiche en entier.
+    // Sans incidence sur la parité Rust : Zen passe par replay_zen (pas de max_buffer).
+    if (this.target.length === 0) return Infinity;
     const t = this.currentTarget();
     return t.length + Math.max(4, t.length); // au plus ~2× la longueur cible
   }
