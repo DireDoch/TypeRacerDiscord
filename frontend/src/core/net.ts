@@ -6,12 +6,15 @@
 //  Wire JSON internally-tagged, ex. { "type": "JoinRoom", "channelId": "123" }.
 // =============================================================================
 
+import type { Keystroke } from "./types";
+
 /** Client → Serveur. */
 export type ClientEvent =
   | { type: "JoinRoom"; channelId: string }
   | { type: "StartRace" } // owner uniquement (le serveur rejette les autres)
   | { type: "Progress"; charsDone: number }
-  | { type: "Finish"; keystrokesJson: string }
+  // Le serveur possède seed/texte/config : Finish n'envoie que le log + la durée.
+  | { type: "Finish"; keystrokes: Keystroke[]; endedAtMs: number }
   | { type: "LeaveRoom" };
 
 /** Serveur → Client. */

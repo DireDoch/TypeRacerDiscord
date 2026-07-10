@@ -8,6 +8,7 @@
 
 import "./style.css";
 import { Practice } from "./ui/practice";
+import { Race } from "./ui/race";
 import { getAuthToken } from "./discord";
 
 // Amorce le handshake d'identité tôt (non bloquant). En cas d'échec, on log et on
@@ -17,4 +18,9 @@ getAuthToken().catch((e) => console.error("Auth Discord échouée :", e));
 const root = document.querySelector<HTMLDivElement>("#app");
 if (!root) throw new Error("#app introuvable dans index.html");
 
-new Practice(root).mount();
+// `?race` monte l'écran multijoueur (salon via `?channel=` en dev, sinon Discord).
+if (new URLSearchParams(location.search).has("race")) {
+  void new Race(root).mount();
+} else {
+  new Practice(root).mount();
+}

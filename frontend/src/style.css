@@ -213,3 +213,84 @@ button.primary:hover {
   color: var(--text);
   background: #2c2e31;
 }
+
+/* --- Race (multijoueur) --------------------------------------------------- */
+.race {
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+  align-items: center;
+}
+.race .words,
+.race .live-bar,
+.race .bars {
+  width: 100%;
+}
+
+/* Cartes de présence empilées. */
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  width: min(420px, 100%);
+}
+.card {
+  background: #2c2e31;
+  border-left: 3px solid var(--sub);
+  border-radius: 0.4rem;
+  padding: 0.6rem 0.9rem;
+  font-size: 0.95rem;
+}
+.card.owner {
+  border-left-color: var(--main);
+}
+.card.me {
+  color: var(--text);
+}
+
+.race button.on {
+  background: none;
+  border: 1px solid var(--main);
+  color: var(--main);
+  font-family: var(--font);
+  font-size: 0.95rem;
+  cursor: pointer;
+  padding: 0.5rem 1.2rem;
+  border-radius: 0.4rem;
+}
+.race button.on:hover {
+  background: #2c2e31;
+}
+
+/* Barres de progression (une par joueur). */
+.bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.bar-label {
+  font-size: 0.8rem;
+  color: var(--sub);
+}
+.bar-track {
+  background: #2c2e31;
+  border-radius: 0.3rem;
+  height: 0.7rem;
+  overflow: hidden;
+  margin-top: 0.2rem;
+}
+.bar-fill {
+  background: var(--main);
+  height: 100%;
+  transition: width 0.15s ease-out;
+}
+
+.ranking {
+  list-style: none;
+  padding: 0;
+  font-size: 1.1rem;
+  line-height: 1.8;
+}
+.ranking .me {
+  color: var(--main);
+}
