@@ -24,7 +24,9 @@ use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::broadcast;
 
+use crate::domain::replay::{compute_scoreboard, ScoreInput};
 use crate::domain::text_gen::{generate_text, GenSettings};
+use crate::domain::types::{Keystroke, Mode};
 use protocol::{ChannelId, ClientEvent, PlayerId, ServerEvent};
 
 /// Nombre de mots pré-générés pour le texte cible d'une Room (défaut Words).
@@ -42,6 +44,8 @@ pub struct Room {
     pub target_text: String,
     /// t=0 partagé une fois la Race lancée.
     pub start_at_epoch_ms: Option<i64>,
+    /// Joueurs ayant fini (ordre d'arrivée) + leur WPM autoritaire.
+    pub finishers: Vec<(PlayerId, f64)>,
     /// Diffusion des ServerEvent vers tous les sockets du salon.
     pub tx: broadcast::Sender<ServerEvent>,
 }
@@ -89,8 +93,14 @@ pub async fn handle_socket(socket: WebSocket, rooms: Rooms, player_id: PlayerId)
         };
         match serde_json::from_str::<ClientEvent>(&text) {
             Ok(ClientEvent::StartRace) => start_race(&rooms, &channel_id, &player_id),
+            Ok(ClientEvent::Progress { chars_done }) => {
+                relay_progress(&rooms, &channel_id, &player_id, chars_done)
+            }
+            Ok(ClientEvent::Finish { keystrokes, ended_at_ms }) => {
+                finish_race(&rooms, &channel_id, &player_id, keystrokes, ended_at_ms)
+            }
             Ok(ClientEvent::LeaveRoom) => break,
-            // JoinRoom en double / Progress / Finish : ignorés à cette étape.
+            // JoinRoom en double : ignoré.
             Ok(_) | Err(_) => {}
         }
     }
@@ -140,6 +150,7 @@ fn join_room(rooms: &Rooms, channel_id: &str, player_id: &str) -> broadcast::Rec
             seed: seed as u64,
             target_text,
             start_at_epoch_ms: None,
+            finishers: Vec::new(),
             tx,
         }
     });
@@ -177,6 +188,55 @@ fn start_race(rooms: &Rooms, channel_id: &str, player_id: &str) {
         let start = now_epoch_ms();
         room.start_at_epoch_ms = Some(start);
         let _ = room.tx.send(ServerEvent::RaceStart { start_at_epoch_ms: start });
+    }
+}
+
+/// Relaie la progression d'un joueur aux autres (rendu des barres). Non autoritaire.
+fn relay_progress(rooms: &Rooms, channel_id: &str, player_id: &str, chars_done: u32) {
+    let rooms = rooms.lock().unwrap();
+    if let Some(room) = rooms.get(channel_id) {
+        let _ = room.tx.send(ServerEvent::PlayerProgress {
+            player_id: player_id.to_string(),
+            chars_done,
+        });
+    }
+}
+
+/// Finish : recompute AUTORITAIRE contre le texte du serveur, diffuse PlayerFinished,
+/// puis RaceOver (classé par WPM) quand tous les présents ont fini.
+fn finish_race(rooms: &Rooms, channel_id: &str, player_id: &str, keystrokes: Vec<Keystroke>, ended_at_ms: f64) {
+    let mut rooms = rooms.lock().unwrap();
+    let Some(room) = rooms.get_mut(channel_id) else { return };
+    if room.finishers.iter().any(|(p, _)| p == player_id) {
+        return; // déjà fini : on ignore un doublon
+    }
+
+    // Race = Words sur le texte du salon (le serveur possède seed/texte/config).
+    let mode_value = room.target_text.split(' ').count() as i64;
+    let sb = compute_scoreboard(&ScoreInput {
+        mode: Mode::Words,
+        mode_value,
+        target_text: room.target_text.clone(),
+        keystrokes,
+        ended_at_ms,
+    });
+
+    room.finishers.push((player_id.to_string(), sb.wpm));
+    let _ = room.tx.send(ServerEvent::PlayerFinished {
+        player_id: player_id.to_string(),
+        wpm: sb.wpm,
+    });
+
+    // ponytail: fin de course quand #finishers ≥ #présents. Un départ en cours de
+    // course peut donc clôturer tôt ; acceptable au MVP (upgrade : ancrer sur la
+    // liste des partants figée au RaceStart).
+    if room.finishers.len() >= room.players.len() {
+        let mut ranked = room.finishers.clone();
+        ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let ranking = ranked.into_iter().map(|(p, _)| p).collect();
+        let _ = room.tx.send(ServerEvent::RaceOver { ranking });
+        room.finishers.clear(); // prêt pour une nouvelle course
+        room.start_at_epoch_ms = None;
     }
 }
 

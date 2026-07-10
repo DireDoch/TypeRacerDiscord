@@ -11,6 +11,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::domain::types::Keystroke;
+
 /// Identifiant de salon vocal Discord (snowflake) — clé d'une Room.
 pub type ChannelId = String;
 /// Discord user ID (snowflake), toujours en string.
@@ -27,8 +29,9 @@ pub enum ClientEvent {
     StartRace,
     /// Progression de frappe (diffusée pour le rendu des "voitures"). Pas autoritaire.
     Progress { chars_done: u32 },
-    /// Soumission finale : même payload que POST /api/runs (log brut), recompute serveur.
-    Finish { keystrokes_json: String },
+    /// Soumission finale : log brut + durée. Le serveur recompute contre SON texte
+    /// (seed/texte/config lui appartiennent — jamais renvoyés par le client).
+    Finish { keystrokes: Vec<Keystroke>, ended_at_ms: f64 },
     LeaveRoom,
 }
 
