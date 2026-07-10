@@ -5,4 +5,5 @@
 // (en MVP le client envoie `targetText`, le serveur recompute dessus).
 
 pub mod replay;
+pub mod text_gen;
 pub mod types;
