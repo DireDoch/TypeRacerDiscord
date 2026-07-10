@@ -13,6 +13,7 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tower-http = { version = "0.6", features = ["fs"] }
 dotenvy = "0.15"
+futures-util = { version = "0.3", default-features = false }
 
 [profile.dev]
 # Compile un poil plus vite pendant l'itération.

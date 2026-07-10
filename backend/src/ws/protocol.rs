@@ -23,8 +23,8 @@ pub type PlayerId = String;
 pub enum ClientEvent {
     /// Rejoindre/instancier la Room du salon courant.
     JoinRoom { channel_id: ChannelId },
-    /// Signaler qu'on est prêt à démarrer.
-    Ready,
+    /// Lancer la course — accepté du seul owner de la Room (ignoré sinon).
+    StartRace,
     /// Progression de frappe (diffusée pour le rendu des "voitures"). Pas autoritaire.
     Progress { chars_done: u32 },
     /// Soumission finale : même payload que POST /api/runs (log brut), recompute serveur.
@@ -32,13 +32,14 @@ pub enum ClientEvent {
     LeaveRoom,
 }
 
-/// Messages Serveur → Client.
-#[derive(Debug, Serialize)]
+/// Messages Serveur → Client. `Clone` : diffusé via broadcast à tous les sockets.
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all_fields = "camelCase")]
 pub enum ServerEvent {
-    /// État de la Room après un join (joueurs présents, config, seed).
+    /// État de la Room (présence + owner + config), re-diffusé à chaque join/leave.
     RoomState {
         players: Vec<PlayerId>,
+        owner: PlayerId,
         seed: u64,
         target_text: String,
     },
