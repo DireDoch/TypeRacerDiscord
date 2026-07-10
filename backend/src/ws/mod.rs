@@ -227,9 +227,9 @@ fn finish_race(rooms: &Rooms, channel_id: &str, player_id: &str, keystrokes: Vec
         wpm: sb.wpm,
     });
 
-    // ponytail: fin de course quand #finishers ≥ #présents. Un départ en cours de
-    // course peut donc clôturer tôt ; acceptable au MVP (upgrade : ancrer sur la
-    // liste des partants figée au RaceStart).
+    // Fin de course quand tous les présents ont fini. Limite connue : un départ en
+    // cours de course fait baisser #présents et peut donc clôturer tôt — acceptable
+    // au MVP ; à durcir en ancrant sur la liste des partants figée au RaceStart.
     if room.finishers.len() >= room.players.len() {
         let mut ranked = room.finishers.clone();
         ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));

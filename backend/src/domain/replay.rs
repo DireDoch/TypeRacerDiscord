@@ -230,8 +230,9 @@ fn replay_target(target_text: &str, keys: &[Keystroke]) -> ReplayResult {
 //  Même modèle de pile que replay_target, mais sans cible : WPM = état visible final
 //  (le retour arrière EFFACE, il ne compte pas), Raw = toutes les frappes imprimables
 //  (l'effort, effacé inclus), ACC = 100 % (rien n'est faux sans cible).
-//  ponytail: mécanique de pile dupliquée de replay_target (~15 l.) — la partager
-//  forcerait à toucher l'algo autoritaire testé ; copie locale préférée à la parité fragile.
+//  La mécanique de pile (~15 l.) est volontairement dupliquée de replay_target :
+//  la factoriser forcerait à toucher l'algo autoritaire testé, et une copie locale
+//  vaut mieux qu'une parité fragile entre les deux chemins.
 
 fn replay_zen(keys: &[Keystroke]) -> ReplayResult {
     let mut locked: Vec<String> = Vec::new();
