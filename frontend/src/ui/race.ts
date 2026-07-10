@@ -1,20 +1,24 @@
 // =============================================================================
-//  ui/race.ts — écran de Race multijoueur (Phase 2, TypeRacer).
+//  ui/race.ts — écran de Race multijoueur (Phase 2).
 //
 //  Machine d'état pilotée par le SERVEUR : connecting → lobby → countdown(3s) →
 //  running → over. Le serveur possède seed/texte (RoomState) et t=0 (RaceStart).
 //   - RaceStart = signal « go » : décompte local de 3 s (texte visible pour lire le
 //     1er mot) puis RunClock.start() — SEUL point de bascule du temps côté client.
-//   - Saisie : BlockingInput (mot exact pour avancer). Progress diffusé pour les
-//     barres ; Finish réutilise le log brut → recompute autoritaire → RaceOver.
-//  Owner (1er arrivé) : seul à voir le bouton « Démarrer ».
+//   - Saisie : FreeInput (curseur libre) → le flux n'est JAMAIS bloqué, on écrit et
+//     on avance malgré les fautes (comme le solo). Mais la course ne se TERMINE que
+//     lorsque TOUT le texte est exact (raceComplete) : il faut corriger pour finir.
+//   - Progress diffusé pour les barres ; Finish (log brut) → recompute autoritaire
+//     → RaceOver. Owner (1er arrivé) : seul à voir le bouton « Démarrer ».
 // =============================================================================
 
 import type { Keystroke } from "../core/types";
+import type { InputView } from "../core/input/controller";
 import { RunClock } from "../core/clock";
-import { BlockingInput } from "../core/input/blocking-input";
+import { FreeInput } from "../core/input/free-input";
 import { RaceSocket, type ServerEvent } from "../core/net";
 import { liveWpm } from "../live-stats";
+import { renderWord } from "./practice";
 import { getIdentity } from "../discord";
 
 type Phase = "connecting" | "lobby" | "countdown" | "running" | "over";
@@ -31,7 +35,7 @@ export class Race {
   private targetWords: string[] = [];
 
   private clock = new RunClock();
-  private controller = new BlockingInput([]);
+  private controller = new FreeInput([]);
   private log: Keystroke[] = [];
   private doneLocal = false;
 
@@ -114,7 +118,7 @@ export class Race {
     this.phase = "running";
     this.doneLocal = false;
     this.log = [];
-    this.controller = new BlockingInput(this.targetWords);
+    this.controller = new FreeInput(this.targetWords);
     this.clock.start(); // t=0 (pilotée par RaceStart, plus par un décompte local isolé)
     this.render();
     this.loop();
@@ -146,7 +150,9 @@ export class Race {
     if (k) this.log.push(k);
     this.socket?.send({ type: "Progress", charsDone: this.charsDone() });
 
-    if (this.controller.isComplete()) {
+    // Fin de course : uniquement quand TOUT le texte est exact (flux jamais bloqué,
+    // mais il faut avoir corrigé ses fautes pour terminer).
+    if (raceComplete(this.targetWords, this.controller.view())) {
       this.doneLocal = true;
       this.socket?.send({ type: "Finish", keystrokes: this.log, endedAtMs: this.clock.elapsed() });
     }
@@ -174,7 +180,7 @@ export class Race {
         return `<div class="live-bar" id="liveBar"></div>
           <div class="words" id="words">${this.wordsHtml()}</div>
           <div class="bars" id="bars">${this.barsHtml()}</div>
-          <p class="hint">${this.doneLocal ? "Terminé — en attente des autres…" : "Tape le texte exactement"}</p>`;
+          <p class="hint">${this.doneLocal ? "Terminé — en attente des autres…" : "Tape le texte ; corrige tes fautes pour finir"}</p>`;
       case "over":
         return this.rankingHtml() + `<p class="hint">Course terminée.</p>`;
     }
@@ -209,9 +215,9 @@ export class Race {
     const v = this.controller.view();
     return this.targetWords
       .map((target, i) => {
-        if (i < v.lockedWords.length) return raceWordHtml(target, v.lockedWords[i], false);
-        if (i === v.wordIndex) return raceWordHtml(target, v.typed, !this.doneLocal);
-        return raceWordHtml(target, "", false);
+        if (i < v.lockedWords.length) return renderWord(target, v.lockedWords[i], false);
+        if (i === v.wordIndex) return renderWord(target, v.typed, !this.doneLocal);
+        return renderWord(target, "", false);
       })
       .join("");
   }
@@ -257,26 +263,18 @@ export class Race {
 }
 
 /**
- * Rendu d'un mot en mode Race (cascade TypeRacer) : dès la 1re divergence, TOUT ce
- * qui suit passe en rouge (`incorrect`/`extra`), même les caractères tapés juste
- * après. Fonction pure — testée isolément.
+ * Course terminée = TOUT le texte tapé exactement. Le curseur reste libre (on peut
+ * avancer avec des fautes) mais on ne finit qu'une fois tout corrigé. Fonction pure.
  */
-export function raceWordHtml(target: string, typed: string, withCaret: boolean): string {
-  const spans: string[] = [];
-  const len = Math.max(target.length, typed.length);
-  let broken = false;
-  for (let i = 0; i < len; i++) {
-    const caret = withCaret && i === typed.length ? `<span class="caret"></span>` : "";
-    if (i < typed.length) {
-      if (!broken && (i >= target.length || typed[i] !== target[i])) broken = true;
-      const cls = !broken ? "correct" : i >= target.length ? "extra" : "incorrect";
-      spans.push(`${caret}<span class="${cls}">${escapeChar(typed[i])}</span>`);
-    } else {
-      spans.push(`${caret}<span class="untyped">${escapeChar(target[i])}</span>`);
-    }
-  }
-  if (withCaret && typed.length >= len) spans.push(`<span class="caret"></span>`);
-  return `<span class="word">${spans.join("")}</span> `;
+export function raceComplete(targetWords: string[], view: InputView): boolean {
+  const n = targetWords.length;
+  if (n === 0) return false;
+  const lockedExact = view.lockedWords.every((w, i) => w === targetWords[i]);
+  // Espace tapé après le dernier mot : tous les mots verrouillés et exacts.
+  if (view.lockedWords.length === n) return lockedExact;
+  // Dernier mot en cours de frappe : précédents exacts + mot courant exact.
+  if (view.lockedWords.length === n - 1) return lockedExact && view.typed === targetWords[n - 1];
+  return false;
 }
 
 function escapeChar(ch: string): string {

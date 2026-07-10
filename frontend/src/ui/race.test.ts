@@ -1,28 +1,33 @@
 import { describe, it, expect } from "vitest";
-import { raceWordHtml } from "./race";
+import { raceComplete } from "./race";
+import type { InputView } from "../core/input/controller";
 
-/** Classe appliquée à chaque caractère TAPÉ (dans l'ordre), pour vérifier la cascade. */
-function typedClasses(html: string): string[] {
-  return [...html.matchAll(/<span class="(correct|incorrect|extra)">/g)].map((m) => m[1]);
-}
+const view = (lockedWords: string[], typed: string): InputView => ({
+  wordIndex: lockedWords.length,
+  typed,
+  lockedWords,
+});
 
-describe("raceWordHtml — cascade TypeRacer", () => {
-  it("tout correct : que des 'correct'", () => {
-    expect(typedClasses(raceWordHtml("the", "the", false))).toEqual(["correct", "correct", "correct"]);
+describe("raceComplete — fin de course = texte entièrement exact", () => {
+  const target = ["the", "cat", "sat"];
+
+  it("dernier mot en cours et exact + précédents exacts : terminé", () => {
+    expect(raceComplete(target, view(["the", "cat"], "sat"))).toBe(true);
   });
 
-  it("dès la 1re faute, tout ce qui suit est rouge — même un char juste par hasard", () => {
-    // cible "the", tapé "txe" : t ok, x faux, e (=cible) mais APRÈS la faute → incorrect.
-    expect(typedClasses(raceWordHtml("the", "txe", false))).toEqual(["correct", "incorrect", "incorrect"]);
+  it("tous verrouillés exactement (espace après le dernier) : terminé", () => {
+    expect(raceComplete(target, view(["the", "cat", "sat"], ""))).toBe(true);
   });
 
-  it("caractères au-delà de la cible : 'extra' (rouge aussi)", () => {
-    expect(typedClasses(raceWordHtml("hi", "hixx", false))).toEqual(["correct", "correct", "extra", "extra"]);
+  it("une faute non corrigée dans un mot précédent : PAS terminé", () => {
+    expect(raceComplete(target, view(["teh", "cat"], "sat"))).toBe(false);
   });
 
-  it("préfixe correct incomplet : pas d'erreur, le reste non tapé reste untyped", () => {
-    const html = raceWordHtml("the", "th", false);
-    expect(typedClasses(html)).toEqual(["correct", "correct"]);
-    expect(html).toContain('class="untyped"');
+  it("dernier mot inexact : PAS terminé", () => {
+    expect(raceComplete(target, view(["the", "cat"], "sxt"))).toBe(false);
+  });
+
+  it("pas encore au bout : PAS terminé", () => {
+    expect(raceComplete(target, view(["the"], "cat"))).toBe(false);
   });
 });

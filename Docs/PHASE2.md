@@ -13,7 +13,7 @@ En Race, le serveur **possède** ces deux choses, ce qui rend le recompute non-f
 |---|---|---|---|
 | Texte cible / seed | Client (`text-gen/`) | **Serveur** (`domain/text_gen.rs`, même algo porté) | la fonction de génération |
 | t=0 | Client (fin du décompte local) | **Serveur** (`RaceStart` diffusé) | `RunClock.start()` (`core/clock.ts`) |
-| Contrôleur de saisie | `FreeInput` | `BlockingInput` | `InputController` (`core/input/`) |
+| Contrôleur de saisie | `FreeInput` | `FreeInput` + fin stricte (`raceComplete`) | `InputController` (`core/input/`) |
 | Recompute scoreboard | Rust depuis log+texte | Rust depuis log+texte (inchangé) | `domain/replay.rs` (déjà autoritaire) |
 
 Le **format du keystroke log et la forme du Scoreboard ne changent pas** entre MVP et Phase 2.
@@ -22,22 +22,23 @@ C'est tout l'intérêt d'avoir rendu Rust autoritaire dès le solo.
 ## Points de bascule, fichier par fichier
 
 - `core/clock.ts` — `RunClock.start()` appelé sur événement local (solo) vs `RaceStart` (Race).
-- `core/input/blocking-input.ts` — stub à implémenter ; même `InputController` que `FreeInput`.
+- `ui/race.ts::raceComplete` — fin de course stricte (tout le texte exact), au-dessus de `FreeInput`.
 - `core/text-gen/index.ts` — `generateText(..., seed)` déjà pur+seedé ; le serveur tire le seed.
 - `backend/src/domain/text_gen.rs` — port Rust de la génération (parité avec le TS via le seed).
 - `backend/src/ws/` — `Rooms = Arc<Mutex<HashMap<ChannelId, Room>>>` + `protocol.rs` (events).
 
-## Deux modèles de saisie (Monkeytype vs TypeRacer)
+## Saisie : curseur libre partout, fin stricte en Race
 
-Le `InputController` a deux implémentations, une par style de jeu :
+Un seul contrôleur, `FreeInput` (curseur libre), pour le solo ET la Race — le flux n'est
+**jamais bloqué** : on écrit et on avance malgré les fautes (l'espace verrouille même un mot
+faux, le backspace peut rouvrir un mot précédent pour corriger). Ce qui distingue les deux :
 
-- **Solo = Monkeytype = `FreeInput`** (MVP, déjà expédié). Curseur libre, les fautes sont
-  TOLÉRÉES (rouge à l'écran mais on continue), l'espace avance même sur un mot faux. Noté après
-  coup : WPM = chars corrects / 5 / min, accuracy à part. On peut laisser des erreurs.
-- **Race = TypeRacer = `BlockingInput`** (Phase 2). Saisie libre DANS le mot courant (les fautes
-  s'affichent en rouge), mais l'espace n'avance QUE si le mot est tapé EXACTEMENT — il faut donc
-  corriger avant de continuer. Pas de retour aux mots verrouillés (curseur non libre). Le texte
-  final est toujours parfait ⇒ la course est de la vitesse pure.
+- **Solo (Monkeytype)** : on peut TERMINER avec des fautes. WPM = chars corrects / 5 / min,
+  accuracy à part. Les erreurs coûtent juste des points.
+- **Race** : le flux est identique (aucun blocage à la faute — c'était trop cassant pour le
+  « flow »), mais la course ne se **termine** que lorsque tout le texte est exact
+  (`ui/race.ts::raceComplete`). On corrige donc ses fautes pour finir/gagner ; le texte final est
+  parfait ⇒ course de vitesse pure.
 
 Le recompute autoritaire (`domain/replay.rs`) ne change pas : mêmes chiffres pour les deux, seule
 la façon de produire le keystroke log diffère.
@@ -73,8 +74,9 @@ Le format du keystroke log et du Scoreboard ne bouge pas : le recompute autorita
 1. ✅ **Port du générateur en Rust** (`backend/src/domain/text_gen.rs`) : port de `text-gen/`
    (mulberry32 + word-list + punctuation/numbers), parité TS↔Rust figée sur le seed 12345.
    Le serveur est propriétaire du texte.
-2. ✅ **`BlockingInput`** (`core/input/blocking-input.ts`) : modèle TypeRacer (saisie libre dans le
-   mot, espace exact pour avancer, pas de retour arrière). Testable en solo, même `InputController`.
+2. ✅ **Saisie Race** : d'abord un `BlockingInput` (mot exact pour avancer), finalement abandonné —
+   le blocage cassait le « flow ». La Race réutilise `FreeInput` + fin stricte `raceComplete`
+   (flux libre, mais tout le texte doit être exact pour terminer). Voir section ci-dessus.
 3. ✅ **Route WebSocket** : `ws/` câblé au routeur Axum (`/ws`), `Rooms = Arc<Mutex<HashMap<…>>>`,
    auth via `?token=`. `JoinRoom → RoomState` (présence nue, seed+texte générés serveur).
 

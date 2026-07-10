@@ -1,9 +1,10 @@
 // =============================================================================
 //  InputController — interface commune aux contrôleurs de saisie.
 //
-//  Deux implémentations :
-//   - FreeInput     (free-input.ts)     : Practice / Monkeytype, SEULE expédiée au MVP.
-//   - BlockingInput (blocking-input.ts) : Race / TypeRacer, STUB testable, rebranché en Phase 2.
+//  Une seule implémentation : FreeInput (free-input.ts), curseur libre. Utilisée en
+//  solo (Practice) ET en Race : le flux n'est jamais bloqué. La Race ajoute par-dessus
+//  une condition de fin stricte (ui/race.ts::raceComplete) — tout le texte doit être
+//  exact pour terminer — sans changer le contrôleur.
 //
 //  Le contrôleur ne calcule AUCUNE stat. Sa seule responsabilité :
 //  transformer les frappes physiques en (a) buffer affichable et (b) Keystroke log brut.

@@ -418,7 +418,7 @@ export class Practice {
 }
 
 /** Rend un mot caractère par caractère (correct / incorrect / extra / untyped + caret). */
-function renderWord(target: string, typed: string, withCaret: boolean): string {
+export function renderWord(target: string, typed: string, withCaret: boolean): string {
   const spans: string[] = [];
   const len = Math.max(target.length, typed.length);
   for (let i = 0; i < len; i++) {
