@@ -245,7 +245,7 @@ fn replay_zen(keys: &[Keystroke]) -> ReplayResult {
 
     let mut snapshots: Vec<Snapshot> = Vec::new();
     let mut completions: Vec<Completion> = Vec::new();
-    let mut push_snap = |snapshots: &mut Vec<Snapshot>, t: f64, visible: i64, typed: &str, raw: i64| {
+    let push_snap = |snapshots: &mut Vec<Snapshot>, t: f64, visible: i64, typed: &str, raw: i64| {
         snapshots.push(Snapshot { t, correct_chars: visible + clen(typed), raw_chars: raw });
     };
 
