@@ -80,29 +80,33 @@ Le format du keystroke log et du Scoreboard ne bouge pas : le recompute autorita
 3. ✅ **Route WebSocket** : `ws/` câblé au routeur Axum (`/ws`), `Rooms = Arc<Mutex<HashMap<…>>>`,
    auth via `?token=`. `JoinRoom → RoomState` (présence nue, seed+texte générés serveur).
 
-Reste à faire (chaque tranche se teste avant la suivante) :
-
-4. **Diffusion + owner + `RaceStart` pilote `RunClock.start()`.**
+4. ✅ **Diffusion + owner + `RaceStart` pilote `RunClock.start()`.**
    - Backend : `broadcast::Sender` par Room ; `JoinRoom`/`LeaveRoom` re-diffusent `RoomState`
      (avec `owner`). `StartRace` (rejeté si l'émetteur n'est pas l'owner) → `RaceStart{ }` à tous.
    - Client (`core/clock.ts`) : SEUL point de bascule. En Race, `RunClock.start()` est appelé à la
      réception de `RaceStart`, plus par le décompte local. `RaceStart` = simple signal « go »
      (option A : `start()` = `performance.now()` à la réception ; on ignore l'horloge murale, pas
      de sync client↔serveur au MVP).
-5. **Décompte de 3 s + course à 2, même texte.** `RaceStart` déclenche un décompte de 3 s côté
+5. ✅ **Décompte de 3 s + course à 2, même texte.** `RaceStart` déclenche un décompte de 3 s côté
    client AVEC le texte déjà à l'écran (le joueur lit le 1er mot) ; à 0, t=0. Puis `Progress`/
    `PlayerProgress` (barres live via `live-stats.ts`) → `Finish` (payload identique à
    `POST /api/runs`) → `RaceOver`. Recompute et anti-triche timing = le code solo, inchangé.
-6. **UI Room.** Rejoindre via `channelId` ; **cartes de présence en pile** (empilées à
+6. ✅ **UI Room.** Rejoindre via `channelId` ; **cartes de présence en pile** (empilées à
    l'arrivée d'un joueur, retirées au départ) ; bouton « Démarrer » visible pour le seul owner ;
    barres de progression ; écran `RaceOver`.
+7. ✅ **Partants figés + revanche.** Les partants sont figés au `RaceStart`
+   (`Room.racers`) : un joueur qui rejoint en cours ne bloque pas la fin, un partant
+   qui quitte n'est plus attendu (`all_racers_done`, testé). Après `RaceOver` le
+   serveur regénère seed+texte et re-diffuse `RoomState` ; l'écran `RaceOver` garde le
+   bouton « Démarrer » de l'owner → revanche sur texte neuf, sans recharger.
 
-Première tranche jouable de bout en bout : étapes 4→6 pour un duel même-texte. Le classement final
+La tranche jouable de bout en bout (étapes 4→7, duel même-texte) est **livrée**. Le classement final
 vient du recompute autoritaire.
 
 **Hors-scope (plus tard, pas maintenant — YAGNI) :** visualiseur par joueur de la portion de texte
 parcourue (jusqu'à la fin du texte) ; sync d'horloge fine pour un décompte parfaitement simultané ;
-transfert d'owner déjà couvert mais reconnexion en cours de course non.
+transfert d'owner déjà couvert mais reconnexion en cours de course non ; persistance des Races
+dans l'historique/PB (les Runs de Race ne touchent pas la table `runs`).
 
 ## Ce qui reste hors-scope tant que Phase 2 n'est pas lancée
 

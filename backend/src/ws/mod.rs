@@ -1,5 +1,5 @@
 // =============================================================================
-//  ws/mod.rs — état partagé des Rooms + boucle socket (Phase 2, étapes 3-4).
+//  ws/mod.rs — état partagé des Rooms + boucle socket (Phase 2).
 //
 //  Câblé au routeur Axum via `/ws` (voir main.rs).
 //   - Présence : JoinRoom enregistre le joueur, LeaveRoom / déconnexion le retire.
@@ -7,9 +7,11 @@
 //     du salon via un broadcast::Sender par Room.
 //   - Owner = premier joueur à rejoindre ; passe au suivant s'il part. Seul l'owner
 //     peut lancer : StartRace → RaceStart{start_at_epoch_ms} diffusé à tous (t=0).
+//     Les PARTANTS sont figés au RaceStart : arrivées/départs en cours de course ne
+//     bloquent ni ne clôturent la fin (voir all_racers_done).
 //   - Le serveur possède la vérité terrain : seed + texte cible générés à la création
-//     de la Room (domain::text_gen).
-//  Progress/Finish (barres live, soumission) : étape 5.
+//     de la Room (domain::text_gen), regénérés après chaque course (revanche).
+//   - Progress relayé (barres live) ; Finish → recompute autoritaire → RaceOver.
 // =============================================================================
 
 #![allow(dead_code)]
@@ -44,6 +46,9 @@ pub struct Room {
     pub target_text: String,
     /// t=0 partagé une fois la Race lancée.
     pub start_at_epoch_ms: Option<i64>,
+    /// Partants figés au RaceStart (vide = pas de course en cours). Un joueur qui
+    /// rejoint en cours de course n'est pas attendu ; un partant qui quitte non plus.
+    pub racers: Vec<PlayerId>,
     /// Joueurs ayant fini (ordre d'arrivée) + leur WPM autoritaire.
     pub finishers: Vec<(PlayerId, f64)>,
     /// Diffusion des ServerEvent vers tous les sockets du salon.
@@ -150,6 +155,7 @@ fn join_room(rooms: &Rooms, channel_id: &str, player_id: &str) -> broadcast::Rec
             seed: seed as u64,
             target_text,
             start_at_epoch_ms: None,
+            racers: Vec::new(),
             finishers: Vec::new(),
             tx,
         }
@@ -175,16 +181,24 @@ fn leave_room(rooms: &Rooms, channel_id: &str, player_id: &str) {
             room.owner = room.players[0].clone(); // transfert au suivant dans la pile
         }
         let _ = room.tx.send(room_state(room));
+        // Si le partant était le dernier attendu, la course se termine maintenant.
+        if room.start_at_epoch_ms.is_some()
+            && all_racers_done(&room.racers, &room.players, &room.finishers)
+        {
+            end_race(room);
+        }
     }
 }
 
-/// StartRace : accepté du seul owner. Fixe t=0 (horloge murale serveur) et le diffuse.
+/// StartRace : accepté du seul owner, hors course en cours. Fige les partants,
+/// fixe t=0 (horloge murale serveur) et le diffuse.
 fn start_race(rooms: &Rooms, channel_id: &str, player_id: &str) {
     let mut rooms = rooms.lock().unwrap();
     if let Some(room) = rooms.get_mut(channel_id) {
-        if room.owner != player_id {
-            return; // non-owner : ignoré
+        if room.owner != player_id || room.start_at_epoch_ms.is_some() {
+            return; // non-owner ou course déjà lancée : ignoré
         }
+        room.racers = room.players.clone();
         let start = now_epoch_ms();
         room.start_at_epoch_ms = Some(start);
         let _ = room.tx.send(ServerEvent::RaceStart { start_at_epoch_ms: start });
@@ -207,6 +221,9 @@ fn relay_progress(rooms: &Rooms, channel_id: &str, player_id: &str, chars_done: 
 fn finish_race(rooms: &Rooms, channel_id: &str, player_id: &str, keystrokes: Vec<Keystroke>, ended_at_ms: f64) {
     let mut rooms = rooms.lock().unwrap();
     let Some(room) = rooms.get_mut(channel_id) else { return };
+    if !room.racers.iter().any(|p| p == player_id) {
+        return; // pas un partant de CETTE course (ou pas de course) : ignoré
+    }
     if room.finishers.iter().any(|(p, _)| p == player_id) {
         return; // déjà fini : on ignore un doublon
     }
@@ -227,17 +244,43 @@ fn finish_race(rooms: &Rooms, channel_id: &str, player_id: &str, keystrokes: Vec
         wpm: sb.wpm,
     });
 
-    // Fin de course quand tous les présents ont fini. Limite connue : un départ en
-    // cours de course fait baisser #présents et peut donc clôturer tôt — acceptable
-    // au MVP ; à durcir en ancrant sur la liste des partants figée au RaceStart.
-    if room.finishers.len() >= room.players.len() {
-        let mut ranked = room.finishers.clone();
-        ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        let ranking = ranked.into_iter().map(|(p, _)| p).collect();
-        let _ = room.tx.send(ServerEvent::RaceOver { ranking });
-        room.finishers.clear(); // prêt pour une nouvelle course
-        room.start_at_epoch_ms = None;
+    if all_racers_done(&room.racers, &room.players, &room.finishers) {
+        end_race(room);
     }
+}
+
+/// Course finie quand chaque partant ENCORE PRÉSENT a fini. Les partants sont figés
+/// au RaceStart : un joueur qui rejoint en cours ne bloque pas la fin, un partant
+/// qui quitte n'est plus attendu. Vide = pas de course en cours.
+fn all_racers_done(
+    racers: &[PlayerId],
+    players: &[PlayerId],
+    finishers: &[(PlayerId, f64)],
+) -> bool {
+    !racers.is_empty()
+        && racers
+            .iter()
+            .filter(|r| players.contains(r))
+            .all(|r| finishers.iter().any(|(p, _)| p == r))
+}
+
+/// Clôt la course : diffuse le classement (par WPM), puis prépare la revanche —
+/// nouveau seed + nouveau texte (l'ancien est mémorisé par les joueurs) re-diffusés
+/// via RoomState. L'owner peut relancer StartRace depuis l'écran RaceOver.
+fn end_race(room: &mut Room) {
+    let mut ranked = room.finishers.clone();
+    ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let ranking = ranked.into_iter().map(|(p, _)| p).collect();
+    let _ = room.tx.send(ServerEvent::RaceOver { ranking });
+
+    room.finishers.clear();
+    room.racers.clear();
+    room.start_at_epoch_ms = None;
+    room.seed = fresh_seed() as u64;
+    room.target_text =
+        generate_text(&GenSettings { punctuation: false, numbers: false }, ROOM_WORD_COUNT, room.seed as u32)
+            .join(" ");
+    let _ = room.tx.send(room_state(room));
 }
 
 fn room_state(room: &Room) -> ServerEvent {
@@ -262,4 +305,31 @@ fn now_epoch_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::all_racers_done;
+
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn partants_figes_au_depart() {
+        let racers = s(&["a", "b"]);
+        let fin_a = vec![("a".to_string(), 80.0)];
+        let fin_ab = vec![("a".to_string(), 80.0), ("b".to_string(), 60.0)];
+
+        // Pas de course en cours (partants vides) : jamais "fini".
+        assert!(!all_racers_done(&[], &racers, &fin_ab));
+        // Il manque b : pas fini.
+        assert!(!all_racers_done(&racers, &racers, &fin_a));
+        // Tous les partants ont fini.
+        assert!(all_racers_done(&racers, &racers, &fin_ab));
+        // Un joueur qui REJOINT en cours de course ne bloque pas la fin.
+        assert!(all_racers_done(&racers, &s(&["a", "b", "spectateur"]), &fin_ab));
+        // Un partant qui QUITTE n'est plus attendu : a fini + b parti → fini.
+        assert!(all_racers_done(&racers, &s(&["a"]), &fin_a));
+    }
 }

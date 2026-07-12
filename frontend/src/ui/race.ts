@@ -182,7 +182,9 @@ export class Race {
           <div class="bars" id="bars">${this.barsHtml()}</div>
           <p class="hint">${this.doneLocal ? "Terminé — en attente des autres…" : "Tape le texte ; corrige tes fautes pour finir"}</p>`;
       case "over":
-        return this.rankingHtml() + `<p class="hint">Course terminée.</p>`;
+        // Revanche : le serveur a déjà re-diffusé un RoomState avec un NOUVEAU texte ;
+        // le même bouton StartRace relance (owner seulement).
+        return this.rankingHtml() + this.startBtnHtml();
     }
   }
 
