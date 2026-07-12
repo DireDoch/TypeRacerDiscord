@@ -89,8 +89,13 @@ body {
   color: var(--sub);
   outline: none;
   user-select: none;
+  /* Fenêtre glissante de 3 lignes (solo) : le clip est ici, le défilement par
+     lignes entières est piloté en JS (slideWindow → scrollTop). position:relative
+     rend l'offsetTop des .word relatif à cette fenêtre. */
+  position: relative;
   max-height: 7.2rem;
   overflow: hidden;
+  scroll-behavior: smooth;
 }
 .word {
   display: inline-block;
@@ -225,6 +230,10 @@ button.primary:hover {
 .race .live-bar,
 .race .bars {
   width: 100%;
+}
+/* Race : TOUT le texte visible dès le décompte — pas de fenêtre, hauteur libre. */
+.race .words {
+  max-height: none;
 }
 
 /* Cartes de présence empilées. */

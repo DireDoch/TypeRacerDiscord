@@ -101,6 +101,10 @@ export class Race {
     this.countdownN = 3;
     this.progress.clear();
     this.finished.clear();
+    // Contrôleur neuf dès le décompte : le texte ENTIER s'affiche vierge (le joueur
+    // lit le début pendant les 3 s) — indispensable après une revanche (état stale).
+    this.doneLocal = false;
+    this.controller = new FreeInput(this.targetWords);
     this.render();
     const tick = (): void => {
       this.countdownN -= 1;
@@ -175,7 +179,8 @@ export class Race {
       case "lobby":
         return this.cardsHtml() + this.startBtnHtml();
       case "countdown":
-        return this.cardsHtml() + `<div class="countdown">${this.countdownN}</div>`;
+        return `<div class="countdown">${this.countdownN}</div>
+          <div class="words" id="words">${this.wordsHtml()}</div>`;
       case "running":
         return `<div class="live-bar" id="liveBar"></div>
           <div class="words" id="words">${this.wordsHtml()}</div>

@@ -269,7 +269,29 @@ export class Practice {
 
   private renderWords(): void {
     const el = this.root.querySelector<HTMLElement>("#words");
-    if (el) el.innerHTML = this.config.mode === "zen" ? this.zenHtml() : this.wordsHtml();
+    if (!el) return;
+    el.innerHTML = this.config.mode === "zen" ? this.zenHtml() : this.wordsHtml();
+    this.slideWindow(el);
+  }
+
+  /**
+   * Fenêtre glissante de 3 lignes (style Monkeytype) : après chaque rendu, garde la
+   * ligne du mot actif au MILIEU. Le conteneur est clippé par le CSS (max-height +
+   * overflow hidden) ; on le fait défiler programmatiquement par lignes entières.
+   * Marche avec le wrap dynamique et le flux continu du Time infini : on mesure
+   * l'offsetTop réel du mot actif après rendu, on ne compte pas les mots par ligne.
+   */
+  private slideWindow(container: HTMLElement): void {
+    const words = container.querySelectorAll<HTMLElement>(".word");
+    if (words.length === 0) return;
+    // Zen : pas de cible, le mot actif est le dernier tapé.
+    const active =
+      this.config.mode === "zen"
+        ? words[words.length - 1]
+        : words[Math.min(this.controller.view().wordIndex, words.length - 1)];
+    const lineHeight = parseFloat(getComputedStyle(container).lineHeight);
+    if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
+    container.scrollTop = windowScrollTop(active.offsetTop, lineHeight);
   }
 
   private renderCountdown(n: number): void {
@@ -415,6 +437,17 @@ export class Practice {
       }),
     );
   }
+}
+
+/**
+ * Défilement (px) qui garde la ligne du mot actif au MILIEU des 3 lignes visibles :
+ * lignes 0 et 1 → pas de défilement ; ligne n ≥ 2 → (n-1) lignes masquées en haut
+ * (le curseur ne touche jamais la ligne du bas). Pure — testée dans practice.test.ts.
+ * `wordTop` = offsetTop du mot actif (arrondi par le DOM, d'où le Math.round).
+ */
+export function windowScrollTop(wordTop: number, lineHeight: number): number {
+  const line = Math.round(wordTop / lineHeight);
+  return Math.max(0, line - 1) * lineHeight;
 }
 
 /** Rend un mot caractère par caractère (correct / incorrect / extra / untyped + caret). */

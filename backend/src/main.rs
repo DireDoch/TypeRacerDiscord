@@ -79,10 +79,11 @@ async fn main() {
         // Tout ce qui ne matche pas une route API → fichiers statiques (puis index.html).
         .fallback_service(spa);
 
-    let addr = "127.0.0.1:8080";
-    let listener = tokio::net::TcpListener::bind(addr)
+    let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
+    let addr = format!("127.0.0.1:{port}");
+    let listener = tokio::net::TcpListener::bind(&addr)
         .await
-        .expect("bind 127.0.0.1:8080");
+        .unwrap_or_else(|e| panic!("bind {addr}: {e}"));
     println!("TypeRacerDiscord backend → http://{addr}");
     axum::serve(listener, app).await.expect("serve");
 }
