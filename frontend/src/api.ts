@@ -33,7 +33,10 @@ export async function submitRun(req: SubmitRunRequest): Promise<SubmitRunRespons
 
 /** Récupère une Quote pour un Run en Mode Quotes (proxy serveur API-Ninjas). */
 export async function fetchQuote(): Promise<Quote> {
-  const res = await fetch("/api/quote");
+  const token = await getAuthToken();
+  const res = await fetch("/api/quote", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
   if (!res.ok) throw new Error(`GET /api/quote → ${res.status}`);
   return res.json();
 }

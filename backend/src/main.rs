@@ -92,8 +92,10 @@ async fn health() -> &'static str {
 }
 
 /// GET /api/quote — proxy vers API-Ninjas (clé injectée côté serveur). 502 si amont KO.
+/// Authentifié : sans Bearer valide, n'importe qui sur l'URL publique viderait le quota.
 async fn quote_handler(
     State(state): State<AppState>,
+    AuthPlayer(_player_id): AuthPlayer,
 ) -> Result<Json<QuoteResponse>, StatusCode> {
     state
         .quotes
@@ -174,7 +176,10 @@ async fn ws_handler(
         Ok(id) => id,
         Err(e) => return auth_status(e).into_response(),
     };
-    ws.on_upgrade(move |socket| ws::handle_socket(socket, state.rooms.clone(), player_id))
+    // Un log de course fait quelques dizaines de Ko ; sans borne (64 Mio par défaut),
+    // un Finish géant se recompute sous le verrou global des Rooms.
+    ws.max_message_size(256 * 1024)
+        .on_upgrade(move |socket| ws::handle_socket(socket, state.rooms.clone(), player_id))
 }
 
 #[derive(Debug, Deserialize)]
