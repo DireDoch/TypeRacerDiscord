@@ -15,12 +15,31 @@ import { getAuthToken } from "./discord";
 // laisse submitRun ré-essayer/surfacer l'erreur au moment de la soumission.
 getAuthToken().catch((e) => console.error("Auth Discord échouée :", e));
 
-const root = document.querySelector<HTMLDivElement>("#app");
-if (!root) throw new Error("#app introuvable dans index.html");
+const rootEl = document.querySelector<HTMLDivElement>("#app");
+if (!rootEl) throw new Error("#app introuvable dans index.html");
+const root: HTMLElement = rootEl;
 
-// `?race` monte l'écran multijoueur (salon via `?channel=` en dev, sinon Discord).
+// Navigation Practice ↔ Race : dans l'iframe Discord l'URL est figée par le mapping,
+// la bascule se fait donc PAR BOUTONS (race ⚔ / ← practice), avec démontage propre
+// de l'écran quitté. `?race` reste le raccourci de dev (deux onglets au navigateur).
+let screen: { destroy(): void } | null = null;
+
+function showPractice(): void {
+  screen?.destroy();
+  const p = new Practice(root, showRace);
+  screen = p;
+  p.mount();
+}
+
+function showRace(): void {
+  screen?.destroy();
+  const r = new Race(root, showPractice);
+  screen = r;
+  void r.mount();
+}
+
 if (new URLSearchParams(location.search).has("race")) {
-  void new Race(root).mount();
+  showRace();
 } else {
-  new Practice(root).mount();
+  showPractice();
 }

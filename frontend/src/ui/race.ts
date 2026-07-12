@@ -47,9 +47,21 @@ export class Race {
   private countdownN = 3;
   private rafId = 0;
 
-  constructor(private readonly root: HTMLElement) {
+  /** `onExit` : navigation retour vers Practice (lobby et écran RaceOver). */
+  constructor(
+    private readonly root: HTMLElement,
+    private readonly onExit?: () => void,
+  ) {
     this.onKeyDown = this.onKeyDown.bind(this);
     document.addEventListener("keydown", this.onKeyDown);
+  }
+
+  /** Démontage propre : coupe écouteur, rAF et socket (→ LeaveRoom côté serveur). */
+  destroy(): void {
+    document.removeEventListener("keydown", this.onKeyDown);
+    cancelAnimationFrame(this.rafId);
+    this.socket?.close();
+    this.socket = null;
   }
 
   async mount(): Promise<void> {
@@ -170,6 +182,9 @@ export class Race {
     this.root.innerHTML = `<section class="race">${this.bodyHtml()}</section>`;
     const btn = this.root.querySelector<HTMLButtonElement>("#startRace");
     if (btn) btn.addEventListener("click", () => this.socket?.send({ type: "StartRace" }));
+    this.root
+      .querySelector<HTMLButtonElement>("#exitRace")
+      ?.addEventListener("click", () => this.onExit?.());
   }
 
   private bodyHtml(): string {
@@ -177,7 +192,7 @@ export class Race {
       case "connecting":
         return `<p class="hint">Connexion au salon…</p>`;
       case "lobby":
-        return this.cardsHtml() + this.startBtnHtml();
+        return this.cardsHtml() + this.startBtnHtml() + this.exitBtnHtml();
       case "countdown":
         return `<div class="countdown">${this.countdownN}</div>
           <div class="words" id="words">${this.wordsHtml()}</div>`;
@@ -189,7 +204,7 @@ export class Race {
       case "over":
         // Revanche : le serveur a déjà re-diffusé un RoomState avec un NOUVEAU texte ;
         // le même bouton StartRace relance (owner seulement).
-        return this.rankingHtml() + this.startBtnHtml();
+        return this.rankingHtml() + this.startBtnHtml() + this.exitBtnHtml();
     }
   }
 
@@ -211,6 +226,10 @@ export class Race {
       return `<button id="startRace" class="on">Démarrer la course</button>`;
     }
     return `<p class="hint">En attente que l'hôte lance la course…</p>`;
+  }
+
+  private exitBtnHtml(): string {
+    return this.onExit ? `<button id="exitRace" class="on">← practice</button>` : "";
   }
 
   private renderWords(): void {

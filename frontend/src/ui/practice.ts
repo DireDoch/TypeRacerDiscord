@@ -63,13 +63,25 @@ export class Practice {
   /** Jeton anti-course : un reset() asynchrone obsolète (mode rechangé) s'auto-annule. */
   private resetSeq = 0;
 
-  constructor(private readonly root: HTMLElement) {
+  /** `onRace` : navigation vers l'écran Race (bouton dans la barre de config). */
+  constructor(
+    private readonly root: HTMLElement,
+    private readonly onRace?: () => void,
+  ) {
     this.onKeyDown = this.onKeyDown.bind(this);
     document.addEventListener("keydown", this.onKeyDown);
   }
 
   mount(): void {
     void this.reset();
+  }
+
+  /** Démontage propre (navigation Practice ↔ Race) : plus d'écouteur, de rAF,
+   *  ni de rendu tardif d'un reset()/fetchQuote encore en vol. */
+  destroy(): void {
+    document.removeEventListener("keydown", this.onKeyDown);
+    cancelAnimationFrame(this.rafId);
+    this.resetSeq++;
   }
 
   // --- Cycle de vie d'un Run --------------------------------------------------
@@ -410,6 +422,7 @@ export class Practice {
         </div>
         ${valueGroup}
         ${settingsGroup}
+        ${this.onRace ? `<div class="group"><button data-nav="race">race ⚔</button></div>` : ""}
       </div>
     `;
   }
@@ -436,6 +449,9 @@ export class Practice {
         void this.reset();
       }),
     );
+    this.root
+      .querySelector<HTMLButtonElement>("[data-nav]")
+      ?.addEventListener("click", () => this.onRace?.());
   }
 }
 
