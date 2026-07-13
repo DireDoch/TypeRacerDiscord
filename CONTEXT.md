@@ -153,6 +153,33 @@ chaque fichier), pas de générateur de types. Pas de workspace npm racine. `liv
 ne duplique pas le replay complet (la vérité vient du recompute Rust en fin de Run).
 `stats/scoreboard.ts` est la **référence** de l'algorithme que le port Rust reproduit.
 
+**Réseau en Activity Discord (`/.proxy`).**
+Dans l'iframe d'une Activity, la CSP de `discordsays.com` **bloque toute requête qui ne
+passe pas par le préfixe `/.proxy/…`** (le document et les scripts se chargent, mais
+fetch/WebSocket sont refusés — symptôme : UI intacte, aucune fonctionnalité réseau).
+`discord.ts::proxyBase()` renvoie `"/.proxy"` quand `frame_id` est présent, `""` sinon ;
+les 4 points d'accès (`/token`, `/api/runs`, `/api/quote`, `/ws`) le préfixent. Le proxy
+Discord retire le préfixe AVANT d'appliquer les URL Mappings → backend et dev inchangés.
+
+**Navigation par écrans (pas d'URL).**
+L'URL de l'iframe est figée par le URL Mapping → toute navigation se fait PAR BOUTONS.
+`main.ts` orchestre Menu (hub : Solo / Multijoueur / Options / Quitter) ↔ Practice ↔
+Race, chaque écran expose `destroy()` (écouteur clavier global, rAF, socket) pour éviter
+les écouteurs fantômes. `?race` reste le raccourci dev (deux onglets au navigateur).
+« Quitter » ferme l'Activity via `sdk.close` (masqué hors Discord).
+
+**Affichage du texte.**
+Solo : fenêtre glissante de 3 lignes (Monkeytype) — clip CSS sur `.words` + défilement
+programmatique par lignes entières (`slideWindow` → `scrollTop`), le mot actif reste sur
+la ligne du MILIEU (`windowScrollTop`, pure : ligne n → n-1 lignes masquées). On mesure
+l'`offsetTop` réel après rendu → robuste au wrap, au backspace multi-mots et au flux du
+Time infini. Race : AUCUNE fenêtre — texte entier visible dès le décompte de 3 s.
+
+**Debug in-iframe.**
+La console est invisible dans Discord : `main.ts` affiche un bandeau d'erreurs fixe
+(`window.error` + `unhandledrejection`, clic pour fermer). Pour une vraie console :
+ouvrir Discord AU NAVIGATEUR (discord.com/app) et lancer l'activité → F12.
+
 ## État d'implémentation (avancement)
 
 Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
@@ -173,6 +200,10 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
   `VITE_DISCORD_CLIENT_ID` absent) : token de test (`dev-player-1`) accepté tel quel par le
   backend dev comme `player_id`. Handshake amorcé tôt dans `main.ts` (non bloquant, mémoïsé).
 
+- Écran **Race** (`ui/race.ts`) : lobby (cartes de présence, owner 👑), décompte 3 s avec
+  texte entier, barres live, classement, revanche. Écran **Menu** (`ui/menu.ts`) : hub
+  d'arrivée + vue Options (liens légaux). Navigation par boutons avec `destroy()`.
+
 **Backend (`backend/`, Rust : Axum + sqlx/SQLite + reqwest).**
 - `domain/types.rs` (miroir de `types.ts`) + `domain/replay.rs` (port de `scoreboard.ts`,
   recompute autoritaire) — tests de parité avec `scoreboard.test.ts`.
@@ -184,8 +215,11 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
 - Endpoints : `GET /api/health`, `GET /api/quote`, `POST /token`, `POST /api/runs` (recompute +
   persistance + verdict PB), `GET /api/history`.
 - Origine unique : le build Vite (`STATIC_DIR`, défaut `../frontend/dist`) est servi en
-  `fallback_service` (ServeDir → `index.html` pour le routage SPA). `dotenvy` charge `backend/.env`.
-- `ws/` : esquisse Phase 2, **non câblée**.
+  `fallback_service` (ServeDir → `index.html` pour le routage SPA). `dotenvy` charge
+  `backend/.env` (sans écraser l'env du shell). Port configurable via `PORT` (défaut 8080).
+- `ws/` : Phase 2 **livrée** — Rooms par salon vocal, owner, partants figés au RaceStart
+  (`all_racers_done`), recompute autoritaire au Finish, revanche sur texte neuf. Messages
+  bornés à 256 Ko ; `GET /api/quote` authentifié (sinon quota API-Ninjas drainable).
 
 - Modes **Zen** et **Time infini** câblés dans l'UI Practice : bouton `zen` (aucun texte cible,
   affichage du texte tapé, tout compte comme correct — miroir `replay_zen`) ; valeur `∞` (0) du
@@ -193,10 +227,20 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
   monte). Les deux finissent sur `Shift+Enter` (`endedAtMs`) et sont exclus des PB. Longueur et
   Settings masqués pour Zen. `liveWpmZen` alimente le compteur live.
 
-**Reste à faire (MVP).**
-- Renseigner `DISCORD_CLIENT_ID/SECRET` (backend `.env`) + `VITE_DISCORD_CLIENT_ID` (frontend)
-  pour activer l'OAuth réel — la forme des endpoints ne change pas (mode dev tant qu'absents).
-  Côté portail Discord : Activities > Enable, URL Mappings `/` → URL du tunnel (voir plus bas).
+**Intégration Discord (Activity) — état et pièges connus.**
+- OAuth réel actif : `DISCORD_CLIENT_ID/SECRET` (backend `.env`) + `VITE_DISCORD_CLIENT_ID`
+  (frontend `.env`, cuit dans le bundle → rebuild après changement). Runbook complet dans
+  le README (section « Dans Discord »).
+- L'application vit sur un **compte dev séparé, SANS team** : une app dans une team exige
+  la 2FA de tous ses membres à chaque action sensible (Reset Secret…) — c'est ce qui a
+  motivé la séparation. Le compte principal (qui possède le serveur) sert à jouer.
+- Une activité **non publiée est invisible** dans le menu 🚀 pour quiconque n'est ni
+  propriétaire ni **App Tester** (portail → App Testers → inviter + ACCEPTER le courriel).
+  Il faut aussi l'installer sur le serveur (portail → Installation → Guild Install).
+- Un quick tunnel cloudflared **change d'URL à chaque redémarrage** → remettre à jour le
+  URL Mapping à chaque session (tunnel nommé Cloudflare pour une URL stable, plus tard).
+- Documents légaux exigés par le portail : `TERMS.md` / `PRIVACY.md` (racine du dépôt,
+  liés en GitHub public). Tenir `PRIVACY.md` fidèle au comportement réel du code.
 
 ## Example dialogue
 

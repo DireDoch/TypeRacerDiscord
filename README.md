@@ -56,5 +56,46 @@ curl -H "Authorization: Bearer dev-player-1" "http://localhost:8080/api/history?
 
 ```sh
 cd frontend && npm run build    # → frontend/dist
-cd backend  && cargo run        # sert aussi le build statique sur :8080
+cd backend  && cargo run        # sert aussi le build statique sur :8080 (PORT pour changer)
 ```
+
+## Dans Discord (Activity)
+
+### Portail développeur (une fois)
+
+L'application vit sur un **compte dev dédié, sans team** (une app en team exige la 2FA
+de tous ses membres à chaque action sensible). Sur <https://discord.com/developers/applications> :
+
+1. **General Information** : Application ID (= client id, public) ; liens Conditions/
+   Confidentialité → `TERMS.md` / `PRIVACY.md` du dépôt GitHub.
+2. **OAuth2** : Reset Secret (→ `backend/.env` uniquement) ; Redirect `https://127.0.0.1`.
+3. **Activities** : Enable + URL Mappings (voir tunnel ci-dessous).
+4. **Installation** : Guild Install → ouvrir le lien d'installation avec le compte admin
+   du serveur → Autoriser.
+5. **App Testers** : inviter chaque testeur (compte principal inclus !) par pseudo — ils
+   doivent ACCEPTER le courriel, sinon l'activité est INVISIBLE dans le menu 🚀.
+
+### Chaque session de test
+
+```sh
+cd frontend && npm run build                      # si le front a changé
+cd backend  && cargo run                          # sans ⚠️ MODE DEV au démarrage
+cloudflared tunnel --url http://localhost:8080    # 2e terminal, laisser ouvert
+```
+
+Copier l'URL du tunnel dans **Activities → URL Mappings** (Prefix `/`, Target = domaine
+SANS `https://`) → Save. ⚠️ un quick tunnel change d'URL à chaque redémarrage.
+
+Puis : salon **vocal** → 🚀 Activités → l'app → Lancer (consentement `identify` à la
+première fois). Ctrl+R dans Discord si l'app vient d'être modifiée.
+
+### Pièges connus / debug
+
+- **CSP des Activities** : dans l'iframe, TOUTE requête doit passer par `/.proxy/…`
+  (géré par `discord.ts::proxyBase()`). Symptôme si oublié : UI intacte, zéro réseau.
+- Les **erreurs s'affichent dans un bandeau rouge** en bas du jeu (la console est
+  invisible dans Discord). Pour une vraie console : Discord AU NAVIGATEUR
+  (discord.com/app) → lancer l'activité → F12.
+- Iframe blanche → URL Mapping périmé (tunnel redémarré).
+- Activité absente du menu 🚀 → invitation App Tester non acceptée, ou app pas
+  installée sur le serveur.

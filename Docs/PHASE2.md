@@ -22,6 +22,7 @@ C'est tout l'intérêt d'avoir rendu Rust autoritaire dès le solo.
 ## Points de bascule, fichier par fichier
 
 - `core/clock.ts` — `RunClock.start()` appelé sur événement local (solo) vs `RaceStart` (Race).
+- `discord.ts::proxyBase()` — préfixe `/.proxy` obligatoire (CSP) pour fetch/WS dans l'iframe.
 - `ui/race.ts::raceComplete` — fin de course stricte (tout le texte exact), au-dessus de `FreeInput`.
 - `core/text-gen/index.ts` — `generateText(..., seed)` déjà pur+seedé ; le serveur tire le seed.
 - `backend/src/domain/text_gen.rs` — port Rust de la génération (parité avec le TS via le seed).
