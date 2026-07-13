@@ -19,7 +19,7 @@ import { FreeInput } from "../core/input/free-input";
 import { RaceSocket, type ServerEvent } from "../core/net";
 import { liveWpm } from "../live-stats";
 import { renderWord } from "./practice";
-import { getIdentity } from "../discord";
+import { getIdentity, proxyBase } from "../discord";
 
 type Phase = "connecting" | "lobby" | "countdown" | "running" | "over";
 
@@ -47,7 +47,7 @@ export class Race {
   private countdownN = 3;
   private rafId = 0;
 
-  /** `onExit` : navigation retour vers Practice (lobby et écran RaceOver). */
+  /** `onExit` : navigation retour vers le menu (lobby et écran RaceOver). */
   constructor(
     private readonly root: HTMLElement,
     private readonly onExit?: () => void,
@@ -68,7 +68,7 @@ export class Race {
     const id = await getIdentity();
     this.me = id.playerId;
     this.channelId = id.channelId;
-    this.socket = new RaceSocket(id.token, (e) => this.onEvent(e));
+    this.socket = new RaceSocket(id.token, (e) => this.onEvent(e), proxyBase());
     await this.socket.ready();
     this.socket.send({ type: "JoinRoom", channelId: this.channelId });
     this.render();
@@ -229,7 +229,7 @@ export class Race {
   }
 
   private exitBtnHtml(): string {
-    return this.onExit ? `<button id="exitRace" class="on">← practice</button>` : "";
+    return this.onExit ? `<button id="exitRace" class="on">← menu</button>` : "";
   }
 
   private renderWords(): void {

@@ -63,10 +63,10 @@ export class Practice {
   /** Jeton anti-course : un reset() asynchrone obsolète (mode rechangé) s'auto-annule. */
   private resetSeq = 0;
 
-  /** `onRace` : navigation vers l'écran Race (bouton dans la barre de config). */
+  /** `onExit` : navigation retour vers le menu (bouton dans la barre de config). */
   constructor(
     private readonly root: HTMLElement,
-    private readonly onRace?: () => void,
+    private readonly onExit?: () => void,
   ) {
     this.onKeyDown = this.onKeyDown.bind(this);
     document.addEventListener("keydown", this.onKeyDown);
@@ -422,7 +422,7 @@ export class Practice {
         </div>
         ${valueGroup}
         ${settingsGroup}
-        ${this.onRace ? `<div class="group"><button data-nav="race">race ⚔</button></div>` : ""}
+        ${this.onExit ? `<div class="group"><button data-nav="menu">← menu</button></div>` : ""}
       </div>
     `;
   }
@@ -451,7 +451,7 @@ export class Practice {
     );
     this.root
       .querySelector<HTMLButtonElement>("[data-nav]")
-      ?.addEventListener("click", () => this.onRace?.());
+      ?.addEventListener("click", () => this.onExit?.());
   }
 }
 

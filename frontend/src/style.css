@@ -303,3 +303,51 @@ button.primary:hover {
 .ranking .me {
   color: var(--main);
 }
+
+/* --- Menu principal --------------------------------------------------------- */
+.menu {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding-top: 14vh;
+}
+.menu h1 {
+  color: var(--main);
+  font-size: 2.2rem;
+  margin-bottom: 1.2rem;
+}
+.menu button {
+  width: min(260px, 80vw);
+  background: none;
+  border: 1px solid var(--sub);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 1.05rem;
+  cursor: pointer;
+  padding: 0.7rem 1.2rem;
+  border-radius: 0.4rem;
+}
+.menu button:hover {
+  border-color: var(--main);
+  color: var(--main);
+}
+.menu a {
+  color: var(--main);
+}
+
+/* --- Bandeau d'erreurs (debug in-iframe, console invisible dans Discord) ---- */
+#errbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #5c2a2a;
+  color: #ffb3b3;
+  padding: 0.5rem 0.9rem;
+  font-family: var(--font);
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  cursor: pointer;
+  z-index: 99;
+}

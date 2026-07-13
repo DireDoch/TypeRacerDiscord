@@ -29,9 +29,12 @@ export type ServerEvent =
 export class RaceSocket {
   private ws: WebSocket;
 
-  constructor(token: string, onEvent: (e: ServerEvent) => void) {
+  /** `basePath` : "/.proxy" dans l'iframe Discord (CSP), "" partout ailleurs. */
+  constructor(token: string, onEvent: (e: ServerEvent) => void, basePath = "") {
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    this.ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(token)}`);
+    this.ws = new WebSocket(
+      `${proto}://${location.host}${basePath}/ws?token=${encodeURIComponent(token)}`,
+    );
     this.ws.onmessage = (m) => onEvent(JSON.parse(m.data) as ServerEvent);
   }
 

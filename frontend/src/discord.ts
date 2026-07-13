@@ -48,8 +48,24 @@ export async function getAuthToken(): Promise<string> {
 }
 
 /** true si la page tourne dans l'iframe d'une Activity Discord (param `frame_id` injecté). */
-function isInsideDiscord(): boolean {
+export function isInsideDiscord(): boolean {
   return new URLSearchParams(window.location.search).has("frame_id");
+}
+
+/**
+ * Préfixe réseau OBLIGATOIRE dans l'iframe Discord : la CSP de discordsays.com
+ * bloque toute requête (fetch, WebSocket) qui ne passe pas par `/.proxy/…` —
+ * le proxy Discord retire le préfixe avant d'appliquer les URL Mappings, le
+ * backend voit donc les chemins inchangés. Hors Discord : préfixe vide.
+ */
+export function proxyBase(): string {
+  return isInsideDiscord() ? "/.proxy" : "";
+}
+
+/** Ferme l'Activity (bouton Quitter du menu). No-op hors Discord ou avant le handshake. */
+let closeSdk: (() => void) | null = null;
+export function closeActivity(): void {
+  closeSdk?.();
 }
 
 async function resolveIdentity(): Promise<Identity> {
@@ -65,9 +81,10 @@ async function resolveIdentity(): Promise<Identity> {
   }
 
   // Import dynamique : le SDK n'est chargé que lorsqu'on est réellement dans Discord.
-  const { DiscordSDK } = await import("@discord/embedded-app-sdk");
+  const { DiscordSDK, RPCCloseCodes } = await import("@discord/embedded-app-sdk");
   const sdk = new DiscordSDK(clientId);
   await sdk.ready();
+  closeSdk = () => void sdk.close(RPCCloseCodes.CLOSE_NORMAL, "Fermé depuis le menu");
 
   const { code } = await sdk.commands.authorize({
     client_id: clientId,
@@ -77,7 +94,7 @@ async function resolveIdentity(): Promise<Identity> {
     scope: ["identify"],
   });
 
-  const res = await fetch("/token", {
+  const res = await fetch(`${proxyBase()}/token`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ code }),

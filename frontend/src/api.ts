@@ -11,7 +11,7 @@
 // =============================================================================
 
 import type { Quote, SubmitRunRequest, SubmitRunResponse } from "./core/types";
-import { getAuthToken } from "./discord";
+import { getAuthToken, proxyBase } from "./discord";
 
 /** Le scoreboard affiché provient maintenant du backend autoritaire. */
 export const AUTHORITATIVE_BACKEND = true;
@@ -19,7 +19,7 @@ export const AUTHORITATIVE_BACKEND = true;
 /** Soumet un Run et renvoie le scoreboard autoritaire + verdict PB (POST /api/runs). */
 export async function submitRun(req: SubmitRunRequest): Promise<SubmitRunResponse> {
   const token = await getAuthToken();
-  const res = await fetch("/api/runs", {
+  const res = await fetch(`${proxyBase()}/api/runs`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -34,7 +34,7 @@ export async function submitRun(req: SubmitRunRequest): Promise<SubmitRunRespons
 /** Récupère une Quote pour un Run en Mode Quotes (proxy serveur API-Ninjas). */
 export async function fetchQuote(): Promise<Quote> {
   const token = await getAuthToken();
-  const res = await fetch("/api/quote", {
+  const res = await fetch(`${proxyBase()}/api/quote`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`GET /api/quote → ${res.status}`);
