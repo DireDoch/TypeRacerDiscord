@@ -126,6 +126,10 @@ async fn submit_run(
     AuthPlayer(player_id): AuthPlayer,
     Json(req): Json<SubmitRunRequest>,
 ) -> Result<Json<SubmitRunResponse>, StatusCode> {
+    // Sérialisé AVANT le recompute (qui prend possession des keystrokes) : le log
+    // brut est persisté depuis la migration 0002 (futures features replay/analyse).
+    let keystroke_log =
+        serde_json::to_string(&req.keystrokes).unwrap_or_else(|_| "[]".to_string());
     let scoreboard = compute_scoreboard(&ScoreInput {
         mode: req.config.mode,
         mode_value: req.config.mode_value,
@@ -147,8 +151,10 @@ async fn submit_run(
         &run_id,
         &player_id,
         now_ms() as i64,
+        "practice",
         &req.config,
         &scoreboard,
+        &keystroke_log,
     )
     .await
     .map_err(internal)?;
@@ -180,7 +186,9 @@ async fn ws_handler(
     // Un log de course fait quelques dizaines de Ko ; sans borne (64 Mio par défaut),
     // un Finish géant se recompute sous le verrou global des Rooms.
     ws.max_message_size(256 * 1024)
-        .on_upgrade(move |socket| ws::handle_socket(socket, state.rooms.clone(), player_id))
+        .on_upgrade(move |socket| {
+            ws::handle_socket(socket, state.rooms.clone(), player_id, state.pool.clone())
+        })
 }
 
 #[derive(Debug, Deserialize)]

@@ -200,6 +200,8 @@ export interface HistoryEntry {
   runId: string;
   /** epoch-ms. */
   createdAt: number;
+  /** Provenance du Run — les Races : historique seulement, jamais PB. */
+  kind: "practice" | "race";
   config: RunConfig;
   wpm: number;
   raw: number;

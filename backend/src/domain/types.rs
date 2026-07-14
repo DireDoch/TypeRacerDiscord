@@ -153,6 +153,8 @@ pub struct SubmitRunResponse {
 pub struct HistoryEntry {
     pub run_id: String,
     pub created_at: i64,
+    /// "practice" | "race" — provenance du Run (les Races : historique seulement, jamais PB).
+    pub kind: String,
     pub config: RunConfig,
     pub wpm: f64,
     pub raw: f64,

@@ -1,6 +1,6 @@
 # Politique de confidentialité — TypeRacer (activité Discord)
 
-*Dernière mise à jour : 12 juillet 2026*
+*Dernière mise à jour : 13 juillet 2026*
 
 ## 1. Ce que nous collectons
 
@@ -10,11 +10,13 @@ Le strict nécessaire au fonctionnement du jeu :
   l'autorisation OAuth `identify` de Discord. Nous ne recevons **ni ton adresse
   courriel, ni tes messages, ni ta liste d'amis**.
 - **Tes résultats de course** : mode de jeu, vitesse (WPM), précision et
-  statistiques associées, avec la date. Ils servent à l'historique et aux
-  records personnels (PB).
+  statistiques associées, avec la date — pour les parties solo comme pour les
+  courses multijoueur. Ils servent à l'historique et aux records personnels (PB).
 - **Le détail de ta frappe pendant une course** (touches et instants) est envoyé
-  au serveur uniquement pour recalculer ton score de façon fiable (anti-triche).
-  Il est traité en mémoire et **n'est pas conservé**.
+  au serveur pour recalculer ton score de façon fiable (anti-triche). Il est
+  **conservé avec le résultat de la course**, afin de permettre les
+  fonctionnalités de relecture et d'analyse de ta frappe (à venir). Il ne
+  contient que ce que tu tapes **dans le jeu**, jamais en dehors.
 
 Aucune donnée n'est collectée en dehors d'une partie.
 

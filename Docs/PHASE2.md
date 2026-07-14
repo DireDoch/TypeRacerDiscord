@@ -106,8 +106,12 @@ vient du recompute autoritaire.
 
 **Hors-scope (plus tard, pas maintenant — YAGNI) :** visualiseur par joueur de la portion de texte
 parcourue (jusqu'à la fin du texte) ; sync d'horloge fine pour un décompte parfaitement simultané ;
-transfert d'owner déjà couvert mais reconnexion en cours de course non ; persistance des Races
-dans l'historique/PB (les Runs de Race ne touchent pas la table `runs`).
+transfert d'owner déjà couvert mais reconnexion en cours de course non.
+
+> Mise à jour (migration `0002`) : les Runs de Race SONT désormais persistés dans `runs`
+> (`kind = 'race'`, `pb_eligible = 0` — historique seulement, jamais PB), avec leur
+> keystroke log. Un bucket « race » dédié aux PB reste hors-scope tant qu'aucun
+> leaderboard ne l'exige.
 
 ## Ce qui reste hors-scope tant que Phase 2 n'est pas lancée
 

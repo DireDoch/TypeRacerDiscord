@@ -24,7 +24,7 @@ An independent, cumulable text modifier applied on top of a Mode — currently `
 _Avoid_: Modifier, Option, Toggle.
 
 **Keystroke log**:
-The recorded timeline of a Player's keystrokes during a Run (what was typed and when). The raw input from which all stats are derived; sent once to the backend for the Authoritative scoreboard, not persisted.
+The recorded timeline of a Player's keystrokes during a Run (what was typed and when). The raw input from which all stats are derived; sent once to the backend for the Authoritative scoreboard and **persisted with the Run** (migration `0002`) as the raw material for the upcoming replay/analysis features.
 _Avoid_: Input history, Replay.
 
 **Live stats**:
@@ -207,8 +207,12 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
 **Backend (`backend/`, Rust : Axum + sqlx/SQLite + reqwest).**
 - `domain/types.rs` (miroir de `types.ts`) + `domain/replay.rs` (port de `scoreboard.ts`,
   recompute autoritaire) — tests de parité avec `scoreboard.test.ts`.
-- `store.rs` : persistance SQLite (table unique `runs`, migration `0001`), PB **dérivé**
+- `store.rs` : persistance SQLite (table unique `runs`, migrations `0001`-`0002`), PB **dérivé**
   (MAX wpm par bucket `WHERE pb_eligible = 1`, pas de table PB), historique filtrable.
+  Depuis `0002` : colonne `keystroke_log` (JSON brut, NULL pour les vieux Runs) et
+  colonne `kind` (`practice`/`race`) — les Races entrent dans l'historique via le
+  `Finish` WS (`pb_eligible = 0` : leur fin stricte les rend incomparables aux
+  buckets Practice ; un bucket « race » dédié viendra avec un éventuel leaderboard).
 - `discord.rs` : OAuth (`POST /token`) + identité via `/users/@me` (cache court), mode dev.
 - `quote.rs` : `GET /api/quote`, proxy API-Ninjas (clé `X-Api-Key` côté serveur, `id` opaque
   dérivé du texte, `wikipediaUrl` construit depuis l'auteur). Clé absente → `502`.

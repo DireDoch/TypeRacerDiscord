@@ -54,26 +54,31 @@ pub async fn previous_pb(
     row.try_get::<Option<f64>, _>("pb")
 }
 
-/// Insère un Run (le log brut n'est PAS persisté ; seule la série `per_second` dérivée l'est).
+/// Insère un Run. Le keystroke log (JSON brut, déjà validé par le recompute) est
+/// persisté depuis la migration 0002 — matière première des futures features
+/// replay/analyse. `kind` : "practice" ou "race".
 pub async fn insert_run(
     pool: &SqlitePool,
     run_id: &str,
     player_id: &str,
     created_at: i64,
+    kind: &str,
     config: &RunConfig,
     sb: &Scoreboard,
+    keystroke_log_json: &str,
 ) -> Result<(), sqlx::Error> {
     let per_second_json = serde_json::to_string(&sb.per_second).unwrap_or_else(|_| "[]".to_string());
     sqlx::query(
         "INSERT INTO runs
-            (id, player_id, created_at, mode, mode_value, language, punctuation, numbers,
+            (id, player_id, created_at, kind, mode, mode_value, language, punctuation, numbers,
              wpm, raw, accuracy, chars_correct, chars_incorrect, chars_extra, chars_missed,
-             duration_ms, per_second, pb_eligible)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             duration_ms, per_second, pb_eligible, keystroke_log)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     )
     .bind(run_id)
     .bind(player_id)
     .bind(created_at)
+    .bind(kind)
     .bind(config.mode.as_str())
     .bind(config.mode_value)
     .bind(&config.language)
@@ -89,6 +94,7 @@ pub async fn insert_run(
     .bind(sb.duration_ms.round() as i64) // colonne INTEGER : ms entières
     .bind(per_second_json)
     .bind(sb.pb_eligible as i64)
+    .bind(keystroke_log_json)
     .execute(pool)
     .await?;
     Ok(())
@@ -103,7 +109,7 @@ pub async fn history(
     limit: i64,
 ) -> Result<Vec<HistoryEntry>, sqlx::Error> {
     let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
-        "SELECT id, created_at, mode, mode_value, language, punctuation, numbers,
+        "SELECT id, created_at, kind, mode, mode_value, language, punctuation, numbers,
                 wpm, raw, accuracy, chars_correct, chars_incorrect, chars_extra, chars_missed,
                 duration_ms, per_second, pb_eligible
          FROM runs WHERE player_id = ",
@@ -129,6 +135,7 @@ fn row_to_entry(row: &sqlx::sqlite::SqliteRow) -> Result<HistoryEntry, sqlx::Err
     Ok(HistoryEntry {
         run_id: row.try_get("id")?,
         created_at: row.try_get("created_at")?,
+        kind: row.try_get("kind")?,
         config: RunConfig {
             mode: crate::domain::types::Mode::from_db(&mode_s).unwrap_or(crate::domain::types::Mode::Words),
             mode_value: row.try_get("mode_value")?,
@@ -200,10 +207,10 @@ mod tests {
         // Aucun Run → pas de PB.
         assert_eq!(previous_pb(&pool, "p1", &c).await.unwrap(), None);
 
-        insert_run(&pool, "r1", "p1", 1000, &c, &sb(50.0, true)).await.unwrap();
-        insert_run(&pool, "r2", "p1", 2000, &c, &sb(70.0, true)).await.unwrap();
+        insert_run(&pool, "r1", "p1", 1000, "practice", &c, &sb(50.0, true), "[]").await.unwrap();
+        insert_run(&pool, "r2", "p1", 2000, "practice", &c, &sb(70.0, true), "[]").await.unwrap();
         // Run d'un autre joueur : ne doit pas influencer le PB de p1.
-        insert_run(&pool, "r3", "p2", 3000, &c, &sb(200.0, true)).await.unwrap();
+        insert_run(&pool, "r3", "p2", 3000, "practice", &c, &sb(200.0, true), "[]").await.unwrap();
 
         assert_eq!(previous_pb(&pool, "p1", &c).await.unwrap(), Some(70.0));
 
@@ -222,9 +229,29 @@ mod tests {
     async fn run_non_eligible_exclu_du_pb() {
         let pool = mem_pool().await;
         let c = cfg();
-        insert_run(&pool, "r1", "p1", 1000, &c, &sb(999.0, false)).await.unwrap(); // non éligible
+        insert_run(&pool, "r1", "p1", 1000, "practice", &c, &sb(999.0, false), "[]").await.unwrap(); // non éligible
         assert_eq!(previous_pb(&pool, "p1", &c).await.unwrap(), None);
         // Mais reste dans l'historique.
         assert_eq!(history(&pool, "p1", None, None, 50).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn keystroke_log_persiste_et_kind_dans_historique() {
+        let pool = mem_pool().await;
+        let c = cfg();
+        let log = r#"[{"t":10.0,"k":"a"}]"#;
+        insert_run(&pool, "r1", "p1", 1000, "race", &c, &sb(60.0, false), log).await.unwrap();
+
+        // Le log brut est bien en base (relu tel quel, colonne dédiée).
+        let row = sqlx::query("SELECT keystroke_log, kind FROM runs WHERE id = 'r1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(row.try_get::<String, _>("keystroke_log").unwrap(), log);
+        assert_eq!(row.try_get::<String, _>("kind").unwrap(), "race");
+
+        // Et le kind ressort dans l'historique.
+        let h = history(&pool, "p1", None, None, 50).await.unwrap();
+        assert_eq!(h[0].kind, "race");
     }
 }

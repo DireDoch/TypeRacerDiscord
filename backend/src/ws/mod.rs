@@ -24,11 +24,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
+use sqlx::sqlite::SqlitePool;
 use tokio::sync::broadcast;
 
 use crate::domain::replay::{compute_scoreboard, ScoreInput};
 use crate::domain::text_gen::{generate_text, GenSettings};
-use crate::domain::types::{Keystroke, Mode};
+use crate::domain::types::{Keystroke, Mode, RunConfig};
 use protocol::{ChannelId, ClientEvent, PlayerId, ServerEvent};
 
 /// Nombre de mots pré-générés pour le texte cible d'une Room (défaut Words).
@@ -64,7 +65,7 @@ pub fn new_rooms() -> Rooms {
 
 /// Boucle d'une connexion WebSocket. `player_id` est résolu côté serveur (jamais
 /// via le corps) AVANT l'upgrade, comme pour les endpoints HTTP.
-pub async fn handle_socket(socket: WebSocket, rooms: Rooms, player_id: PlayerId) {
+pub async fn handle_socket(socket: WebSocket, rooms: Rooms, player_id: PlayerId, pool: SqlitePool) {
     // 1. Le premier message utile DOIT être JoinRoom : il fixe le salon et donne
     //    l'abonnement à la diffusion. Toute autre trame avant est ignorée.
     let (channel_id, socket, mut rx) = match await_join(socket, &rooms, &player_id).await {
@@ -102,7 +103,7 @@ pub async fn handle_socket(socket: WebSocket, rooms: Rooms, player_id: PlayerId)
                 relay_progress(&rooms, &channel_id, &player_id, chars_done)
             }
             Ok(ClientEvent::Finish { keystrokes, ended_at_ms }) => {
-                finish_race(&rooms, &channel_id, &player_id, keystrokes, ended_at_ms)
+                finish_race(&rooms, &channel_id, &player_id, keystrokes, ended_at_ms, &pool)
             }
             Ok(ClientEvent::LeaveRoom) => break,
             // JoinRoom en double : ignoré.
@@ -217,8 +218,17 @@ fn relay_progress(rooms: &Rooms, channel_id: &str, player_id: &str, chars_done: 
 }
 
 /// Finish : recompute AUTORITAIRE contre le texte du serveur, diffuse PlayerFinished,
-/// puis RaceOver (classé par WPM) quand tous les présents ont fini.
-fn finish_race(rooms: &Rooms, channel_id: &str, player_id: &str, keystrokes: Vec<Keystroke>, ended_at_ms: f64) {
+/// puis RaceOver (classé par WPM) quand tous les présents ont fini. Le Run est aussi
+/// persisté dans `runs` (kind "race") — historique seulement, jamais PB : la fin
+/// stricte (texte 100 % exact) le rend incomparable aux buckets Practice.
+fn finish_race(
+    rooms: &Rooms,
+    channel_id: &str,
+    player_id: &str,
+    keystrokes: Vec<Keystroke>,
+    ended_at_ms: f64,
+    pool: &SqlitePool,
+) {
     let mut rooms = rooms.lock().unwrap();
     let Some(room) = rooms.get_mut(channel_id) else { return };
     if !room.racers.iter().any(|p| p == player_id) {
@@ -228,9 +238,12 @@ fn finish_race(rooms: &Rooms, channel_id: &str, player_id: &str, keystrokes: Vec
         return; // déjà fini : on ignore un doublon
     }
 
+    // Sérialisé avant le recompute (qui prend possession des keystrokes).
+    let keystroke_log = serde_json::to_string(&keystrokes).unwrap_or_else(|_| "[]".to_string());
+
     // Race = Words sur le texte du salon (le serveur possède seed/texte/config).
     let mode_value = room.target_text.split(' ').count() as i64;
-    let sb = compute_scoreboard(&ScoreInput {
+    let mut sb = compute_scoreboard(&ScoreInput {
         mode: Mode::Words,
         mode_value,
         target_text: room.target_text.clone(),
@@ -242,6 +255,27 @@ fn finish_race(rooms: &Rooms, channel_id: &str, player_id: &str, keystrokes: Vec
     let _ = room.tx.send(ServerEvent::PlayerFinished {
         player_id: player_id.to_string(),
         wpm: sb.wpm,
+    });
+
+    // Persistance hors verrou (spawn) : l'échec ne casse pas la course, il se logue.
+    sb.pb_eligible = false;
+    let config = RunConfig {
+        mode: Mode::Words,
+        mode_value,
+        language: "english".to_string(),
+        punctuation: false,
+        numbers: false,
+    };
+    let pool = pool.clone();
+    let pid = player_id.to_string();
+    tokio::spawn(async move {
+        let run_id = format!("r_{}", now_epoch_nanos());
+        if let Err(e) =
+            crate::store::insert_run(&pool, &run_id, &pid, now_epoch_ms(), "race", &config, &sb, &keystroke_log)
+                .await
+        {
+            eprintln!("persistance du Run de Race ({pid}) : {e}");
+        }
     });
 
     if all_racers_done(&room.racers, &room.players, &room.finishers) {
@@ -304,6 +338,14 @@ fn now_epoch_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Identifiant de Run (même forme `r_<nanos>` que POST /api/runs).
+fn now_epoch_nanos() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
         .unwrap_or(0)
 }
 
