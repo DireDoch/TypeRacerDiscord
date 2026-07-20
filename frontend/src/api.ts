@@ -10,7 +10,13 @@
 //  token de dev hors Discord). Jamais de player_id dans le corps.
 // =============================================================================
 
-import type { HistoryResponse, Quote, SubmitRunRequest, SubmitRunResponse } from "./core/types";
+import type {
+  HistoryResponse,
+  Quote,
+  RunDetailResponse,
+  SubmitRunRequest,
+  SubmitRunResponse,
+} from "./core/types";
 import { getAuthToken, proxyBase } from "./discord";
 
 /** Le scoreboard affiché provient maintenant du backend autoritaire. */
@@ -39,6 +45,16 @@ export async function fetchHistory(mode?: string): Promise<HistoryResponse> {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`GET /api/history → ${res.status}`);
+  return res.json();
+}
+
+/** Un Run complet pour le Replay (GET /api/runs/:id). 404 si non rejouable. */
+export async function fetchRun(runId: string): Promise<RunDetailResponse> {
+  const token = await getAuthToken();
+  const res = await fetch(`${proxyBase()}/api/runs/${encodeURIComponent(runId)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`GET /api/runs/${runId} → ${res.status}`);
   return res.json();
 }
 

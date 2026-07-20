@@ -12,7 +12,9 @@ use std::str::FromStr;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use sqlx::{QueryBuilder, Row, Sqlite};
 
-use crate::domain::types::{CharacterBreakdown, HistoryEntry, PerSecondPoint, RunConfig, Scoreboard};
+use crate::domain::types::{
+    CharacterBreakdown, HistoryEntry, PerSecondPoint, RunConfig, RunDetailResponse, Scoreboard,
+};
 
 /// Ouvre le pool, crée le fichier au besoin et applique les migrations embarquées.
 pub async fn init_pool() -> SqlitePool {
@@ -55,8 +57,9 @@ pub async fn previous_pb(
 }
 
 /// Insère un Run. Le keystroke log (JSON brut, déjà validé par le recompute) est
-/// persisté depuis la migration 0002 — matière première des futures features
-/// replay/analyse. `kind` : "practice" ou "race".
+/// persisté depuis la migration 0002, le texte cible verbatim depuis la 0003
+/// (ADR 0001) — matière première du Replay et de l'analyse. `kind` : "practice"
+/// ou "race".
 pub async fn insert_run(
     pool: &SqlitePool,
     run_id: &str,
@@ -66,14 +69,15 @@ pub async fn insert_run(
     config: &RunConfig,
     sb: &Scoreboard,
     keystroke_log_json: &str,
+    target_text: &str,
 ) -> Result<(), sqlx::Error> {
     let per_second_json = serde_json::to_string(&sb.per_second).unwrap_or_else(|_| "[]".to_string());
     sqlx::query(
         "INSERT INTO runs
             (id, player_id, created_at, kind, mode, mode_value, language, punctuation, numbers,
              wpm, raw, accuracy, chars_correct, chars_incorrect, chars_extra, chars_missed,
-             duration_ms, per_second, pb_eligible, keystroke_log)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             duration_ms, per_second, pb_eligible, keystroke_log, target_text)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     )
     .bind(run_id)
     .bind(player_id)
@@ -95,6 +99,7 @@ pub async fn insert_run(
     .bind(per_second_json)
     .bind(sb.pb_eligible as i64)
     .bind(keystroke_log_json)
+    .bind(target_text)
     .execute(pool)
     .await?;
     Ok(())
@@ -111,7 +116,8 @@ pub async fn history(
     let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
         "SELECT id, created_at, kind, mode, mode_value, language, punctuation, numbers,
                 wpm, raw, accuracy, chars_correct, chars_incorrect, chars_extra, chars_missed,
-                duration_ms, per_second, pb_eligible
+                duration_ms, per_second, pb_eligible,
+                (keystroke_log IS NOT NULL AND target_text IS NOT NULL) AS replayable
          FROM runs WHERE player_id = ",
     );
     qb.push_bind(player_id.to_string());
@@ -125,6 +131,45 @@ pub async fn history(
 
     let rows = qb.build().fetch_all(pool).await?;
     rows.iter().map(row_to_entry).collect()
+}
+
+/// Un Run complet pour le Replay : config + texte cible + keystroke log.
+/// `None` si le Run n'existe pas, appartient à un autre joueur, ou n'est pas
+/// rejouable (colonnes NULL d'avant les migrations 0002/0003) — même réponse
+/// dans les trois cas, pour ne pas révéler l'existence des Runs d'autrui.
+pub async fn run_detail(
+    pool: &SqlitePool,
+    run_id: &str,
+    player_id: &str,
+) -> Result<Option<RunDetailResponse>, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT id, mode, mode_value, language, punctuation, numbers, keystroke_log, target_text
+         FROM runs WHERE id = ? AND player_id = ?",
+    )
+    .bind(run_id)
+    .bind(player_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some(row) = row else { return Ok(None) };
+    let (Some(log_json), Some(target_text)) = (
+        row.try_get::<Option<String>, _>("keystroke_log")?,
+        row.try_get::<Option<String>, _>("target_text")?,
+    ) else {
+        return Ok(None);
+    };
+    let mode_s: String = row.try_get("mode")?;
+    Ok(Some(RunDetailResponse {
+        run_id: row.try_get("id")?,
+        config: RunConfig {
+            mode: crate::domain::types::Mode::from_db(&mode_s).unwrap_or(crate::domain::types::Mode::Words),
+            mode_value: row.try_get("mode_value")?,
+            language: row.try_get("language")?,
+            punctuation: row.try_get::<i64, _>("punctuation")? != 0,
+            numbers: row.try_get::<i64, _>("numbers")? != 0,
+        },
+        target_text,
+        keystrokes: serde_json::from_str(&log_json).unwrap_or_default(),
+    }))
 }
 
 fn row_to_entry(row: &sqlx::sqlite::SqliteRow) -> Result<HistoryEntry, sqlx::Error> {
@@ -155,6 +200,7 @@ fn row_to_entry(row: &sqlx::sqlite::SqliteRow) -> Result<HistoryEntry, sqlx::Err
         duration_ms: row.try_get::<i64, _>("duration_ms")? as f64,
         per_second,
         pb_eligible: row.try_get::<i64, _>("pb_eligible")? != 0,
+        replayable: row.try_get::<i64, _>("replayable")? != 0,
     })
 }
 
@@ -207,10 +253,10 @@ mod tests {
         // Aucun Run → pas de PB.
         assert_eq!(previous_pb(&pool, "p1", &c).await.unwrap(), None);
 
-        insert_run(&pool, "r1", "p1", 1000, "practice", &c, &sb(50.0, true), "[]").await.unwrap();
-        insert_run(&pool, "r2", "p1", 2000, "practice", &c, &sb(70.0, true), "[]").await.unwrap();
+        insert_run(&pool, "r1", "p1", 1000, "practice", &c, &sb(50.0, true), "[]", "the cat").await.unwrap();
+        insert_run(&pool, "r2", "p1", 2000, "practice", &c, &sb(70.0, true), "[]", "the cat").await.unwrap();
         // Run d'un autre joueur : ne doit pas influencer le PB de p1.
-        insert_run(&pool, "r3", "p2", 3000, "practice", &c, &sb(200.0, true), "[]").await.unwrap();
+        insert_run(&pool, "r3", "p2", 3000, "practice", &c, &sb(200.0, true), "[]", "the cat").await.unwrap();
 
         assert_eq!(previous_pb(&pool, "p1", &c).await.unwrap(), Some(70.0));
 
@@ -229,7 +275,7 @@ mod tests {
     async fn run_non_eligible_exclu_du_pb() {
         let pool = mem_pool().await;
         let c = cfg();
-        insert_run(&pool, "r1", "p1", 1000, "practice", &c, &sb(999.0, false), "[]").await.unwrap(); // non éligible
+        insert_run(&pool, "r1", "p1", 1000, "practice", &c, &sb(999.0, false), "[]", "the cat").await.unwrap(); // non éligible
         assert_eq!(previous_pb(&pool, "p1", &c).await.unwrap(), None);
         // Mais reste dans l'historique.
         assert_eq!(history(&pool, "p1", None, None, 50).await.unwrap().len(), 1);
@@ -240,7 +286,7 @@ mod tests {
         let pool = mem_pool().await;
         let c = cfg();
         let log = r#"[{"t":10.0,"k":"a"}]"#;
-        insert_run(&pool, "r1", "p1", 1000, "race", &c, &sb(60.0, false), log).await.unwrap();
+        insert_run(&pool, "r1", "p1", 1000, "race", &c, &sb(60.0, false), log, "the cat").await.unwrap();
 
         // Le log brut est bien en base (relu tel quel, colonne dédiée).
         let row = sqlx::query("SELECT keystroke_log, kind FROM runs WHERE id = 'r1'")
@@ -253,5 +299,34 @@ mod tests {
         // Et le kind ressort dans l'historique.
         let h = history(&pool, "p1", None, None, 50).await.unwrap();
         assert_eq!(h[0].kind, "race");
+    }
+
+    #[tokio::test]
+    async fn run_detail_pour_replay() {
+        let pool = mem_pool().await;
+        let c = cfg();
+        let log = r#"[{"t":10.0,"k":"a"}]"#;
+        insert_run(&pool, "r1", "p1", 1000, "practice", &c, &sb(60.0, true), log, "the cat")
+            .await
+            .unwrap();
+
+        // Le propriétaire récupère texte cible + log typé.
+        let d = run_detail(&pool, "r1", "p1").await.unwrap().unwrap();
+        assert_eq!(d.target_text, "the cat");
+        assert_eq!(d.keystrokes.len(), 1);
+        assert_eq!(d.keystrokes[0].k, "a");
+        assert!(history(&pool, "p1", None, None, 50).await.unwrap()[0].replayable);
+
+        // Autre joueur ou Run inconnu : même réponse (pas de fuite d'existence).
+        assert!(run_detail(&pool, "r1", "p2").await.unwrap().is_none());
+        assert!(run_detail(&pool, "zzz", "p1").await.unwrap().is_none());
+
+        // Vieux Run d'avant la migration 0003 : non rejouable, masqué dans l'historique.
+        sqlx::query("UPDATE runs SET target_text = NULL WHERE id = 'r1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(run_detail(&pool, "r1", "p1").await.unwrap().is_none());
+        assert!(!history(&pool, "p1", None, None, 50).await.unwrap()[0].replayable);
     }
 }

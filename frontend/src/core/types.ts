@@ -210,9 +210,21 @@ export interface HistoryEntry {
   durationMs: number;
   perSecond: PerSecondPoint[];
   pbEligible: boolean;
+  /** true si le Run peut être rejoué : keystroke log ET texte cible en base
+   *  (les Runs d'avant les migrations 0002/0003 ne le peuvent pas — ADR 0001). */
+  replayable: boolean;
 }
 
 /** GET /api/history — réponse. */
 export interface HistoryResponse {
   entries: HistoryEntry[];
+}
+
+/** GET /api/runs/:id — un Run complet pour le Replay (log + texte cible). */
+export interface RunDetailResponse {
+  runId: string;
+  config: RunConfig;
+  /** Texte cible verbatim ("" pour Zen). */
+  targetText: string;
+  keystrokes: KeystrokeLog;
 }

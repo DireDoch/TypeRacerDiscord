@@ -231,6 +231,20 @@ body {
 .history-table .num {
   text-align: right;
 }
+.history-table button {
+  background: none;
+  border: 1px solid var(--sub);
+  color: var(--sub);
+  font-family: var(--font);
+  font-size: 0.8rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.history-table button:hover {
+  border-color: var(--main);
+  color: var(--main);
+}
 button.primary {
   align-self: center;
   background: none;

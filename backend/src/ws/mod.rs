@@ -268,11 +268,13 @@ fn finish_race(
     };
     let pool = pool.clone();
     let pid = player_id.to_string();
+    let target_text = room.target_text.clone();
     tokio::spawn(async move {
         let run_id = format!("r_{}", now_epoch_nanos());
-        if let Err(e) =
-            crate::store::insert_run(&pool, &run_id, &pid, now_epoch_ms(), "race", &config, &sb, &keystroke_log)
-                .await
+        if let Err(e) = crate::store::insert_run(
+            &pool, &run_id, &pid, now_epoch_ms(), "race", &config, &sb, &keystroke_log, &target_text,
+        )
+        .await
         {
             eprintln!("persistance du Run de Race ({pid}) : {e}");
         }

@@ -39,7 +39,8 @@ use tower_http::services::{ServeDir, ServeFile};
 use discord::{AuthError, DiscordConfig, Identity};
 use domain::replay::{compute_scoreboard, ScoreInput};
 use domain::types::{
-    HistoryResponse, SubmitRunRequest, SubmitRunResponse, TokenRequest, TokenResponse,
+    HistoryResponse, RunDetailResponse, SubmitRunRequest, SubmitRunResponse, TokenRequest,
+    TokenResponse,
 };
 use quote::{QuoteClient, QuoteResponse};
 
@@ -73,6 +74,7 @@ async fn main() {
         .route("/api/quote", get(quote_handler))
         .route("/token", post(token))
         .route("/api/runs", post(submit_run))
+        .route("/api/runs/:id", get(run_detail))
         .route("/api/history", get(history))
         .route("/ws", get(ws_handler))
         .with_state(state)
@@ -130,6 +132,9 @@ async fn submit_run(
     // brut est persisté depuis la migration 0002 (futures features replay/analyse).
     let keystroke_log =
         serde_json::to_string(&req.keystrokes).unwrap_or_else(|_| "[]".to_string());
+    // Cloné avant le recompute (qui prend possession du texte) : persisté verbatim
+    // depuis la migration 0003 pour le Replay (ADR 0001).
+    let target_text = req.target_text.clone();
     let scoreboard = compute_scoreboard(&ScoreInput {
         mode: req.config.mode,
         mode_value: req.config.mode_value,
@@ -155,6 +160,7 @@ async fn submit_run(
         &req.config,
         &scoreboard,
         &keystroke_log,
+        &target_text,
     )
     .await
     .map_err(internal)?;
@@ -189,6 +195,20 @@ async fn ws_handler(
         .on_upgrade(move |socket| {
             ws::handle_socket(socket, state.rooms.clone(), player_id, state.pool.clone())
         })
+}
+
+/// GET /api/runs/:id — un Run complet pour le Replay (log + texte cible).
+/// 404 indistinctement : inconnu, à un autre joueur, ou non rejouable (ADR 0001).
+async fn run_detail(
+    State(state): State<AppState>,
+    AuthPlayer(player_id): AuthPlayer,
+    axum::extract::Path(run_id): axum::extract::Path<String>,
+) -> Result<Json<RunDetailResponse>, StatusCode> {
+    store::run_detail(&state.pool, &run_id, &player_id)
+        .await
+        .map_err(internal)?
+        .map(Json)
+        .ok_or(StatusCode::NOT_FOUND)
 }
 
 #[derive(Debug, Deserialize)]

@@ -163,6 +163,20 @@ pub struct HistoryEntry {
     pub duration_ms: f64,
     pub per_second: Vec<PerSecondPoint>,
     pub pb_eligible: bool,
+    /// true si le Run peut être rejoué : keystroke log ET texte cible en base
+    /// (les Runs d'avant les migrations 0002/0003 ne le peuvent pas — ADR 0001).
+    pub replayable: bool,
+}
+
+/// GET /api/runs/:id — un Run complet pour le Replay (log + texte cible).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunDetailResponse {
+    pub run_id: String,
+    pub config: RunConfig,
+    /// Texte cible verbatim ("" pour Zen).
+    pub target_text: String,
+    pub keystrokes: Vec<Keystroke>,
 }
 
 /// GET /api/history — réponse.

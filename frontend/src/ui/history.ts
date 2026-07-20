@@ -8,7 +8,8 @@
 // =============================================================================
 
 import type { HistoryEntry, Mode, RunConfig } from "../core/types";
-import { fetchHistory } from "../api";
+import { fetchHistory, fetchRun } from "../api";
+import { runReplay } from "./replay";
 
 const FILTERS: Mode[] = ["time", "words", "quotes", "zen"];
 
@@ -23,6 +24,8 @@ export class History {
   private filter: Mode | null = null;
   /** Jeton anti-course : un fetch obsolète (filtre rechangé, écran quitté) s'auto-annule. */
   private seq = 0;
+  /** Arrêt du Replay en cours si on quitte l'écran (rAF sinon fantôme). */
+  private stopReplay: (() => void) | null = null;
 
   constructor(
     private readonly root: HTMLElement,
@@ -33,9 +36,11 @@ export class History {
     void this.load();
   }
 
-  /** Invalide tout fetch en vol (pas d'écouteur global ni de rAF à défaire). */
+  /** Invalide tout fetch en vol et arrête un éventuel Replay. */
   destroy(): void {
     this.seq++;
+    this.stopReplay?.();
+    this.stopReplay = null;
   }
 
   private async load(): Promise<void> {
@@ -76,7 +81,32 @@ export class History {
         void this.load();
       }),
     );
+    this.root.querySelectorAll<HTMLButtonElement>("[data-replay]").forEach((b) =>
+      b.addEventListener("click", () => void this.replay(b.dataset.replay!)),
+    );
     this.root.querySelector<HTMLButtonElement>("[data-nav]")!.addEventListener("click", this.onExit);
+  }
+
+  /** Charge le Run (log + texte cible) et lance le lecteur de l'issue #1. */
+  private async replay(runId: string): Promise<void> {
+    const seq = ++this.seq;
+    this.render(`<div class="loading">Chargement du Run…</div>`);
+    try {
+      const run = await fetchRun(runId);
+      if (seq !== this.seq) return;
+      this.stopReplay = runReplay(this.root, {
+        targetWords: run.targetText.split(" ").filter((w) => w.length > 0),
+        log: run.keystrokes,
+        zen: run.config.mode === "zen",
+        onBack: () => {
+          this.stopReplay = null;
+          void this.load();
+        },
+      });
+    } catch {
+      if (seq !== this.seq) return;
+      this.render(`<div class="loading">Impossible de charger ce Run.</div>`);
+    }
   }
 }
 
@@ -91,13 +121,14 @@ function tableHtml(entries: HistoryEntry[]): string {
           <td class="num">${e.wpm}</td>
           <td class="num">${e.accuracy}%</td>
           <td class="num">${(e.durationMs / 1000).toFixed(1)}s</td>
+          <td>${e.replayable ? `<button data-replay="${e.runId}">replay</button>` : ""}</td>
         </tr>`,
     )
     .join("");
   return `
     <table class="history-table">
       <thead>
-        <tr><th>date</th><th>type</th><th>mode</th><th class="num">wpm</th><th class="num">acc</th><th class="num">durée</th></tr>
+        <tr><th>date</th><th>type</th><th>mode</th><th class="num">wpm</th><th class="num">acc</th><th class="num">durée</th><th></th></tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
