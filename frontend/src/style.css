@@ -401,6 +401,50 @@ button.primary:hover {
   color: var(--main);
 }
 
+/* --- Écran Apprendre (cursus de leçons) ------------------------------------- */
+.learn {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+.learn h2 {
+  color: var(--main);
+}
+.learn button {
+  background: none;
+  border: 1px solid var(--sub);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 0.95rem;
+  cursor: pointer;
+  padding: 0.5rem 0.9rem;
+  border-radius: 0.4rem;
+  align-self: flex-start;
+}
+.learn button:hover:not(:disabled) {
+  border-color: var(--main);
+  color: var(--main);
+}
+.learn button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.lesson-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.learn .lesson-item {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-self: stretch;
+}
+
 /* --- Bandeau d'erreurs (debug in-iframe, console invisible dans Discord) ---- */
 #errbar {
   position: fixed;

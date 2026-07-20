@@ -165,3 +165,30 @@ pas persisté ; seule la série `per_second` dérivée l'est.
 
 Le **PB n'a pas de table** : il se dérive par `MAX(wpm) … GROUP BY bucket WHERE pb_eligible = 1`
 (index `idx_runs_pb`).
+
+---
+
+## `GET | POST /api/learn/progress` — progression « Apprendre »
+
+`Authorization: Bearer <token>` requis. Une valeur par Player : `completed` = nombre de
+leçons complétées (la leçon d'index N, 0-based, est débloquée si `N <= completed`).
+Les exercices de leçon ne sont **pas des Runs** : rien dans `runs`, ni PB ni historique
+(table dédiée `learn_progress`, migration `0004`).
+
+**GET — Réponse 200** (0 si jamais joué)
+```json
+{ "completed": 2 }
+```
+
+**POST — Requête** (après une leçon réussie ; le serveur garde le **MAX**, jamais de recul)
+```json
+{ "completed": 3 }
+```
+
+**POST — Réponse 200** : la valeur stockée (utile si un autre appareil était plus avancé)
+```json
+{ "completed": 3 }
+```
+
+Le seuil d'accuracy est vérifié côté client (barème statique dans `core/learn.ts`) —
+pas d'anti-triche : une leçon n'apporte que du contenu pédagogique.

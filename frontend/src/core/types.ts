@@ -245,6 +245,14 @@ export interface AnalysisResponse {
   runsAnalyzed: number;
 }
 
+/**
+ * GET/POST /api/learn/progress — progression du cursus « Apprendre ».
+ * `completed` = nombre de leçons complétées (le serveur garde le MAX, jamais de recul).
+ */
+export interface LearnProgress {
+  completed: number;
+}
+
 /** GET /api/runs/:id — un Run complet pour le Replay (log + texte cible). */
 export interface RunDetailResponse {
   runId: string;

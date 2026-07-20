@@ -219,6 +219,14 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
 - Écran **Race** (`ui/race.ts`) : lobby (cartes de présence, owner 👑), décompte 3 s avec
   texte entier, barres live, classement, revanche. Écran **Menu** (`ui/menu.ts`) : hub
   d'arrivée + vue Options (liens légaux). Navigation par boutons avec `destroy()`.
+- Écran **Apprendre** (`ui/learn.ts`, entrée au menu) : socle du cursus (issue #4) —
+  liste des Lessons (verrouillée/disponible/complétée), 3 leçons réelles (posture + F/J,
+  rangée de base gauche/droite) dans `core/learn.ts` avec le **barème statique par
+  tranches** (70/80/90 % d'accuracy, modifiable en un seul endroit) et le générateur de
+  séquences seedé sur touches fixes (testé). L'exercice n'est PAS un Run (chrono à la
+  1re frappe, accuracy locale via la référence `scoreboard.ts`, jamais de POST /api/runs).
+  Progression par Player : `GET/POST /api/learn/progress` (table `learn_progress`,
+  migration `0004`, le serveur garde le MAX).
 
 **Backend (`backend/`, Rust : Axum + sqlx/SQLite + reqwest).**
 - `domain/types.rs` (miroir de `types.ts`) + `domain/replay.rs` (port de `scoreboard.ts`,

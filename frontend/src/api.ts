@@ -13,6 +13,7 @@
 import type {
   AnalysisResponse,
   HistoryResponse,
+  LearnProgress,
   Quote,
   RunDetailResponse,
   SubmitRunRequest,
@@ -76,6 +77,28 @@ export async function fetchAnalysis(runId: string): Promise<AnalysisResponse> {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`GET /api/runs/${runId}/analysis → ${res.status}`);
+  return res.json();
+}
+
+/** Progression « Apprendre » du joueur (GET /api/learn/progress). */
+export async function fetchLearnProgress(): Promise<LearnProgress> {
+  const token = await getAuthToken();
+  const res = await fetch(`${proxyBase()}/api/learn/progress`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`GET /api/learn/progress → ${res.status}`);
+  return res.json();
+}
+
+/** Enregistre une progression « Apprendre » (POST — le serveur garde le MAX). */
+export async function submitLearnProgress(completed: number): Promise<LearnProgress> {
+  const token = await getAuthToken();
+  const res = await fetch(`${proxyBase()}/api/learn/progress`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ completed }),
+  });
+  if (!res.ok) throw new Error(`POST /api/learn/progress → ${res.status}`);
   return res.json();
 }
 
