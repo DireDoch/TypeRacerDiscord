@@ -18,6 +18,7 @@ import { Rng } from "../core/text-gen/rng";
 import { liveWpm, liveWpmZen } from "../live-stats";
 import { submitRun, fetchQuote } from "../api";
 import { renderResults } from "./results";
+import { runReplay } from "./replay";
 
 // 0 = Time infini (horloge désactivée, mots en flux continu, fin sur Shift+Enter).
 const TIME_VALUES = [15, 30, 60, 120, 0];
@@ -53,6 +54,8 @@ export class Practice {
   private clock = new RunClock();
   private log: KeystrokeLog = [];
   private rafId = 0;
+  /** Arrêt du Replay en cours (rAF) si on quitte l'écran par reset()/destroy(). */
+  private stopReplay: (() => void) | null = null;
 
   // Mode Quotes : la Quote vient de GET /api/quote (pas de génération seedée).
   private quoteId?: string;
@@ -81,6 +84,8 @@ export class Practice {
   destroy(): void {
     document.removeEventListener("keydown", this.onKeyDown);
     cancelAnimationFrame(this.rafId);
+    this.stopReplay?.();
+    this.stopReplay = null;
     this.resetSeq++;
   }
 
@@ -89,6 +94,8 @@ export class Practice {
   private async reset(): Promise<void> {
     const seq = ++this.resetSeq;
     cancelAnimationFrame(this.rafId);
+    this.stopReplay?.();
+    this.stopReplay = null;
     this.phase = "idle";
     this.seed = (Math.random() * 0x7fffffff) | 0;
     this.clock.reset();
@@ -212,7 +219,20 @@ export class Practice {
       this.config.mode === "quotes" && this.quoteAuthor
         ? { author: this.quoteAuthor, wikipediaUrl: this.quoteWikipediaUrl ?? "" }
         : undefined;
-    renderResults(this.root, res, () => void this.reset(), attribution);
+    // Résultats ↔ Replay : le Replay relit le Run encore en mémoire (aucun réseau)
+    // et son bouton « ← résultats » re-rend cet écran-ci.
+    const showResults = (): void => {
+      this.stopReplay = null;
+      renderResults(this.root, res, () => void this.reset(), attribution, () => {
+        this.stopReplay = runReplay(this.root, {
+          targetWords: this.targetWords,
+          log: this.log,
+          zen: this.config.mode === "zen",
+          onBack: showResults,
+        });
+      });
+    };
+    showResults();
   }
 
   // --- Clavier ----------------------------------------------------------------
@@ -491,7 +511,7 @@ function escapeChar(ch: string): string {
 }
 
 /** Échappe une chaîne entière (Zen : le texte tapé par le joueur). */
-function escapeText(s: string): string {
+export function escapeText(s: string): string {
   let out = "";
   for (const ch of s) out += escapeChar(ch);
   return out;

@@ -39,6 +39,7 @@ export function renderResults(
   res: SubmitRunResponse,
   onRestart: () => void,
   quote?: QuoteAttribution,
+  onReplay?: () => void,
 ): void {
   const sb = res.scoreboard;
   const c = sb.characters;
@@ -78,11 +79,13 @@ export function renderResults(
       ${AUTHORITATIVE_BACKEND ? "" : `<p class="notice">⚠️ Scoreboard recalculé en local (backend autoritaire non branché — pas d'anti-triche ni de PB persistés).</p>`}
 
       <button id="restart" class="primary">Rejouer (Tab / Entrée)</button>
+      ${onReplay ? `<button id="replayBtn">Replay</button>` : ""}
     </section>
   `;
 
   drawChart(root.querySelector<HTMLCanvasElement>("#resultChart")!, sb.perSecond);
   root.querySelector<HTMLButtonElement>("#restart")!.addEventListener("click", onRestart);
+  if (onReplay) root.querySelector<HTMLButtonElement>("#replayBtn")!.addEventListener("click", onReplay);
 }
 
 function escapeHtml(s: string): string {
