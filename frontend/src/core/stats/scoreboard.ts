@@ -55,7 +55,11 @@ const wordCorrect = (typed: string, target: string): number => {
 
 export function computeScoreboard(input: ScoreInput): Scoreboard {
   const durationMs = resolveDuration(input);
-  const pbEligible = input.mode !== "zen" && !(input.mode === "time" && input.modeValue === 0);
+  // Zen / Time infini : durée variable. Drill : texte personnalisé. Tous incomparables → pas de PB.
+  const pbEligible =
+    input.mode !== "zen" &&
+    input.mode !== "drill" &&
+    !(input.mode === "time" && input.modeValue === 0);
 
   const result =
     input.mode === "zen"

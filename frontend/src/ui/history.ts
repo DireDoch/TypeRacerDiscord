@@ -12,7 +12,7 @@ import { fetchHistory, fetchProfileAnalysis, fetchRun } from "../api";
 import { runReplay } from "./replay";
 import { analysisHtml } from "./results";
 
-const FILTERS: Mode[] = ["time", "words", "quotes", "zen"];
+const FILTERS: Mode[] = ["time", "words", "quotes", "zen", "drill"];
 
 /** Libellé compact du Mode d'un Run : « time 30s », « time ∞ », « words 25 », « quotes »… */
 export function modeLabel(config: RunConfig): string {

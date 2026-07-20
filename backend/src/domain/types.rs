@@ -22,6 +22,7 @@ pub enum Mode {
     Words,
     Quotes,
     Zen,
+    Drill,
 }
 
 impl Mode {
@@ -32,6 +33,7 @@ impl Mode {
             Mode::Words => "words",
             Mode::Quotes => "quotes",
             Mode::Zen => "zen",
+            Mode::Drill => "drill",
         }
     }
 
@@ -42,6 +44,7 @@ impl Mode {
             "words" => Some(Mode::Words),
             "quotes" => Some(Mode::Quotes),
             "zen" => Some(Mode::Zen),
+            "drill" => Some(Mode::Drill),
             _ => None,
         }
     }
@@ -52,7 +55,7 @@ impl Mode {
 #[serde(rename_all = "camelCase")]
 pub struct RunConfig {
     pub mode: Mode,
-    /// time : secondes (0 = infini) · words : nb mots · quotes/zen : 0.
+    /// time : secondes (0 = infini) · words : nb mots · quotes/zen/drill : 0.
     pub mode_value: i64,
     pub language: String,
     pub punctuation: bool,
