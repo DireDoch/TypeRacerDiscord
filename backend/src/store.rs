@@ -200,6 +200,36 @@ pub async fn recent_logs(
         .collect())
 }
 
+/// Progression « Apprendre » du joueur (0 si jamais joué).
+pub async fn learn_progress(pool: &SqlitePool, player_id: &str) -> Result<i64, sqlx::Error> {
+    let row = sqlx::query("SELECT completed FROM learn_progress WHERE player_id = ?")
+        .bind(player_id)
+        .fetch_optional(pool)
+        .await?;
+    row.map_or(Ok(0), |r| r.try_get("completed"))
+}
+
+/// Enregistre une progression « Apprendre » et renvoie la valeur stockée.
+/// Le serveur garde le MAX : une re-complétion d'une vieille leçon ne recule jamais.
+pub async fn set_learn_progress(
+    pool: &SqlitePool,
+    player_id: &str,
+    completed: i64,
+    now_ms: i64,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO learn_progress (player_id, completed, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(player_id) DO UPDATE
+           SET completed = MAX(completed, excluded.completed), updated_at = excluded.updated_at",
+    )
+    .bind(player_id)
+    .bind(completed)
+    .bind(now_ms)
+    .execute(pool)
+    .await?;
+    learn_progress(pool, player_id).await
+}
+
 fn row_to_entry(row: &sqlx::sqlite::SqliteRow) -> Result<HistoryEntry, sqlx::Error> {
     let mode_s: String = row.try_get("mode")?;
     let per_second_s: String = row.try_get("per_second")?;
@@ -356,6 +386,22 @@ mod tests {
             .unwrap();
         assert!(run_detail(&pool, "r1", "p1").await.unwrap().is_none());
         assert!(!history(&pool, "p1", None, None, 50).await.unwrap()[0].replayable);
+    }
+
+    #[tokio::test]
+    async fn learn_progress_par_joueur_max_seulement() {
+        let pool = mem_pool().await;
+
+        // Jamais joué → 0.
+        assert_eq!(learn_progress(&pool, "p1").await.unwrap(), 0);
+
+        assert_eq!(set_learn_progress(&pool, "p1", 2, 1000).await.unwrap(), 2);
+        // Re-complétion d'une vieille leçon : jamais de recul.
+        assert_eq!(set_learn_progress(&pool, "p1", 1, 2000).await.unwrap(), 2);
+        assert_eq!(set_learn_progress(&pool, "p1", 3, 3000).await.unwrap(), 3);
+
+        // Isolé par joueur.
+        assert_eq!(learn_progress(&pool, "p2").await.unwrap(), 0);
     }
 
     #[tokio::test]

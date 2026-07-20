@@ -218,6 +218,13 @@ pub struct HistoryResponse {
     pub entries: Vec<HistoryEntry>,
 }
 
+/// GET/POST /api/learn/progress — progression du cursus « Apprendre » (issue #4).
+/// `completed` = nombre de leçons complétées (le serveur garde le MAX, jamais de recul).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LearnProgress {
+    pub completed: i64,
+}
+
 /// POST /token — corps de requête (code OAuth fourni par l'Embedded App SDK).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenRequest {

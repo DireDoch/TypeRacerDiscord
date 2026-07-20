@@ -39,8 +39,8 @@ use tower_http::services::{ServeDir, ServeFile};
 use discord::{AuthError, DiscordConfig, Identity};
 use domain::replay::{compute_scoreboard, ScoreInput};
 use domain::types::{
-    AnalysisResponse, HistoryResponse, RunDetailResponse, SubmitRunRequest, SubmitRunResponse,
-    TokenRequest, TokenResponse,
+    AnalysisResponse, HistoryResponse, LearnProgress, RunDetailResponse, SubmitRunRequest,
+    SubmitRunResponse, TokenRequest, TokenResponse,
 };
 use quote::{QuoteClient, QuoteResponse};
 
@@ -78,6 +78,7 @@ async fn main() {
         .route("/api/runs/:id/analysis", get(run_analysis))
         .route("/api/profile/analysis", get(profile_analysis))
         .route("/api/history", get(history))
+        .route("/api/learn/progress", get(get_learn_progress).post(post_learn_progress))
         .route("/ws", get(ws_handler))
         .with_state(state)
         // Tout ce qui ne matche pas une route API → fichiers statiques (puis index.html).
@@ -266,6 +267,32 @@ async fn history(
         .await
         .map_err(internal)?;
     Ok(Json(HistoryResponse { entries }))
+}
+
+/// GET /api/learn/progress — progression « Apprendre » du joueur (0 si jamais joué).
+async fn get_learn_progress(
+    State(state): State<AppState>,
+    AuthPlayer(player_id): AuthPlayer,
+) -> Result<Json<LearnProgress>, StatusCode> {
+    let completed = store::learn_progress(&state.pool, &player_id)
+        .await
+        .map_err(internal)?;
+    Ok(Json(LearnProgress { completed }))
+}
+
+/// POST /api/learn/progress — enregistre une progression (le serveur garde le MAX).
+/// Le seuil d'accuracy est vérifié côté client (leçons = pas des Runs, pas d'anti-triche) ;
+/// on borne juste la valeur pour garder la table saine.
+async fn post_learn_progress(
+    State(state): State<AppState>,
+    AuthPlayer(player_id): AuthPlayer,
+    Json(req): Json<LearnProgress>,
+) -> Result<Json<LearnProgress>, StatusCode> {
+    let completed = req.completed.clamp(0, 1000);
+    let completed = store::set_learn_progress(&state.pool, &player_id, completed, now_ms() as i64)
+        .await
+        .map_err(internal)?;
+    Ok(Json(LearnProgress { completed }))
 }
 
 // ----------------------------------------------------------------------------

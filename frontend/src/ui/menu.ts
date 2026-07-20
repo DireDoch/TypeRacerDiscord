@@ -16,7 +16,7 @@ export class Menu {
 
   constructor(
     private readonly root: HTMLElement,
-    private readonly nav: { solo(): void; multi(): void; history(): void },
+    private readonly nav: { solo(): void; multi(): void; history(): void; learn(): void },
   ) {}
 
   mount(): void {
@@ -43,6 +43,7 @@ export class Menu {
     return `
       <button data-menu="solo">Solo</button>
       <button data-menu="multi">Multijoueur</button>
+      <button data-menu="learn">Apprendre</button>
       <button data-menu="history">Historique</button>
       <button data-menu="options">Options</button>
       ${quit}
@@ -69,6 +70,7 @@ export class Menu {
     on("solo", () => this.nav.solo());
     on("multi", () => this.nav.multi());
     on("history", () => this.nav.history());
+    on("learn", () => this.nav.learn());
     on("options", () => {
       this.view = "options";
       this.render();
