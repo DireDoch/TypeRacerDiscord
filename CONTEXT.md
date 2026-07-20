@@ -27,12 +27,20 @@ _Avoid_: Modifier, Option, Toggle.
 The recorded timeline of a Player's keystrokes during a Run (what was typed and when). The raw input from which all stats are derived; sent once to the backend for the Authoritative scoreboard and **persisted with the Run** (migration `0002`) as the raw material for the upcoming replay/analysis features.
 _Avoid_: Input history, Replay.
 
+**Replay**:
+The playback of a finished Run, re-rendered from its Keystroke log against the persisted target text — the Player watches their own typing happen again in real time (errors included). Launched from the results screen or from any Run in the history. Simple playback: start to finish at real speed, no pause or seeking.
+_Avoid_: Review, Playback, Ghost.
+
 **Live stats**:
 Stats computed on the client during a Run for immediate UI feedback (the moving WPM counter, the graph filling in). Not authoritative.
 
 **Authoritative scoreboard**:
 The final stats (WPM, Raw, Accuracy, character breakdown, per-second series) recomputed by the Rust backend from the Keystroke log at the end of a Run. The numbers of record. In multiplayer this is also the anti-cheat check.
 _Avoid_: Results, Score.
+
+**Weak spot**:
+A key or key-pair (bigram) where the Player is measurably slower or more error-prone than their own average, with enough occurrences to be significant. Identified by the analysis engine from one Keystroke log (a single Run) or many (a profile across recent Runs) — same definition either way.
+_Avoid_: Weakness, Problem key, Trouble key.
 
 **Player**:
 A Discord user playing the game, identified by their Discord user ID (snowflake). No separate account exists — identity comes entirely from the Discord OAuth handshake.
@@ -50,9 +58,17 @@ _Avoid_: Record, High score, Best.
 The Time Mode with its value set to `0` — the clock is disabled, words stream endlessly, and the Run ends only when the Player presses `Shift+Enter`. There is still a target text (unlike Zen). Excluded from PBs.
 _Avoid_: No-timer, Disabled time, Endless.
 
+**Drill**:
+A Practice Mode whose text targets the Player's current Weak spots: a short warm-up of targeted key sequences, then real words (from the standard word list) chosen because they contain those Weak spots. Personalized text makes Drills incomparable, so they never produce a PB (same rule as Zen and Time infini).
+_Avoid_: Practice mode, Training, Exercise mode.
+
 **Quote**:
 The fixed text fetched for a Quotes Run (text + author), via the Rust quote proxy. Settings and length controls do not apply — the Player types the whole Quote. The author name builds a "learn more" link to that author's Wikipedia page.
 _Avoid_: Citation, Passage.
+
+**Lesson**:
+One step of the Learn curriculum (UI: « Apprendre »): instructional content on touch-typing plus a typed exercise on a fixed key set. Passing the exercise at the accuracy required by the current curriculum stage (a static, editable table of thresholds — early Lessons are lenient, later ones stricter; speed never gates early stages) unlocks the next Lesson. Progress is persisted per Player. Lesson exercises are not Runs: no PB, no history entry.
+_Avoid_: Level, Tutorial, Course.
 
 **Room** (Phase 2, not in MVP):
 A multiplayer session scoped to one Discord voice channel (`channelId`). Holds the set of Players racing the same text together.
