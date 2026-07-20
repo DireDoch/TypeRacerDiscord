@@ -59,6 +59,16 @@ export async function fetchRun(runId: string): Promise<RunDetailResponse> {
   return res.json();
 }
 
+/** Weak spots agrégés sur les derniers Runs (GET /api/profile/analysis). */
+export async function fetchProfileAnalysis(): Promise<AnalysisResponse> {
+  const token = await getAuthToken();
+  const res = await fetch(`${proxyBase()}/api/profile/analysis`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`GET /api/profile/analysis → ${res.status}`);
+  return res.json();
+}
+
 /** Weak spots d'un Run (GET /api/runs/:id/analysis). */
 export async function fetchAnalysis(runId: string): Promise<AnalysisResponse> {
   const token = await getAuthToken();

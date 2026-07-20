@@ -76,6 +76,7 @@ async fn main() {
         .route("/api/runs", post(submit_run))
         .route("/api/runs/:id", get(run_detail))
         .route("/api/runs/:id/analysis", get(run_analysis))
+        .route("/api/profile/analysis", get(profile_analysis))
         .route("/api/history", get(history))
         .route("/ws", get(ws_handler))
         .with_state(state)
@@ -227,6 +228,23 @@ async fn run_analysis(
         run.target_text.as_str(),
         run.keystrokes.as_slice(),
     )])))
+}
+
+/// Nombre de Runs récents agrégés pour le profil « Mes faiblesses » (#6).
+const PROFILE_RUNS: i64 = 20;
+
+/// GET /api/profile/analysis — Weak spots agrégés sur les derniers Runs du joueur.
+/// Même moteur que /api/runs/:id/analysis (analyze accepte 1..N logs).
+async fn profile_analysis(
+    State(state): State<AppState>,
+    AuthPlayer(player_id): AuthPlayer,
+) -> Result<Json<AnalysisResponse>, StatusCode> {
+    let runs = store::recent_logs(&state.pool, &player_id, PROFILE_RUNS)
+        .await
+        .map_err(internal)?;
+    let refs: Vec<(&str, &[domain::types::Keystroke])> =
+        runs.iter().map(|(t, k)| (t.as_str(), k.as_slice())).collect();
+    Ok(Json(crate::domain::analysis::analyze(&refs)))
 }
 
 #[derive(Debug, Deserialize)]

@@ -107,16 +107,20 @@ async function analyze(root: HTMLElement, runId: string): Promise<void> {
     return;
   }
   if (!root.querySelector("#analysis")) return; // écran quitté pendant le fetch
+  el.innerHTML = analysisHtml(a, "sur cette course");
+}
+
+/** Rendu partagé (résultats et profil « Mes faiblesses ») d'une AnalysisResponse. */
+export function analysisHtml(a: AnalysisResponse, scope: string): string {
   if (a.weakSpots.length === 0) {
-    el.innerHTML = `<p class="hint">Aucun Weak spot significatif sur cette course — rien ne sort de ta moyenne (ou pas assez d'occurrences pour trancher).</p>`;
-    return;
+    return `<p class="hint">Aucun Weak spot significatif ${scope} — rien ne sort de ta moyenne (ou pas assez d'occurrences pour trancher).</p>`;
   }
   const items = a.weakSpots
     .slice(0, 10)
     .map((w) => `<li>${weakSpotHtml(w)}</li>`)
     .join("");
-  el.innerHTML = `
-    <p class="hint">Tes points faibles sur cette course (vs ta moyenne : ${a.globalMeanDelayMs} ms/frappe, ${(a.globalErrorRate * 100).toFixed(1)} % d'erreurs) :</p>
+  return `
+    <p class="hint">Tes points faibles ${scope} (vs ta moyenne : ${a.globalMeanDelayMs} ms/frappe, ${(a.globalErrorRate * 100).toFixed(1)} % d'erreurs) :</p>
     <ul class="weak-spots">${items}</ul>
   `;
 }

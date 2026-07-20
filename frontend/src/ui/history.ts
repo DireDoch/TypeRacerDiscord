@@ -8,8 +8,9 @@
 // =============================================================================
 
 import type { HistoryEntry, Mode, RunConfig } from "../core/types";
-import { fetchHistory, fetchRun } from "../api";
+import { fetchHistory, fetchProfileAnalysis, fetchRun } from "../api";
 import { runReplay } from "./replay";
+import { analysisHtml } from "./results";
 
 const FILTERS: Mode[] = ["time", "words", "quotes", "zen"];
 
@@ -60,21 +61,25 @@ export class History {
     }
   }
 
-  private render(body: string): void {
+  private render(body: string, profileView = false): void {
     const filterBtn = (m: Mode) =>
       `<button data-filter="${m}" class="${this.filter === m ? "on" : ""}">${m}</button>`;
     this.root.innerHTML = `
       <section class="history">
         <div class="config">
           <div class="group">
-            <button data-filter="" class="${this.filter === null ? "on" : ""}">tous</button>
+            <button data-filter="" class="${this.filter === null && !profileView ? "on" : ""}">tous</button>
             ${FILTERS.map(filterBtn).join("")}
           </div>
+          <div class="group"><button data-profile class="${profileView ? "on" : ""}">mes faiblesses</button></div>
           <div class="group"><button data-nav="menu">← menu</button></div>
         </div>
         ${body}
       </section>
     `;
+    this.root
+      .querySelector<HTMLButtonElement>("[data-profile]")!
+      .addEventListener("click", () => void this.profile());
     this.root.querySelectorAll<HTMLButtonElement>("[data-filter]").forEach((b) =>
       b.addEventListener("click", () => {
         this.filter = (b.dataset.filter || null) as Mode | null;
@@ -85,6 +90,25 @@ export class History {
       b.addEventListener("click", () => void this.replay(b.dataset.replay!)),
     );
     this.root.querySelector<HTMLButtonElement>("[data-nav]")!.addEventListener("click", this.onExit);
+  }
+
+  /** Vue « Mes faiblesses » : Weak spots agrégés sur les derniers Runs (#6). */
+  private async profile(): Promise<void> {
+    const seq = ++this.seq;
+    this.render(`<div class="loading">Analyse de tes dernières courses…</div>`, true);
+    try {
+      const a = await fetchProfileAnalysis();
+      if (seq !== this.seq) return;
+      const body =
+        a.runsAnalyzed === 0
+          ? `<div class="loading">Pas encore de données analysables — joue quelques courses !</div>`
+          : `<p class="hint">${a.runsAnalyzed} course${a.runsAnalyzed > 1 ? "s" : ""} analysée${a.runsAnalyzed > 1 ? "s" : ""}.</p>
+             ${analysisHtml(a, "sur tes dernières courses")}`;
+      this.render(body, true);
+    } catch {
+      if (seq !== this.seq) return;
+      this.render(`<div class="loading">Impossible de charger le profil.</div>`, true);
+    }
   }
 
   /** Charge le Run (log + texte cible) et lance le lecteur de l'issue #1. */

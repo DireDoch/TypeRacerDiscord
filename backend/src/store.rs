@@ -172,6 +172,34 @@ pub async fn run_detail(
     }))
 }
 
+/// Matière première du profil Weak spots : (texte cible, keystroke log) des N
+/// derniers Runs analysables du joueur. Ignorés d'office : Runs sans log ou sans
+/// texte (d'avant les migrations 0002/0003) et Zen (texte vide — rien à attribuer).
+pub async fn recent_logs(
+    pool: &SqlitePool,
+    player_id: &str,
+    limit: i64,
+) -> Result<Vec<(String, Vec<crate::domain::types::Keystroke>)>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT target_text, keystroke_log FROM runs
+         WHERE player_id = ? AND keystroke_log IS NOT NULL
+           AND target_text IS NOT NULL AND target_text != ''
+         ORDER BY created_at DESC LIMIT ?",
+    )
+    .bind(player_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .iter()
+        .filter_map(|row| {
+            let text: String = row.try_get("target_text").ok()?;
+            let log_json: String = row.try_get("keystroke_log").ok()?;
+            Some((text, serde_json::from_str(&log_json).unwrap_or_default()))
+        })
+        .collect())
+}
+
 fn row_to_entry(row: &sqlx::sqlite::SqliteRow) -> Result<HistoryEntry, sqlx::Error> {
     let mode_s: String = row.try_get("mode")?;
     let per_second_s: String = row.try_get("per_second")?;
@@ -328,5 +356,23 @@ mod tests {
             .unwrap();
         assert!(run_detail(&pool, "r1", "p1").await.unwrap().is_none());
         assert!(!history(&pool, "p1", None, None, 50).await.unwrap()[0].replayable);
+    }
+
+    #[tokio::test]
+    async fn recent_logs_filtre_les_runs_inanalysables() {
+        let pool = mem_pool().await;
+        let c = cfg();
+        let log = r#"[{"t":10.0,"k":"a"}]"#;
+        insert_run(&pool, "r1", "p1", 1000, "practice", &c, &sb(60.0, true), log, "the cat").await.unwrap();
+        insert_run(&pool, "r2", "p1", 2000, "practice", &c, &sb(60.0, true), log, "").await.unwrap(); // Zen
+        insert_run(&pool, "r3", "p2", 3000, "practice", &c, &sb(60.0, true), log, "abc").await.unwrap(); // autre joueur
+        sqlx::query("UPDATE runs SET keystroke_log = NULL WHERE id = 'r1'").execute(&pool).await.unwrap();
+        insert_run(&pool, "r4", "p1", 4000, "practice", &c, &sb(60.0, true), log, "dog run").await.unwrap();
+
+        // Seul r4 est analysable pour p1 : r1 sans log, r2 texte vide, r3 à p2.
+        let logs = recent_logs(&pool, "p1", 20).await.unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].0, "dog run");
+        assert_eq!(logs[0].1.len(), 1);
     }
 }
