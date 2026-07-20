@@ -12,6 +12,7 @@ import "./style.css";
 import { Menu } from "./ui/menu";
 import { Practice } from "./ui/practice";
 import { Race } from "./ui/race";
+import { History } from "./ui/history";
 import { getAuthToken } from "./discord";
 
 // --- Bandeau d'erreurs (debug in-iframe) -------------------------------------
@@ -42,9 +43,16 @@ let screen: { destroy(): void } | null = null;
 
 function showMenu(): void {
   screen?.destroy();
-  const m = new Menu(root, { solo: showPractice, multi: showRace });
+  const m = new Menu(root, { solo: showPractice, multi: showRace, history: showHistory });
   screen = m;
   m.mount();
+}
+
+function showHistory(): void {
+  screen?.destroy();
+  const h = new History(root, showMenu);
+  screen = h;
+  h.mount();
 }
 
 function showPractice(): void {

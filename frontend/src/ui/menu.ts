@@ -16,7 +16,7 @@ export class Menu {
 
   constructor(
     private readonly root: HTMLElement,
-    private readonly nav: { solo(): void; multi(): void },
+    private readonly nav: { solo(): void; multi(): void; history(): void },
   ) {}
 
   mount(): void {
@@ -43,6 +43,7 @@ export class Menu {
     return `
       <button data-menu="solo">Solo</button>
       <button data-menu="multi">Multijoueur</button>
+      <button data-menu="history">Historique</button>
       <button data-menu="options">Options</button>
       ${quit}
     `;
@@ -67,6 +68,7 @@ export class Menu {
         ?.addEventListener("click", fn);
     on("solo", () => this.nav.solo());
     on("multi", () => this.nav.multi());
+    on("history", () => this.nav.history());
     on("options", () => {
       this.view = "options";
       this.render();

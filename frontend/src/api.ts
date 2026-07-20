@@ -10,7 +10,7 @@
 //  token de dev hors Discord). Jamais de player_id dans le corps.
 // =============================================================================
 
-import type { Quote, SubmitRunRequest, SubmitRunResponse } from "./core/types";
+import type { HistoryResponse, Quote, SubmitRunRequest, SubmitRunResponse } from "./core/types";
 import { getAuthToken, proxyBase } from "./discord";
 
 /** Le scoreboard affiché provient maintenant du backend autoritaire. */
@@ -28,6 +28,17 @@ export async function submitRun(req: SubmitRunRequest): Promise<SubmitRunRespons
     body: JSON.stringify(req),
   });
   if (!res.ok) throw new Error(`POST /api/runs → ${res.status}`);
+  return res.json();
+}
+
+/** Historique du joueur (GET /api/history), du plus récent au plus ancien. */
+export async function fetchHistory(mode?: string): Promise<HistoryResponse> {
+  const token = await getAuthToken();
+  const qs = mode ? `?mode=${encodeURIComponent(mode)}` : "";
+  const res = await fetch(`${proxyBase()}/api/history${qs}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`GET /api/history → ${res.status}`);
   return res.json();
 }
 
