@@ -39,8 +39,8 @@ use tower_http::services::{ServeDir, ServeFile};
 use discord::{AuthError, DiscordConfig, Identity};
 use domain::replay::{compute_scoreboard, ScoreInput};
 use domain::types::{
-    HistoryResponse, RunDetailResponse, SubmitRunRequest, SubmitRunResponse, TokenRequest,
-    TokenResponse,
+    AnalysisResponse, HistoryResponse, RunDetailResponse, SubmitRunRequest, SubmitRunResponse,
+    TokenRequest, TokenResponse,
 };
 use quote::{QuoteClient, QuoteResponse};
 
@@ -75,6 +75,7 @@ async fn main() {
         .route("/token", post(token))
         .route("/api/runs", post(submit_run))
         .route("/api/runs/:id", get(run_detail))
+        .route("/api/runs/:id/analysis", get(run_analysis))
         .route("/api/history", get(history))
         .route("/ws", get(ws_handler))
         .with_state(state)
@@ -209,6 +210,23 @@ async fn run_detail(
         .map_err(internal)?
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)
+}
+
+/// GET /api/runs/:id/analysis — Weak spots du Run (moteur 1..N logs, ici N=1).
+/// Mêmes règles d'accès que /api/runs/:id (404 indistinct).
+async fn run_analysis(
+    State(state): State<AppState>,
+    AuthPlayer(player_id): AuthPlayer,
+    axum::extract::Path(run_id): axum::extract::Path<String>,
+) -> Result<Json<AnalysisResponse>, StatusCode> {
+    let run = store::run_detail(&state.pool, &run_id, &player_id)
+        .await
+        .map_err(internal)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(crate::domain::analysis::analyze(&[(
+        run.target_text.as_str(),
+        run.keystrokes.as_slice(),
+    )])))
 }
 
 #[derive(Debug, Deserialize)]

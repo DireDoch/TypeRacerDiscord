@@ -220,6 +220,30 @@ export interface HistoryResponse {
   entries: HistoryEntry[];
 }
 
+/** Un Weak spot : touche ou bigramme plus lent/fautif que la moyenne DU JOUEUR. */
+export interface WeakSpot {
+  /** Caractère(s) cible(s) : 1 char pour une touche, 2 pour un bigramme. */
+  chars: string;
+  kind: "key" | "bigram";
+  occurrences: number;
+  meanDelayMs: number;
+  /** 0..1 (fautes / frappes sur cette cible). */
+  errorRate: number;
+  slow: boolean;
+  faulty: boolean;
+  /** Tri décroissant fait côté serveur. */
+  severity: number;
+}
+
+/** GET /api/runs/:id/analysis — Weak spots d'un Run (moteur 1..N logs). */
+export interface AnalysisResponse {
+  weakSpots: WeakSpot[];
+  globalMeanDelayMs: number;
+  /** 0..1. */
+  globalErrorRate: number;
+  runsAnalyzed: number;
+}
+
 /** GET /api/runs/:id — un Run complet pour le Replay (log + texte cible). */
 export interface RunDetailResponse {
   runId: string;

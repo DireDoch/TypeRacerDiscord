@@ -179,6 +179,36 @@ pub struct RunDetailResponse {
     pub keystrokes: Vec<Keystroke>,
 }
 
+/// Un Weak spot (CONTEXT.md) : touche ou bigramme plus lent/fautif que la moyenne
+/// DU JOUEUR, avec assez d'occurrences pour être significatif.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WeakSpot {
+    /// Le(s) caractère(s) cible(s) : 1 char pour une touche, 2 pour un bigramme.
+    pub chars: String,
+    /// "key" | "bigram".
+    pub kind: String,
+    pub occurrences: i64,
+    pub mean_delay_ms: f64,
+    /// 0..1 (fautes / frappes sur cette cible).
+    pub error_rate: f64,
+    pub slow: bool,
+    pub faulty: bool,
+    /// Tri décroissant côté serveur (excès de lenteur + excès d'erreurs pondéré).
+    pub severity: f64,
+}
+
+/// GET /api/runs/:id/analysis — Weak spots d'un Run (ou d'un profil, plus tard).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisResponse {
+    pub weak_spots: Vec<WeakSpot>,
+    pub global_mean_delay_ms: f64,
+    /// 0..1.
+    pub global_error_rate: f64,
+    pub runs_analyzed: i64,
+}
+
 /// GET /api/history — réponse.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryResponse {

@@ -4,6 +4,7 @@
 // Le port de la génération de texte (core/text-gen/) est différé en Phase 2
 // (en MVP le client envoie `targetText`, le serveur recompute dessus).
 
+pub mod analysis;
 pub mod replay;
 pub mod text_gen;
 pub mod types;

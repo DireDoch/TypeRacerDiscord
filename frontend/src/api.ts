@@ -11,6 +11,7 @@
 // =============================================================================
 
 import type {
+  AnalysisResponse,
   HistoryResponse,
   Quote,
   RunDetailResponse,
@@ -55,6 +56,16 @@ export async function fetchRun(runId: string): Promise<RunDetailResponse> {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`GET /api/runs/${runId} → ${res.status}`);
+  return res.json();
+}
+
+/** Weak spots d'un Run (GET /api/runs/:id/analysis). */
+export async function fetchAnalysis(runId: string): Promise<AnalysisResponse> {
+  const token = await getAuthToken();
+  const res = await fetch(`${proxyBase()}/api/runs/${encodeURIComponent(runId)}/analysis`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`GET /api/runs/${runId}/analysis → ${res.status}`);
   return res.json();
 }
 

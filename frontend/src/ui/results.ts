@@ -15,8 +15,8 @@ import {
   Tooltip,
   Legend,
 } from "chart.js";
-import type { SubmitRunResponse } from "../core/types";
-import { AUTHORITATIVE_BACKEND } from "../api";
+import type { AnalysisResponse, SubmitRunResponse, WeakSpot } from "../core/types";
+import { AUTHORITATIVE_BACKEND, fetchAnalysis } from "../api";
 
 Chart.register(
   LineController,
@@ -78,14 +78,58 @@ export function renderResults(
 
       ${AUTHORITATIVE_BACKEND ? "" : `<p class="notice">⚠️ Scoreboard recalculé en local (backend autoritaire non branché — pas d'anti-triche ni de PB persistés).</p>`}
 
+      <div class="analysis" id="analysis"></div>
+
       <button id="restart" class="primary">Rejouer (Tab / Entrée)</button>
       ${onReplay ? `<button id="replayBtn">Replay</button>` : ""}
+      <button id="analyzeBtn">Analyser</button>
     </section>
   `;
 
   drawChart(root.querySelector<HTMLCanvasElement>("#resultChart")!, sb.perSecond);
   root.querySelector<HTMLButtonElement>("#restart")!.addEventListener("click", onRestart);
   if (onReplay) root.querySelector<HTMLButtonElement>("#replayBtn")!.addEventListener("click", onReplay);
+  root.querySelector<HTMLButtonElement>("#analyzeBtn")!.addEventListener("click", () => {
+    void analyze(root, res.runId);
+  });
+}
+
+/** Charge et affiche les Weak spots du Run dans la zone #analysis. */
+async function analyze(root: HTMLElement, runId: string): Promise<void> {
+  const el = root.querySelector<HTMLElement>("#analysis");
+  if (!el) return;
+  el.innerHTML = `<p class="hint">Analyse en cours…</p>`;
+  let a: AnalysisResponse;
+  try {
+    a = await fetchAnalysis(runId);
+  } catch {
+    el.innerHTML = `<p class="hint">Analyse indisponible pour ce Run.</p>`;
+    return;
+  }
+  if (!root.querySelector("#analysis")) return; // écran quitté pendant le fetch
+  if (a.weakSpots.length === 0) {
+    el.innerHTML = `<p class="hint">Aucun Weak spot significatif sur cette course — rien ne sort de ta moyenne (ou pas assez d'occurrences pour trancher).</p>`;
+    return;
+  }
+  const items = a.weakSpots
+    .slice(0, 10)
+    .map((w) => `<li>${weakSpotHtml(w)}</li>`)
+    .join("");
+  el.innerHTML = `
+    <p class="hint">Tes points faibles sur cette course (vs ta moyenne : ${a.globalMeanDelayMs} ms/frappe, ${(a.globalErrorRate * 100).toFixed(1)} % d'erreurs) :</p>
+    <ul class="weak-spots">${items}</ul>
+  `;
+}
+
+function weakSpotHtml(w: WeakSpot): string {
+  const tags = [
+    w.slow ? `lent · ${w.meanDelayMs} ms` : "",
+    w.faulty ? `${(w.errorRate * 100).toFixed(0)} % d'erreurs` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const kind = w.kind === "bigram" ? "paire" : "touche";
+  return `<span class="chars">${escapeHtml(w.chars)}</span> <span class="detail">${kind} · ${w.occurrences}× · ${tags}</span>`;
 }
 
 function escapeHtml(s: string): string {
