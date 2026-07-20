@@ -101,6 +101,7 @@ pas persisté ; seule la série `per_second` dérivée l'est.
 ```
 
 - `targetText` : `""` pour Zen. Pour Quotes, **`quoteId` obligatoire** ; `targetText` = la Quote.
+  Pour Drill, `targetText` = le texte personnalisé construit côté client (échauffement + mots ciblés).
 - `keystrokes` : `t` en ms depuis t=0 (fin du décompte). Voir format dans `types.ts`.
 - `endedAtMs` : instant de fin (Shift+Enter pour Zen/Time infini ; le serveur l'ignore pour Time fini
   où la durée = `modeValue`, et le recoupe avec l'instant de complétion pour Words/Quotes).
@@ -127,7 +128,8 @@ pas persisté ; seule la série `per_second` dérivée l'est.
 }
 ```
 
-- `pbEligible` = `false` pour **Zen** et **Time infini** (durée variable) — gardés en historique, exclus des PB.
+- `pbEligible` = `false` pour **Zen** et **Time infini** (durée variable) et pour **Drill**
+  (texte personnalisé) — gardés en historique, exclus des PB.
 - `isPersonalBest` = `true` seulement si éligible **et** WPM strictement supérieur au MAX du bucket.
 
 **Erreurs** : `400` log/texte incohérent · `401` token absent/invalide.

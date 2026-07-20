@@ -241,6 +241,12 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
   (`all_racers_done`), recompute autoritaire au Finish, revanche sur texte neuf. Messages
   bornés à 256 Ko ; `GET /api/quote` authentifié (sinon quota API-Ninjas drainable).
 
+- Mode **Drill** câblé dans l'UI Practice (bouton `drill`, longueur/Settings masqués) :
+  texte personnalisé = échauffement sur les Weak spots du profil (`GET /api/profile/analysis`,
+  bigramme « fjf jfj », touche « eee eee ») + mots de la word-list contenant ces Weak spots
+  (`core/text-gen/drill.ts`, pur et seedé, testé). Sans profil, le Mode l'explique et propose
+  de jouer d'abord. `pb_eligible = 0` (texte personnalisé — même règle que Zen/Time infini),
+  le Run entre dans l'historique (filtre `drill` ajouté).
 - Modes **Zen** et **Time infini** câblés dans l'UI Practice : bouton `zen` (aucun texte cible,
   affichage du texte tapé, tout compte comme correct — miroir `replay_zen`) ; valeur `∞` (0) du
   Mode `time` (horloge désactivée, flux de mots re-généré en continu avec le MÊME Rng, chrono qui

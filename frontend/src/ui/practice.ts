@@ -14,9 +14,10 @@ import { RunClock } from "../core/clock";
 import { FreeInput } from "../core/input/free-input";
 import type { InputController } from "../core/input/controller";
 import { generateWithRng, initialWordCount } from "../core/text-gen";
+import { generateDrillText } from "../core/text-gen/drill";
 import { Rng } from "../core/text-gen/rng";
 import { liveWpm, liveWpmZen } from "../live-stats";
-import { submitRun, fetchQuote } from "../api";
+import { submitRun, fetchQuote, fetchProfileAnalysis } from "../api";
 import { renderResults } from "./results";
 import { runReplay } from "./replay";
 
@@ -29,7 +30,7 @@ const ENDLESS_LOOKAHEAD = 30;
 const ENDLESS_BATCH = 40;
 
 /**
- * Valeur par défaut d'un Mode : time → 30 s, words → 25 mots, quotes/zen → 0 (sans objet).
+ * Valeur par défaut d'un Mode : time → 30 s, words → 25 mots, quotes/zen/drill → 0 (sans objet).
  * Source unique (init du Run + changement de Mode dans la barre de config).
  */
 function defaultModeValue(mode: RunConfig["mode"]): number {
@@ -61,8 +62,11 @@ export class Practice {
   private quoteId?: string;
   private quoteAuthor?: string;
   private quoteWikipediaUrl?: string;
-  private loadingQuote = false;
-  private quoteError = false;
+  /** Texte en chargement asynchrone (Quote ou profil Drill) / échec du chargement. */
+  private loadingText = false;
+  private loadError = false;
+  /** Drill sans profil : pas assez de données analysées pour cibler des Weak spots. */
+  private drillNoProfile = false;
   /** Jeton anti-course : un reset() asynchrone obsolète (mode rechangé) s'auto-annule. */
   private resetSeq = 0;
 
@@ -104,13 +108,14 @@ export class Practice {
     this.quoteId = undefined;
     this.quoteAuthor = undefined;
     this.quoteWikipediaUrl = undefined;
-    this.quoteError = false;
+    this.loadError = false;
+    this.drillNoProfile = false;
 
     if (this.config.mode === "quotes") {
       // La Quote est récupérée côté serveur (proxy API-Ninjas) — pas de génération locale.
       this.targetWords = [];
       this.controller = new FreeInput([]);
-      this.loadingQuote = true;
+      this.loadingText = true;
       this.render();
       try {
         const quote = await fetchQuote();
@@ -121,12 +126,37 @@ export class Practice {
         this.targetWords = quote.text.split(" ").filter((w) => w.length > 0);
       } catch {
         if (seq !== this.resetSeq) return;
-        this.loadingQuote = false;
-        this.quoteError = true;
+        this.loadingText = false;
+        this.loadError = true;
         this.render();
         return;
       }
-      this.loadingQuote = false;
+      this.loadingText = false;
+    } else if (this.config.mode === "drill") {
+      // Drill : texte personnalisé depuis les Weak spots du profil (GET /api/profile/analysis).
+      this.targetWords = [];
+      this.controller = new FreeInput([]);
+      this.loadingText = true;
+      this.render();
+      try {
+        const profile = await fetchProfileAnalysis();
+        if (seq !== this.resetSeq) return;
+        if (profile.weakSpots.length === 0) {
+          // Pas (assez) de données : le Mode l'explique et propose de jouer d'abord.
+          this.loadingText = false;
+          this.drillNoProfile = true;
+          this.render();
+          return;
+        }
+        this.targetWords = generateDrillText(profile.weakSpots, new Rng(this.seed));
+      } catch {
+        if (seq !== this.resetSeq) return;
+        this.loadingText = false;
+        this.loadError = true;
+        this.render();
+        return;
+      }
+      this.loadingText = false;
     } else if (this.config.mode === "time" || this.config.mode === "words") {
       // Rng conservé : Time infini re-génère des lots en CONTINUANT la même suite.
       this.rng = new Rng(this.seed);
@@ -160,9 +190,10 @@ export class Practice {
 
   private startCountdown(): void {
     if (this.phase !== "idle") return;
-    // Rien à taper encore : Quote en chargement/erreur, ou Mode à texte cible sans mots.
-    // Zen n'a jamais de cible mais démarre quand même (le joueur tape librement).
-    if (this.loadingQuote) return;
+    // Rien à taper encore : texte en chargement/erreur (Quote, profil Drill), ou Mode à
+    // texte cible sans mots (dont Drill sans profil). Zen n'a jamais de cible mais
+    // démarre quand même (le joueur tape librement).
+    if (this.loadingText) return;
     if (this.targetWords.length === 0 && this.config.mode !== "zen") return;
     this.phase = "countdown";
     let n = 3;
@@ -355,18 +386,22 @@ export class Practice {
     } else if (this.config.mode === "words") {
       const done = this.controller.view().wordIndex;
       progress = `<span class="timer">${done}/${this.config.modeValue}</span>`;
-    } else if (this.config.mode === "quotes") {
+    } else if (this.config.mode === "quotes" || this.config.mode === "drill") {
       const done = this.controller.view().wordIndex;
       progress = `<span class="timer">${done}/${this.targetWords.length}</span>`;
     }
     return `${progress}<span class="live-wpm">${wpm} wpm</span>`;
   }
 
-  /** Contenu de la zone #words selon l'état (chargement Quote / erreur / mots). */
+  /** Contenu de la zone #words selon l'état (chargement Quote/Drill / erreur / mots). */
   private wordsAreaHtml(): string {
-    if (this.loadingQuote) return `<div class="loading">Chargement d'une citation…</div>`;
-    if (this.quoteError)
-      return `<div class="loading">Impossible de charger la citation. Tab pour réessayer.</div>`;
+    const drill = this.config.mode === "drill";
+    if (this.loadingText)
+      return `<div class="loading">${drill ? "Analyse de tes dernières courses…" : "Chargement d'une citation…"}</div>`;
+    if (this.drillNoProfile)
+      return `<div class="loading">Pas encore assez de données pour cibler tes faiblesses — joue d'abord quelques courses (time, words…), puis reviens ici.</div>`;
+    if (this.loadError)
+      return `<div class="loading">${drill ? "Impossible de charger ton profil." : "Impossible de charger la citation."} Tab pour réessayer.</div>`;
     if (this.config.mode === "zen") return this.zenHtml();
     return this.wordsHtml();
   }
@@ -402,7 +437,12 @@ export class Practice {
   private hintText(): string {
     if (this.phase === "idle") {
       if (this.config.mode === "zen") return "Clique ou tape pour démarrer · Shift+Enter pour terminer";
-      const regen = this.config.mode === "quotes" ? "Tab pour une autre citation" : "Tab pour regénérer";
+      const regen =
+        this.config.mode === "quotes"
+          ? "Tab pour une autre citation"
+          : this.config.mode === "drill"
+            ? "Tab pour un autre texte"
+            : "Tab pour regénérer";
       return `Clique ou tape pour démarrer · ${regen}`;
     }
     if (this.phase === "running") {
@@ -414,8 +454,10 @@ export class Practice {
   // --- Barre de configuration -------------------------------------------------
 
   private configBarHtml(): string {
-    // Quotes (texte imposé) et Zen (aucun texte) : ni longueur ni Settings applicables.
-    const noText = this.config.mode === "quotes" || this.config.mode === "zen";
+    // Quotes (texte imposé), Zen (aucun texte) et Drill (texte personnalisé) :
+    // ni longueur ni Settings applicables.
+    const noText =
+      this.config.mode === "quotes" || this.config.mode === "zen" || this.config.mode === "drill";
     const values = this.config.mode === "time" ? TIME_VALUES : WORD_VALUES;
     const valueBtns = values
       .map(
@@ -439,6 +481,7 @@ export class Practice {
           ${modeBtn("words")}
           ${modeBtn("quotes")}
           ${modeBtn("zen")}
+          ${modeBtn("drill")}
         </div>
         ${valueGroup}
         ${settingsGroup}
@@ -452,7 +495,7 @@ export class Practice {
       b.addEventListener("click", () => {
         const mode = b.dataset.mode as RunConfig["mode"];
         this.config.mode = mode;
-        this.config.modeValue = defaultModeValue(mode); // quotes/zen : longueur sans objet (0).
+        this.config.modeValue = defaultModeValue(mode); // quotes/zen/drill : longueur sans objet (0).
         void this.reset();
       }),
     );

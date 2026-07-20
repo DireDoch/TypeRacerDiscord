@@ -47,8 +47,10 @@ struct ReplayResult {
 
 pub fn compute_scoreboard(input: &ScoreInput) -> Scoreboard {
     let duration_ms = resolve_duration(input);
-    let pb_eligible =
-        input.mode != Mode::Zen && !(input.mode == Mode::Time && input.mode_value == 0);
+    // Zen / Time infini : durée variable. Drill : texte personnalisé. Tous incomparables → pas de PB.
+    let pb_eligible = input.mode != Mode::Zen
+        && input.mode != Mode::Drill
+        && !(input.mode == Mode::Time && input.mode_value == 0);
 
     let result = if input.mode == Mode::Zen {
         replay_zen(&input.keystrokes)
@@ -606,6 +608,8 @@ mod tests {
     fn eligibilite_pb() {
         let k = log(&[(100.0, "a", None)]);
         assert!(!compute_scoreboard(&input(Mode::Time, 0, "the cat", k.clone(), 1000.0)).pb_eligible);
+        // Drill : texte personnalisé ⇒ jamais de PB (même règle que Zen / Time infini).
+        assert!(!compute_scoreboard(&input(Mode::Drill, 0, "fjf jfj the", k.clone(), 1000.0)).pb_eligible);
         assert!(compute_scoreboard(&input(Mode::Time, 30, "the cat", k, 1000.0)).pb_eligible);
     }
 }
