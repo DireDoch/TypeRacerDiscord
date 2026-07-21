@@ -18,7 +18,7 @@ import { generateWithRng, initialWordCount } from "../core/text-gen";
 import { generateDrillText } from "../core/text-gen/drill";
 import { Rng } from "../core/text-gen/rng";
 import { liveWpm, liveWpmZen } from "../live-stats";
-import { submitRun, fetchQuote, fetchProfileAnalysis } from "../api";
+import { submitRun, fetchQuote, fetchProfileAnalysis, HttpError } from "../api";
 import { renderResults } from "./results";
 import { runReplay } from "./replay";
 
@@ -239,7 +239,7 @@ export class Practice {
     const elapsed = this.clock.elapsed();
 
     if (this.config.mode === "time" && this.config.modeValue > 0 && elapsed >= this.config.modeValue * 1000) {
-      this.finish();
+      void this.finish();
       return;
     }
 
@@ -253,14 +253,21 @@ export class Practice {
     this.phase = "finished";
     const endedAtMs = this.clock.started ? this.clock.elapsed() : 0;
 
-    const res = await submitRun({
-      config: this.config,
-      seed: this.seed,
-      targetText: this.targetWords.join(" "),
-      quoteId: this.config.mode === "quotes" ? this.quoteId : undefined,
-      keystrokes: this.log,
-      endedAtMs,
-    });
+    let res: Awaited<ReturnType<typeof submitRun>>;
+    try {
+      res = await submitRun({
+        config: this.config,
+        seed: this.seed,
+        targetText: this.targetWords.join(" "),
+        quoteId: this.config.mode === "quotes" ? this.quoteId : undefined,
+        keystrokes: this.log,
+        endedAtMs,
+      });
+    } catch (e) {
+      // Le log (this.log) n'est pas touché : "réessayer" relance finish() avec les mêmes frappes.
+      this.renderSubmitError(e instanceof HttpError && e.status === 401 ? "auth" : "network");
+      return;
+    }
 
     const attribution =
       this.config.mode === "quotes" && this.quoteAuthor
@@ -311,7 +318,7 @@ export class Practice {
     // Shift+Enter termine Zen / Time infini (pas de fin naturelle).
     if (e.key === "Enter" && e.shiftKey) {
       e.preventDefault();
-      this.finish();
+      void this.finish();
       return;
     }
 
@@ -322,7 +329,7 @@ export class Practice {
 
       // Endless (Zen / Time infini) : jamais de fin naturelle → seul Shift+Enter termine.
       if (!this.isEndless() && this.controller.isComplete()) {
-        this.finish();
+        void this.finish();
         return;
       }
       this.retopIfNeeded(); // Time infini : réalimente si le curseur approche du bout.
@@ -384,6 +391,23 @@ export class Practice {
   private renderCountdown(n: number): void {
     const el = this.root.querySelector<HTMLElement>("#words");
     if (el) el.innerHTML = `<div class="countdown">${n}</div>`;
+  }
+
+  /** POST /api/runs raté : le Run (this.log) reste en mémoire, "réessayer" relance finish(). */
+  private renderSubmitError(kind: "auth" | "network"): void {
+    const msg =
+      kind === "auth"
+        ? "Session Discord expirée — reviens depuis le menu Discord puis réessaie."
+        : "Envoi impossible (backend injoignable). Tes frappes sont gardées : réessaie.";
+    this.root.innerHTML = `
+      <section class="results">
+        <p class="hint">${msg}</p>
+        <button id="retrySubmit" class="primary">Réessayer</button>
+      </section>
+    `;
+    this.root
+      .querySelector<HTMLButtonElement>("#retrySubmit")!
+      .addEventListener("click", () => void this.finish());
   }
 
   private updateLiveBar(elapsed: number): void {

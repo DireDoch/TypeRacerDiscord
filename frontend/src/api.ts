@@ -24,6 +24,13 @@ import { getAuthToken, proxyBase } from "./discord";
 /** Le scoreboard affiché provient maintenant du backend autoritaire. */
 export const AUTHORITATIVE_BACKEND = true;
 
+/** Erreur HTTP taguée du status : distingue un 401 (token expiré) d'une panne réseau. */
+export class HttpError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+
 /** Soumet un Run et renvoie le scoreboard autoritaire + verdict PB (POST /api/runs). */
 export async function submitRun(req: SubmitRunRequest): Promise<SubmitRunResponse> {
   const token = await getAuthToken();
@@ -35,7 +42,7 @@ export async function submitRun(req: SubmitRunRequest): Promise<SubmitRunRespons
     },
     body: JSON.stringify(req),
   });
-  if (!res.ok) throw new Error(`POST /api/runs → ${res.status}`);
+  if (!res.ok) throw new HttpError(res.status, `POST /api/runs → ${res.status}`);
   return res.json();
 }
 
