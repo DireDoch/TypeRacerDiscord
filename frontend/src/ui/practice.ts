@@ -343,7 +343,11 @@ export class Practice {
       </section>
     `;
     this.wireConfigBar();
-    this.root.querySelector<HTMLElement>("#words")!.addEventListener("click", () => this.startCountdown());
+    const wordsEl = this.root.querySelector<HTMLElement>("#words")!;
+    wordsEl.addEventListener("click", () => this.startCountdown());
+    // Le passage en `running` repasse par render() : sans ceci le bloc resterait
+    // caché et le 1er caractère (qui s'inverse sous lui) serait invisible.
+    placeCaret(wordsEl);
   }
 
   private renderWords(): void {

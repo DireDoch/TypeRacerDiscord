@@ -136,6 +136,10 @@ export class Learn {
       </section>
     `;
     this.wire();
+    // L'exercice s'ouvre curseur posé sur le 1er caractère, sans frappe préalable :
+    // le bloc doit être placé dès ce rendu (sinon ce caractère est invisible).
+    const wordsEl = this.root.querySelector<HTMLElement>("#words");
+    if (wordsEl) placeCaret(wordsEl);
   }
 
   private listHtml(): string {

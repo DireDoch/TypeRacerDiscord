@@ -71,7 +71,12 @@ npm run dev       # http://localhost:5173
 - [ ] la barre de config dit `temps mots citations zen entraînement · ponctuation chiffres` ;
 - [ ] aucune ligature : tape `->` et `!=`, deux glyphes distincts ;
 - [ ] Historique : en-têtes `date type mode wpm précision durée`, valeurs `course` / `solo` ;
-- [ ] écrans Race et Replay : même curseur, mêmes couleurs.
+- [ ] écrans Race, Replay et Apprendre : même curseur, mêmes couleurs.
+
+Deux décalages **connus et acceptés** du curseur bloc, qu'une frappe recale aussitôt :
+au tout premier chargement (les polices arrivent après le rendu et décalent le texte)
+et au redimensionnement de la fenêtre. Le panneau réduit est la décision 11, pas
+l'étape 1 — si ça saute aux yeux, c'est là qu'on le traitera.
 
 ## 4. Ce qui n'est PAS dans cette étape
 

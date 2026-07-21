@@ -185,6 +185,10 @@ export class Race {
     this.root
       .querySelector<HTMLButtonElement>("#exitRace")
       ?.addEventListener("click", () => this.onExit?.());
+    // Décompte et début de course passent par render() : le bloc doit être placé
+    // là aussi, sinon le 1er caractère (inversé sous lui) reste invisible.
+    const wordsEl = this.root.querySelector<HTMLElement>("#words");
+    if (wordsEl) placeCaret(wordsEl);
   }
 
   private bodyHtml(): string {
