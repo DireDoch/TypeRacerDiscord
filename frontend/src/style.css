@@ -372,6 +372,12 @@ button.primary:hover {
 .race .words {
   max-height: none;
 }
+/* Apprendre : ui/learn.ts ne pilote pas de fenêtre glissante (contrairement à
+   Practice/Replay) — même clip que Practice ferait taper le joueur en aveugle
+   au-delà de 3 lignes sur une Lesson longue (panneau réduit dans l'iframe Discord). */
+.learn .words {
+  max-height: none;
+}
 
 /* Cartes de présence empilées. */
 .cards {
