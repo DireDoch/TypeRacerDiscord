@@ -12,7 +12,6 @@ const base = (over: Partial<ScoreInput>): ScoreInput => ({
   modeValue: 2,
   targetText: "the cat",
   keystrokes: [],
-  endedAtMs: 1000,
   ...over,
 });
 
@@ -21,7 +20,6 @@ describe("computeScoreboard — saisie parfaite", () => {
     const s = computeScoreboard(
       base({
         keystrokes: log([100, "t"], [200, "h"], [300, "e"], [400, " "], [500, "c"], [600, "a"], [700, "t"]),
-        endedAtMs: 700,
       }),
     );
     expect(s.wpm).toBe(120); // 7 chars / 5 / (0.7/60)
@@ -34,7 +32,7 @@ describe("computeScoreboard — saisie parfaite", () => {
 describe("computeScoreboard — fautes / extra / missed", () => {
   it("faute interne : 'cxt' pour 'cat'", () => {
     const s = computeScoreboard(
-      base({ modeValue: 1, targetText: "cat", keystrokes: log([100, "c"], [200, "x"], [300, "t"]), endedAtMs: 300 }),
+      base({ modeValue: 1, targetText: "cat", keystrokes: log([100, "c"], [200, "x"], [300, "t"]) }),
     );
     expect(s.characters).toEqual({ correct: 2, incorrect: 1, extra: 0, missed: 0 });
     expect(s.accuracy).toBe(66.7);
@@ -44,7 +42,7 @@ describe("computeScoreboard — fautes / extra / missed", () => {
 
   it("Extra : 'hixx' pour 'hi'", () => {
     const s = computeScoreboard(
-      base({ modeValue: 1, targetText: "hi", keystrokes: log([100, "h"], [200, "i"], [300, "x"], [400, "x"]), endedAtMs: 400 }),
+      base({ modeValue: 1, targetText: "hi", keystrokes: log([100, "h"], [200, "i"], [300, "x"], [400, "x"]) }),
     );
     expect(s.characters).toEqual({ correct: 2, incorrect: 2, extra: 2, missed: 0 });
     expect(s.accuracy).toBe(50);
@@ -63,7 +61,6 @@ describe("computeScoreboard — fautes / extra / missed", () => {
           [700, "a"], [800, "b"], [900, " "],
           [1000, "c"], [1100, "d"],
         ),
-        endedAtMs: 1100,
       }),
     );
     // État final "ab cd" parfait → aucun extra/missed ; la frappe "x" reste comptée en incorrect.
@@ -77,7 +74,6 @@ describe("computeScoreboard — fautes / extra / missed", () => {
       base({
         targetText: "cat dog",
         keystrokes: log([100, "c"], [200, "a"], [300, " "], [400, "d"], [500, "o"], [600, "g"]),
-        endedAtMs: 600,
       }),
     );
     expect(s.characters).toEqual({ correct: 6, incorrect: 0, extra: 0, missed: 1 });
@@ -95,7 +91,6 @@ describe("computeScoreboard — série par seconde et Burst", () => {
           [1100, "b"], [1200, "b"], [1300, " "],
           [2100, "c"], [2200, "c"],
         ),
-        endedAtMs: 2200,
       }),
     );
     expect(s.perSecond).toHaveLength(3);
@@ -112,11 +107,10 @@ describe("computeScoreboard — Zen et éligibilité PB", () => {
       modeValue: 0,
       targetText: "",
       keystrokes: log([100, "a"], [200, "b"], [300, "c"], [400, " "], [500, "d"], [600, "e"], [700, "f"]),
-      endedAtMs: 1000,
     });
     expect(s.characters).toEqual({ correct: 7, incorrect: 0, extra: 0, missed: 0 });
     expect(s.accuracy).toBe(100);
-    expect(s.wpm).toBe(84); // 7 / 5 / (1/60)
+    expect(s.wpm).toBe(120); // 7 / 5 / (0.7/60) — durée dérivée du dernier t du log
     expect(s.pbEligible).toBe(false);
   });
 
@@ -131,10 +125,9 @@ describe("computeScoreboard — Zen et éligibilité PB", () => {
         [400, "", "backspace"], [500, "", "backspace"],
         [600, "h"], [700, "e"],
       ),
-      endedAtMs: 1000,
     });
-    expect(s.wpm).toBe(36); // 3 chars visibles / 5 / (1/60)
-    expect(s.raw).toBe(60); // 5 frappes / 5 / (1/60)
+    expect(s.wpm).toBe(51.4); // 3 chars visibles / 5 / (0.7/60)
+    expect(s.raw).toBe(85.7); // 5 frappes / 5 / (0.7/60)
     expect(s.accuracy).toBe(100);
     expect(s.characters).toEqual({ correct: 5, incorrect: 0, extra: 0, missed: 0 });
     expect(s.pbEligible).toBe(false);
@@ -144,5 +137,28 @@ describe("computeScoreboard — Zen et éligibilité PB", () => {
     const k = log([100, "a"]);
     expect(computeScoreboard(base({ mode: "time", modeValue: 0, keystrokes: k })).pbEligible).toBe(false);
     expect(computeScoreboard(base({ mode: "time", modeValue: 30, keystrokes: k })).pbEligible).toBe(true);
+  });
+});
+
+describe("computeScoreboard — durée : le client n'est jamais la source (issue #11)", () => {
+  it("la durée vient du dernier t du log, jamais d'un champ fourni par le client", () => {
+    const s = computeScoreboard(
+      base({ keystrokes: log([100, "t"], [200, "h"], [300, "e"]), targetText: "the", modeValue: 1 }),
+    );
+    expect(s.durationMs).toBe(300);
+  });
+
+  it("durée aberrante (log au t énorme) : bornée, pas d'allocation disproportionnée", () => {
+    const s = computeScoreboard(
+      base({ keystrokes: log([100_000_000, "t"]), targetText: "the", modeValue: 1 }),
+    );
+    expect(s.durationMs).toBe(30 * 60 * 1000); // plafond anti-DoS
+    expect(s.perSecond.length).toBeLessThanOrEqual(30 * 60 + 1);
+  });
+
+  it("log vide : durée à 0, aucun point de série", () => {
+    const s = computeScoreboard(base({ keystrokes: [], targetText: "the", modeValue: 1 }));
+    expect(s.durationMs).toBe(0);
+    expect(s.perSecond).toHaveLength(0);
   });
 });

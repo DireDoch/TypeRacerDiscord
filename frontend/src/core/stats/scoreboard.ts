@@ -30,7 +30,6 @@ export interface ScoreInput {
   modeValue: number;
   targetText: string; // "" pour Zen
   keystrokes: Keystroke[];
-  endedAtMs: number;
 }
 
 interface Snapshot {
@@ -85,9 +84,15 @@ export function computeScoreboard(input: ScoreInput): Scoreboard {
   };
 }
 
+// Borne anti-DoS : endedAtMs ET keystroke.t sont fournis par le client, donc falsifiables.
+// build_per_second alloue O(durée) — sans plafond un Run "aberrant" ferait exploser l'allocation.
+const MAX_DURATION_MS = 30 * 60 * 1000; // 30 min, généreux pour Zen/Drill légitimes
+
 function resolveDuration(input: ScoreInput): number {
   if (input.mode === "time" && input.modeValue > 0) return input.modeValue * 1000;
-  return input.endedAtMs; // words/quotes (complétion), zen & time infini (Shift+Enter)
+  // words/quotes (complétion), zen & time infini (Shift+Enter) : dérivée du log de frappes
+  // (source faisant foi côté serveur), jamais d'un endedAtMs client — et bornée.
+  return Math.max(0, Math.min(lastKeyT(input.keystrokes), MAX_DURATION_MS));
 }
 
 // ----------------------------------------------------------------------------

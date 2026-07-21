@@ -178,10 +178,10 @@ export interface SubmitRunRequest {
   quoteId?: string;
   keystrokes: KeystrokeLog;
   /**
-   * Instant de fin du Run, en ms depuis t=0. Le serveur s'en sert pour les durées
-   * que le log seul ne révèle pas : Zen et Time infini finissent sur Shift+Enter
-   * (qui n'est pas une frappe). Pour Time fini la durée = modeValue (le serveur ignore
-   * cette valeur) ; pour Words/Quotes le serveur la recoupe avec l'instant de complétion.
+   * Instant de fin du Run, en ms depuis t=0 (indicatif). Le serveur NE LUI FAIT PAS
+   * CONFIANCE pour la durée autoritaire : falsifiable, il l'ignore. Pour Time fini la
+   * durée = modeValue ; sinon elle est dérivée du dernier timestamp du log de frappes
+   * (source faisant foi), bornée pour éviter un Run "aberrant".
    */
   endedAtMs: number;
 }

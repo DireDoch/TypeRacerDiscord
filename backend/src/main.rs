@@ -143,7 +143,6 @@ async fn submit_run(
         mode_value: req.config.mode_value,
         target_text: req.target_text,
         keystrokes: req.keystrokes,
-        ended_at_ms: req.ended_at_ms,
     });
 
     // PB précédent du bucket (avant insertion) → verdict.

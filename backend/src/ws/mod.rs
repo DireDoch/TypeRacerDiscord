@@ -226,36 +226,52 @@ fn finish_race(
     channel_id: &str,
     player_id: &str,
     keystrokes: Vec<Keystroke>,
-    ended_at_ms: f64,
+    _ended_at_ms: f64, // wire uniquement : la durée vient du log, jamais du client (issue #11)
     pool: &SqlitePool,
 ) {
-    let mut rooms = rooms.lock().unwrap();
-    let Some(room) = rooms.get_mut(channel_id) else { return };
-    if !room.racers.iter().any(|p| p == player_id) {
-        return; // pas un partant de CETTE course (ou pas de course) : ignoré
-    }
-    if room.finishers.iter().any(|(p, _)| p == player_id) {
-        return; // déjà fini : on ignore un doublon
-    }
+    // 1er verrou, bref : éligibilité + on clone ce qu'il faut pour le recompute, puis on relâche.
+    let target_text = {
+        let rooms = rooms.lock().unwrap();
+        let Some(room) = rooms.get(channel_id) else { return };
+        if !room.racers.iter().any(|p| p == player_id) {
+            return; // pas un partant de CETTE course (ou pas de course) : ignoré
+        }
+        if room.finishers.iter().any(|(p, _)| p == player_id) {
+            return; // déjà fini : on ignore un doublon
+        }
+        room.target_text.clone()
+    };
 
     // Sérialisé avant le recompute (qui prend possession des keystrokes).
     let keystroke_log = serde_json::to_string(&keystrokes).unwrap_or_else(|_| "[]".to_string());
 
     // Race = Words sur le texte du salon (le serveur possède seed/texte/config).
-    let mode_value = room.target_text.split(' ').count() as i64;
+    // Hors verrou : le recompute (O(n) sur le log) ne doit pas bloquer les autres Rooms.
+    let mode_value = target_text.split(' ').count() as i64;
     let mut sb = compute_scoreboard(&ScoreInput {
         mode: Mode::Words,
         mode_value,
-        target_text: room.target_text.clone(),
+        target_text: target_text.clone(),
         keystrokes,
-        ended_at_ms,
     });
 
-    room.finishers.push((player_id.to_string(), sb.wpm));
-    let _ = room.tx.send(ServerEvent::PlayerFinished {
-        player_id: player_id.to_string(),
-        wpm: sb.wpm,
-    });
+    // 2e verrou, bref : re-vérifie l'éligibilité (l'état a pu changer entretemps),
+    // consigne le résultat, diffuse, et clôt la course si c'était le dernier.
+    {
+        let mut rooms = rooms.lock().unwrap();
+        let Some(room) = rooms.get_mut(channel_id) else { return };
+        if !room.racers.iter().any(|p| p == player_id) || room.finishers.iter().any(|(p, _)| p == player_id) {
+            return;
+        }
+        room.finishers.push((player_id.to_string(), sb.wpm));
+        let _ = room.tx.send(ServerEvent::PlayerFinished {
+            player_id: player_id.to_string(),
+            wpm: sb.wpm,
+        });
+        if all_racers_done(&room.racers, &room.players, &room.finishers) {
+            end_race(room);
+        }
+    }
 
     // Persistance hors verrou (spawn) : l'échec ne casse pas la course, il se logue.
     sb.pb_eligible = false;
@@ -268,7 +284,6 @@ fn finish_race(
     };
     let pool = pool.clone();
     let pid = player_id.to_string();
-    let target_text = room.target_text.clone();
     tokio::spawn(async move {
         let run_id = format!("r_{}", now_epoch_nanos());
         if let Err(e) = crate::store::insert_run(
@@ -279,10 +294,6 @@ fn finish_race(
             eprintln!("persistance du Run de Race ({pid}) : {e}");
         }
     });
-
-    if all_racers_done(&room.racers, &room.players, &room.finishers) {
-        end_race(room);
-    }
 }
 
 /// Course finie quand chaque partant ENCORE PRÉSENT a fini. Les partants sont figés

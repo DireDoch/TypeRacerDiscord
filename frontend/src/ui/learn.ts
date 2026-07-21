@@ -100,21 +100,20 @@ export class Learn {
       const k: Keystroke | null = this.controller.handleKey(e.key, e.ctrlKey, t);
       if (k) this.log.push(k);
       if (this.controller.isComplete()) {
-        this.finishExercise(t);
+        this.finishExercise();
         return;
       }
       this.renderWords();
     }
   }
 
-  private finishExercise(endedAtMs: number): void {
+  private finishExercise(): void {
     // Réutilise la référence locale de l'algo : seule l'accuracy (par frappe) gate.
     const sb = computeScoreboard({
       mode: "words",
       modeValue: this.targetWords.length,
       targetText: this.targetWords.join(" "),
       keystrokes: this.log,
-      endedAtMs,
     });
     const passed = sb.accuracy >= requiredAccuracy(this.lessonIndex);
     this.result = { accuracy: sb.accuracy, passed };

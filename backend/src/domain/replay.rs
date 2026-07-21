@@ -22,7 +22,6 @@ pub struct ScoreInput {
     pub mode_value: i64,
     pub target_text: String,
     pub keystrokes: Vec<Keystroke>,
-    pub ended_at_ms: f64,
 }
 
 struct Snapshot {
@@ -91,11 +90,17 @@ pub fn compute_scoreboard(input: &ScoreInput) -> Scoreboard {
     }
 }
 
+// Borne anti-DoS : ended_at_ms ET keystroke.t viennent du client, donc falsifiables.
+// build_per_second alloue O(durée) — sans plafond un Run "aberrant" ferait exploser l'allocation.
+const MAX_DURATION_MS: f64 = 30.0 * 60.0 * 1000.0; // 30 min, généreux pour Zen/Drill légitimes
+
 fn resolve_duration(input: &ScoreInput) -> f64 {
     if input.mode == Mode::Time && input.mode_value > 0 {
         return input.mode_value as f64 * 1000.0;
     }
-    input.ended_at_ms // words/quotes (complétion), zen & time infini (Shift+Enter)
+    // words/quotes (complétion), zen & time infini (Shift+Enter) : dérivée du log de frappes
+    // (source faisant foi côté serveur), jamais du ended_at_ms client tel quel — et bornée.
+    last_key_t(&input.keystrokes).clamp(0.0, MAX_DURATION_MS)
 }
 
 // ----------------------------------------------------------------------------
@@ -466,8 +471,10 @@ mod tests {
             .collect()
     }
 
-    fn input(mode: Mode, mode_value: i64, target: &str, keys: Vec<Keystroke>, ended: f64) -> ScoreInput {
-        ScoreInput { mode, mode_value, target_text: target.to_string(), keystrokes: keys, ended_at_ms: ended }
+    fn input(mode: Mode, mode_value: i64, target: &str, keys: Vec<Keystroke>, _ended: f64) -> ScoreInput {
+        // _ended : conservé pour que chaque appel montre l'endedAtMs "client" à côté du
+        // log — il n'a plus d'effet, c'est tout le point de l'issue #11.
+        ScoreInput { mode, mode_value, target_text: target.to_string(), keystrokes: keys }
     }
 
     #[test]
@@ -574,11 +581,11 @@ mod tests {
             0,
             "",
             log(&[(100.0, "a", None), (200.0, "b", None), (300.0, "c", None), (400.0, " ", None), (500.0, "d", None), (600.0, "e", None), (700.0, "f", None)]),
-            1000.0,
+            1_000_000.0, // ignoré : la durée vient du dernier t du log, pas du client
         ));
         assert_eq!(s.characters, CharacterBreakdown { correct: 7, incorrect: 0, extra: 0, missed: 0 });
         assert_eq!(s.accuracy, 100.0);
-        assert_eq!(s.wpm, 84.0);
+        assert_eq!(s.wpm, 120.0); // 7 ÷ 5 ÷ (0.7/60)
         assert!(!s.pb_eligible);
     }
 
@@ -595,10 +602,10 @@ mod tests {
                 (500.0, "", Some(ControlKey::Backspace)),
                 (600.0, "h", None), (700.0, "e", None),
             ]),
-            1000.0,
+            1_000_000.0, // ignoré, idem
         ));
-        assert_eq!(s.wpm, 36.0); // 3 chars visibles ÷ 5 ÷ (1/60)
-        assert_eq!(s.raw, 60.0); // 5 frappes ÷ 5 ÷ (1/60)
+        assert_eq!(s.wpm, 51.4); // 3 chars visibles ÷ 5 ÷ (0.7/60)
+        assert_eq!(s.raw, 85.7); // 5 frappes ÷ 5 ÷ (0.7/60)
         assert_eq!(s.accuracy, 100.0);
         assert_eq!(s.characters, CharacterBreakdown { correct: 5, incorrect: 0, extra: 0, missed: 0 });
         assert!(!s.pb_eligible);
@@ -611,5 +618,37 @@ mod tests {
         // Drill : texte personnalisé ⇒ jamais de PB (même règle que Zen / Time infini).
         assert!(!compute_scoreboard(&input(Mode::Drill, 0, "fjf jfj the", k.clone(), 1000.0)).pb_eligible);
         assert!(compute_scoreboard(&input(Mode::Time, 30, "the cat", k, 1000.0)).pb_eligible);
+    }
+
+    #[test]
+    fn duree_ignore_ended_at_ms_client() {
+        let s = compute_scoreboard(&input(
+            Mode::Words,
+            1,
+            "the",
+            log(&[(100.0, "t", None), (200.0, "h", None), (300.0, "e", None)]),
+            999_999.0,
+        ));
+        assert_eq!(s.duration_ms, 300.0);
+    }
+
+    #[test]
+    fn duree_aberrante_bornee_anti_dos() {
+        let s = compute_scoreboard(&input(
+            Mode::Words,
+            1,
+            "the",
+            log(&[(100_000_000.0, "t", None)]),
+            100_000_000.0,
+        ));
+        assert_eq!(s.duration_ms, MAX_DURATION_MS);
+        assert!(s.per_second.len() <= 30 * 60 + 1);
+    }
+
+    #[test]
+    fn log_vide_duree_zero() {
+        let s = compute_scoreboard(&input(Mode::Words, 1, "the", vec![], 5000.0));
+        assert_eq!(s.duration_ms, 0.0);
+        assert!(s.per_second.is_empty());
     }
 }
