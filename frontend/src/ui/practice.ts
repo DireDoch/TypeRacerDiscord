@@ -11,6 +11,7 @@
 
 import type { RunConfig, RunPhase, KeystrokeLog, Keystroke } from "../core/types";
 import { RunClock } from "../core/clock";
+import { Countdown } from "../core/countdown";
 import { FreeInput } from "../core/input/free-input";
 import type { InputController } from "../core/input/controller";
 import { generateWithRng, initialWordCount } from "../core/text-gen";
@@ -70,6 +71,8 @@ export class Practice {
   private rafId = 0;
   /** Arrêt du Replay en cours (rAF) si on quitte l'écran par reset()/destroy(). */
   private stopReplay: (() => void) | null = null;
+  /** Décompte en cours, annulé sur destroy() : sinon écran fantôme + clock.start() en double. */
+  private countdown: Countdown | null = null;
 
   // Mode Quotes : la Quote vient de GET /api/quote (pas de génération seedée).
   private quoteId?: string;
@@ -103,12 +106,17 @@ export class Practice {
     cancelAnimationFrame(this.rafId);
     this.stopReplay?.();
     this.stopReplay = null;
+    this.countdown?.cancel();
+    this.countdown = null;
     this.resetSeq++;
   }
 
   // --- Cycle de vie d'un Run --------------------------------------------------
 
   private async reset(): Promise<void> {
+    // Demande produit : aucun reset pendant le décompte (une seule chaîne vivante,
+    // pas de clock.start() en double — issue #12). Le décompte va à son terme.
+    if (this.phase === "countdown") return;
     const seq = ++this.resetSeq;
     cancelAnimationFrame(this.rafId);
     this.stopReplay?.();
@@ -209,21 +217,16 @@ export class Practice {
     if (this.loadingText) return;
     if (this.targetWords.length === 0 && this.config.mode !== "zen") return;
     this.phase = "countdown";
-    let n = 3;
-    this.renderCountdown(n);
-    const tick = () => {
-      n -= 1;
-      if (n <= 0) {
-        this.beginRun();
-        return;
-      }
-      this.renderCountdown(n);
-      window.setTimeout(tick, 1000);
-    };
-    window.setTimeout(tick, 1000);
+    this.countdown = new Countdown(
+      3,
+      (n) => this.renderCountdown(n),
+      () => this.beginRun(),
+    );
+    this.countdown.start();
   }
 
   private beginRun(): void {
+    this.countdown = null;
     this.phase = "running";
     this.clock.start(); // t=0
     this.render();

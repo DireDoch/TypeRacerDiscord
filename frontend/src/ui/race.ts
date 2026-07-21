@@ -15,6 +15,7 @@
 import type { Keystroke } from "../core/types";
 import type { InputView } from "../core/input/controller";
 import { RunClock } from "../core/clock";
+import { Countdown } from "../core/countdown";
 import { FreeInput } from "../core/input/free-input";
 import { RaceSocket, type ServerEvent } from "../core/net";
 import { liveWpm } from "../live-stats";
@@ -45,6 +46,7 @@ export class Race {
   private finished = new Map<string, number>();
   private ranking: string[] = [];
   private countdownN = 3;
+  private countdown: Countdown | null = null;
   private rafId = 0;
 
   /** `onExit` : navigation retour vers le menu (lobby et écran RaceOver). */
@@ -60,6 +62,8 @@ export class Race {
   destroy(): void {
     document.removeEventListener("keydown", this.onKeyDown);
     cancelAnimationFrame(this.rafId);
+    this.countdown?.cancel();
+    this.countdown = null;
     this.socket?.close();
     this.socket = null;
   }
@@ -109,6 +113,8 @@ export class Race {
   // --- Cycle de course --------------------------------------------------------
 
   private startCountdown(): void {
+    // Un seul décompte vivant : un second RaceStart pendant le décompte/la course est ignoré.
+    if (this.phase === "countdown" || this.phase === "running") return;
     this.phase = "countdown";
     this.countdownN = 3;
     this.progress.clear();
@@ -117,20 +123,19 @@ export class Race {
     // lit le début pendant les 3 s) — indispensable après une revanche (état stale).
     this.doneLocal = false;
     this.controller = new FreeInput(this.targetWords);
-    this.render();
-    const tick = (): void => {
-      this.countdownN -= 1;
-      if (this.countdownN <= 0) {
-        this.beginRun();
-        return;
-      }
-      this.render();
-      window.setTimeout(tick, 1000);
-    };
-    window.setTimeout(tick, 1000);
+    this.countdown = new Countdown(
+      3,
+      (n) => {
+        this.countdownN = n;
+        this.render();
+      },
+      () => this.beginRun(),
+    );
+    this.countdown.start();
   }
 
   private beginRun(): void {
+    this.countdown = null;
     this.phase = "running";
     this.doneLocal = false;
     this.log = [];
