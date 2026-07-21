@@ -586,9 +586,13 @@ export function placeCaret(container: HTMLElement): void {
   // ponytail: en fin de mot l'ancre est vide (0×0) → on garde les dernières
   // mesures. La zone de frappe est en mono : tous les glyphes ont la même boîte.
   if (anchor.offsetWidth) block.style.width = `${anchor.offsetWidth}px`;
-  if (anchor.offsetHeight) block.style.height = `${anchor.offsetHeight}px`;
+  // Hauteur/position VERTICALE mesurées sur .word (la ligne), pas sur le glyphe :
+  // un span inline nu (l'ancre) ne mesure que sa boîte de contenu, plus courte
+  // que la ligne — les descendantes (p y q g j) dépassaient donc du bloc.
+  const line = anchor.closest<HTMLElement>(".word") ?? anchor;
+  if (line.offsetHeight) block.style.height = `${line.offsetHeight}px`;
   const x = container.offsetLeft + anchor.offsetLeft;
-  const y = container.offsetTop + anchor.offsetTop - container.scrollTop;
+  const y = container.offsetTop + line.offsetTop - container.scrollTop;
   block.style.transform = `translate(${x}px, ${y}px)`;
 }
 

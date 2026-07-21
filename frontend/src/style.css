@@ -27,7 +27,7 @@
   --bg: #12161f; /* fond */
   --panel: #1b2230; /* cartes, pistes de jauge — 1,14:1 (séparation) */
   --text: #e8ecf4; /* texte À VENIR, valeurs — 15,3:1 (AAA) */
-  --sub: #6b7689; /* texte TAPÉ, libellés — 3,95:1 (AA-large) */
+  --sub: #96a0b5; /* texte TAPÉ, libellés — 6,9:1 (AA) */
   --main: #ff7a59; /* curseur, accent, leader — 7,1:1 (AAA) */
   --error: #ff4d6d; /* faute — 5,6:1 (AA) sur --bg */
 
