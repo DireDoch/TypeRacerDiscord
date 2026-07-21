@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { computeScoreboard, type ScoreInput } from "./scoreboard";
+import { FreeInput } from "../input/free-input";
 import type { Keystroke } from "../types";
 
 /** Construit un log à partir de tokens [t, k(, ctrl)]. */
@@ -160,5 +161,34 @@ describe("computeScoreboard — durée : le client n'est jamais la source (issue
     const s = computeScoreboard(base({ keystrokes: [], targetText: "the", modeValue: 1 }));
     expect(s.durationMs).toBe(0);
     expect(s.perSecond).toHaveLength(0);
+  });
+});
+
+describe("computeScoreboard — cohérence avec un log RÉEL produit par FreeInput (issue #15)", () => {
+  it("un log FreeInput (avec correction) rejoue à l'identique de l'état des mots de FreeInput", () => {
+    const target = ["the", "cat"];
+    const input = new FreeInput(target);
+    const keystrokes: Keystroke[] = [];
+    let t = 0;
+    const type = (key: string) => {
+      t += 100;
+      const k = input.handleKey(key, false, t);
+      if (k) keystrokes.push(k);
+    };
+    for (const c of "the") type(c);
+    type(" ");
+    type("c");
+    type("x"); // faute à la position du 2e char de "cat"
+    type("Backspace");
+    type("a");
+    type("t");
+
+    // État des mots de FreeInput lui-même, indépendamment du scoreboard.
+    expect(input.view()).toEqual({ wordIndex: 1, typed: "cat", lockedWords: ["the"] });
+
+    const s = computeScoreboard(base({ targetText: target.join(" "), keystrokes }));
+    // "the" + espace + "cat" (état final, la faute corrigée ne pèse plus) : 7 frappes
+    // correctes ("t","h","e"," ","c","a","t"), la frappe "x" reste en incorrect.
+    expect(s.characters).toEqual({ correct: 7, incorrect: 1, extra: 0, missed: 0 });
   });
 });

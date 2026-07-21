@@ -621,6 +621,24 @@ mod tests {
     }
 
     #[test]
+    fn espace_en_tete_ignore_meme_garde_que_analysis_rs() {
+        // Log client (issue #11) avec un espace en tête, que FreeInput ne journalise
+        // jamais lui-même : ignoré, ne verrouille pas de mot vide (issue #15).
+        let s = compute_scoreboard(&input(
+            Mode::Words,
+            2,
+            "the cat",
+            log(&[
+                (100.0, " ", None),
+                (200.0, "t", None), (300.0, "h", None), (400.0, "e", None), (500.0, " ", None),
+                (600.0, "c", None), (700.0, "a", None), (800.0, "t", None),
+            ]),
+            800.0,
+        ));
+        assert_eq!(s.characters, CharacterBreakdown { correct: 7, incorrect: 0, extra: 0, missed: 0 });
+    }
+
+    #[test]
     fn duree_ignore_ended_at_ms_client() {
         let s = compute_scoreboard(&input(
             Mode::Words,

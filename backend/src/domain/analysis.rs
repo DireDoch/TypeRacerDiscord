@@ -143,7 +143,13 @@ fn collect(
         }
 
         if k.k == " " {
-            // FreeInput ne journalise l'espace que s'il verrouille (buffer non vide).
+            if typed.is_empty() {
+                // Espace en tête : FreeInput ne le journalise jamais, mais le log est une
+                // entrée client (voir issue #11) — même garde défensive que replay.rs, sinon
+                // un mot vide s'empile et décale toutes les attributions pour le reste du Run.
+                prev_expected = None;
+                continue;
+            }
             locked.push(std::mem::take(&mut typed));
             prev_expected = None;
             continue;
@@ -276,5 +282,41 @@ mod tests {
         let res = analyze(&[("", &[]), ("the cat", &[])]);
         assert_eq!(res.runs_analyzed, 0);
         assert!(res.weak_spots.is_empty());
+    }
+
+    #[test]
+    fn espace_en_tete_ne_decale_pas_les_attributions() {
+        // Log CLIENT (issue #11 : les Keystrokes ne sont pas fiables) avec un espace en
+        // tête que FreeInput ne journalise jamais lui-même. Sans la garde « buffer vide »
+        // (comme replay.rs), il verrouille un mot fantôme et décale toutes les
+        // attributions du reste du Run : une saisie par ailleurs parfaite semble fautive.
+        let words = ["ab", "cd", "ab", "cd", "ab", "cd", "ab", "cd", "ab", "cd", "ab", "cd"];
+        let mut log: Vec<Keystroke> = vec![Keystroke { t: 100.0, k: " ".to_string(), ctrl: None }];
+        let mut t = 100.0;
+        for (i, w) in words.iter().enumerate() {
+            for c in w.chars() {
+                t += 100.0;
+                log.push(Keystroke { t, k: c.to_string(), ctrl: None });
+            }
+            if i < words.len() - 1 {
+                t += 100.0;
+                log.push(Keystroke { t, k: " ".to_string(), ctrl: None });
+            }
+        }
+        let text = words.join(" ");
+        let res = analyze(&[(text.as_str(), log.as_slice())]);
+        assert_eq!(res.global_error_rate, 0.0, "saisie parfaite : l'espace en tête ne doit rien décaler");
+    }
+
+    #[test]
+    fn texte_accentue_plafond_et_position_en_codepoints() {
+        // "élan" : 4 codepoints, 5 octets UTF-8 (é = 2 octets). Une saisie parfaite,
+        // répétée, ne doit produire aucune erreur ni Weak spot — un indexage en octets
+        // décalerait 'l'/'a'/'n' après le 'é' multi-octets.
+        let text = vec!["élan"; 12].join(" ");
+        let log = perfect_log(&text, 100.0, "", 0.0);
+        let res = analyze(&[(text.as_str(), log.as_slice())]);
+        assert_eq!(res.global_error_rate, 0.0);
+        assert!(res.weak_spots.iter().all(|w| !w.faulty));
     }
 }
