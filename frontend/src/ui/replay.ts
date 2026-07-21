@@ -11,7 +11,7 @@
 import type { KeystrokeLog } from "../core/types";
 import { FreeInput } from "../core/input/free-input";
 import type { InputController, InputView } from "../core/input/controller";
-import { renderWord, windowScrollTop, escapeText } from "./practice";
+import { renderWord, windowScrollTop, escapeText, placeCaret } from "./practice";
 
 export interface ReplayOptions {
   /** Mots cibles du Run (l'array complet au moment du finish — Time infini inclus). */
@@ -65,7 +65,10 @@ export function runReplay(root: HTMLElement, opts: ReplayOptions): () => void {
         <div class="group"><button id="replayAgain">revoir</button></div>
       </div>
       <div class="live-bar" id="replayBar"></div>
-      <div class="words" id="replayWords"></div>
+      <div class="words-wrap">
+        <div class="words" id="replayWords"></div>
+        <div class="caret-block"></div>
+      </div>
       <p class="hint" id="replayHint"></p>
     </section>
   `;
@@ -88,11 +91,12 @@ export function runReplay(root: HTMLElement, opts: ReplayOptions): () => void {
     wordsEl.innerHTML = opts.zen ? zenHtml(view, playing) : wordsHtml(opts.targetWords, view, playing);
     // Même fenêtre glissante de 3 lignes que la saisie live (mot actif au milieu).
     const words = wordsEl.querySelectorAll<HTMLElement>(".word");
-    if (words.length === 0) return;
-    const idx = opts.zen ? words.length - 1 : Math.min(view.wordIndex, words.length - 1);
     const lineHeight = parseFloat(getComputedStyle(wordsEl).lineHeight);
-    if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
-    wordsEl.scrollTop = windowScrollTop(words[idx].offsetTop, lineHeight);
+    if (words.length > 0 && Number.isFinite(lineHeight) && lineHeight > 0) {
+      const idx = opts.zen ? words.length - 1 : Math.min(view.wordIndex, words.length - 1);
+      wordsEl.scrollTop = windowScrollTop(words[idx].offsetTop, lineHeight);
+    }
+    placeCaret(wordsEl); // après le défilement : la position dépend du scrollTop.
   }
 
   function loop(): void {

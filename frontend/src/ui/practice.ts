@@ -21,6 +21,19 @@ import { submitRun, fetchQuote, fetchProfileAnalysis } from "../api";
 import { renderResults } from "./results";
 import { runReplay } from "./replay";
 
+/**
+ * Libellés français des Modes (le reste de l'app est en français). Source unique :
+ * barre de config, filtres et colonne « mode » de l'Historique. Les valeurs
+ * `data-mode` restent en anglais — c'est le domaine, pas de l'affichage.
+ */
+export const MODE_LABELS: Record<RunConfig["mode"], string> = {
+  time: "temps",
+  words: "mots",
+  quotes: "citations",
+  zen: "zen",
+  drill: "entraînement",
+};
+
 // 0 = Time infini (horloge désactivée, mots en flux continu, fin sur Shift+Enter).
 const TIME_VALUES = [15, 30, 60, 120, 0];
 const WORD_VALUES = [10, 25, 50];
@@ -322,7 +335,10 @@ export class Practice {
       <section class="practice">
         ${this.configBarHtml()}
         <div class="live-bar" id="liveBar">${this.liveBarHtml(0)}</div>
-        <div class="words" id="words" tabindex="0">${this.wordsAreaHtml()}</div>
+        <div class="words-wrap">
+          <div class="words" id="words" tabindex="0">${this.wordsAreaHtml()}</div>
+          <div class="caret-block"></div>
+        </div>
         <p class="hint">${this.hintText()}</p>
       </section>
     `;
@@ -335,6 +351,7 @@ export class Practice {
     if (!el) return;
     el.innerHTML = this.config.mode === "zen" ? this.zenHtml() : this.wordsHtml();
     this.slideWindow(el);
+    placeCaret(el); // après slideWindow : la position du bloc dépend du scrollTop.
   }
 
   /**
@@ -469,11 +486,11 @@ export class Practice {
     const settingsGroup = noText
       ? ""
       : `<div class="group">
-          <button data-toggle="punctuation" class="${this.config.punctuation ? "on" : ""}">punctuation</button>
-          <button data-toggle="numbers" class="${this.config.numbers ? "on" : ""}">numbers</button>
+          <button data-toggle="punctuation" class="${this.config.punctuation ? "on" : ""}">ponctuation</button>
+          <button data-toggle="numbers" class="${this.config.numbers ? "on" : ""}">chiffres</button>
         </div>`;
     const modeBtn = (m: RunConfig["mode"]) =>
-      `<button data-mode="${m}" class="${this.config.mode === m ? "on" : ""}">${m}</button>`;
+      `<button data-mode="${m}" class="${this.config.mode === m ? "on" : ""}">${MODE_LABELS[m]}</button>`;
     return `
       <div class="config">
         <div class="group">
@@ -529,21 +546,46 @@ export function windowScrollTop(wordTop: number, lineHeight: number): number {
   return Math.max(0, line - 1) * lineHeight;
 }
 
-/** Rend un mot caractère par caractère (correct / incorrect / extra / untyped + caret). */
+/** Rend un mot caractère par caractère (correct / incorrect / extra / untyped + curseur). */
 export function renderWord(target: string, typed: string, withCaret: boolean): string {
   const spans: string[] = [];
   const len = Math.max(target.length, typed.length);
   for (let i = 0; i < len; i++) {
-    const caret = withCaret && i === typed.length ? `<span class="caret"></span>` : "";
+    // Curseur bloc : le caractère RECOUVERT porte .at-cursor et s'inverse (couleur
+    // du fond sur le corail, 7:1) — c'est ce qui le garde lisible sous le bloc.
+    const cur = withCaret && i === typed.length ? " at-cursor" : "";
     if (i < typed.length) {
       const cls = i >= target.length ? "extra" : typed[i] === target[i] ? "correct" : "incorrect";
-      spans.push(`${caret}<span class="${cls}">${escapeChar(typed[i])}</span>`);
+      spans.push(`<span class="${cls}${cur}">${escapeChar(typed[i])}</span>`);
     } else {
-      spans.push(`${caret}<span class="untyped">${escapeChar(target[i])}</span>`);
+      spans.push(`<span class="untyped${cur}">${escapeChar(target[i])}</span>`);
     }
   }
+  // Curseur au-delà du dernier caractère : aucun glyphe à recouvrir, on laisse un
+  // repère de largeur nulle (le bloc garde sa dernière largeur mesurée).
   if (withCaret && typed.length >= len) spans.push(`<span class="caret"></span>`);
   return `<span class="word">${spans.join("")}</span> `;
+}
+
+/**
+ * Place le curseur bloc sur le caractère courant de `container` (.words). Le bloc
+ * est un élément UNIQUE, frère de .words (les rendus font `innerHTML =`, qui
+ * détruirait un enfant et annulerait sa transition) : on ne fait que le déplacer,
+ * le glissement est la `transition: transform` du CSS.
+ */
+export function placeCaret(container: HTMLElement): void {
+  const block = container.parentElement?.querySelector<HTMLElement>(".caret-block");
+  if (!block) return;
+  const anchor = container.querySelector<HTMLElement>(".at-cursor, .caret");
+  block.style.opacity = anchor ? "1" : "0";
+  if (!anchor) return;
+  // ponytail: en fin de mot l'ancre est vide (0×0) → on garde les dernières
+  // mesures. La zone de frappe est en mono : tous les glyphes ont la même boîte.
+  if (anchor.offsetWidth) block.style.width = `${anchor.offsetWidth}px`;
+  if (anchor.offsetHeight) block.style.height = `${anchor.offsetHeight}px`;
+  const x = container.offsetLeft + anchor.offsetLeft;
+  const y = container.offsetTop + anchor.offsetTop - container.scrollTop;
+  block.style.transform = `translate(${x}px, ${y}px)`;
 }
 
 function escapeChar(ch: string): string {

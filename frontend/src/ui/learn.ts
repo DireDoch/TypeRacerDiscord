@@ -16,7 +16,7 @@ import { FreeInput } from "../core/input/free-input";
 import type { InputController } from "../core/input/controller";
 import { computeScoreboard } from "../core/stats/scoreboard";
 import { fetchLearnProgress, submitLearnProgress } from "../api";
-import { renderWord } from "./practice";
+import { renderWord, placeCaret } from "./practice";
 
 export class Learn {
   private view: "list" | "lesson" = "list";
@@ -163,7 +163,10 @@ export class Learn {
       <h2>${this.lessonIndex + 1}. ${lesson.title}</h2>
       ${content}
       <p class="hint">Exercice — touches : <strong>${lesson.keys.join(" ")}</strong> · accuracy requise : ≥ ${requiredAccuracy(this.lessonIndex)}% · la vitesse ne compte pas.</p>
-      <div class="words" id="words">${this.result ? "" : this.wordsHtml()}</div>
+      <div class="words-wrap">
+        <div class="words" id="words">${this.result ? "" : this.wordsHtml()}</div>
+        <div class="caret-block"></div>
+      </div>
       ${this.result ? this.resultHtml() : `<p class="hint">Tape pour commencer · Tab pour un autre exercice</p>`}
       <button data-nav="list">← leçons</button>
     `;
@@ -193,7 +196,9 @@ export class Learn {
 
   private renderWords(): void {
     const el = this.root.querySelector<HTMLElement>("#words");
-    if (el) el.innerHTML = this.wordsHtml();
+    if (!el) return;
+    el.innerHTML = this.wordsHtml();
+    placeCaret(el);
   }
 
   private wire(): void {

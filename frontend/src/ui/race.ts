@@ -18,7 +18,7 @@ import { RunClock } from "../core/clock";
 import { FreeInput } from "../core/input/free-input";
 import { RaceSocket, type ServerEvent } from "../core/net";
 import { liveWpm } from "../live-stats";
-import { renderWord } from "./practice";
+import { renderWord, placeCaret } from "./practice";
 import { getIdentity, proxyBase } from "../discord";
 
 type Phase = "connecting" | "lobby" | "countdown" | "running" | "over";
@@ -195,10 +195,10 @@ export class Race {
         return this.cardsHtml() + this.startBtnHtml() + this.exitBtnHtml();
       case "countdown":
         return `<div class="countdown">${this.countdownN}</div>
-          <div class="words" id="words">${this.wordsHtml()}</div>`;
+          <div class="words-wrap"><div class="words" id="words">${this.wordsHtml()}</div><div class="caret-block"></div></div>`;
       case "running":
         return `<div class="live-bar" id="liveBar"></div>
-          <div class="words" id="words">${this.wordsHtml()}</div>
+          <div class="words-wrap"><div class="words" id="words">${this.wordsHtml()}</div><div class="caret-block"></div></div>
           <div class="bars" id="bars">${this.barsHtml()}</div>
           <p class="hint">${this.doneLocal ? "Terminé — en attente des autres…" : "Tape le texte ; corrige tes fautes pour finir"}</p>`;
       case "over":
@@ -234,7 +234,9 @@ export class Race {
 
   private renderWords(): void {
     const el = this.root.querySelector<HTMLElement>("#words");
-    if (el) el.innerHTML = this.wordsHtml();
+    if (!el) return;
+    el.innerHTML = this.wordsHtml();
+    placeCaret(el);
   }
 
   private wordsHtml(): string {

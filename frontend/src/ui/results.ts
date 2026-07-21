@@ -163,8 +163,10 @@ function drawChart(
         {
           label: "wpm",
           data: perSecond.map((p) => p.wpm),
-          borderColor: "#e2b714",
-          backgroundColor: "#e2b714",
+          // ponytail: hex en dur — chart.js ne lit pas les variables CSS, et la
+          // décision 13 le remplace par un SVG maison à l'étape 5. Palette du :root.
+          borderColor: "#ff7a59",
+          backgroundColor: "#ff7a59",
           tension: 0.3,
           pointRadius: 0,
           yAxisID: "y",
@@ -172,8 +174,8 @@ function drawChart(
         {
           label: "raw",
           data: perSecond.map((p) => p.raw),
-          borderColor: "#646669",
-          backgroundColor: "#646669",
+          borderColor: "#6b7689",
+          backgroundColor: "#6b7689",
           tension: 0.3,
           pointRadius: 0,
           yAxisID: "y",
@@ -181,8 +183,8 @@ function drawChart(
         {
           label: "errors",
           data: perSecond.map((p) => (p.errors > 0 ? p.errors : null)),
-          borderColor: "#ca4754",
-          backgroundColor: "#ca4754",
+          borderColor: "#ff4d6d",
+          backgroundColor: "#ff4d6d",
           showLine: false,
           pointRadius: 4,
           pointStyle: "crossRot",
@@ -195,8 +197,8 @@ function drawChart(
       maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
       scales: {
-        x: { title: { display: true, text: "seconds" }, grid: { color: "#2c2e31" } },
-        y: { type: "linear", position: "left", beginAtZero: true, grid: { color: "#2c2e31" } },
+        x: { title: { display: true, text: "secondes" }, grid: { color: "#1b2230" } },
+        y: { type: "linear", position: "left", beginAtZero: true, grid: { color: "#1b2230" } },
         yErr: {
           type: "linear",
           position: "right",
@@ -205,7 +207,7 @@ function drawChart(
           ticks: { stepSize: 1 },
         },
       },
-      plugins: { legend: { labels: { color: "#d1d0c5" } } },
+      plugins: { legend: { labels: { color: "#e8ecf4" } } },
     },
   });
 }

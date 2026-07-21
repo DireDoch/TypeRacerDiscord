@@ -11,14 +11,15 @@ import type { HistoryEntry, Mode, RunConfig } from "../core/types";
 import { fetchHistory, fetchProfileAnalysis, fetchRun } from "../api";
 import { runReplay } from "./replay";
 import { analysisHtml } from "./results";
+import { MODE_LABELS } from "./practice";
 
 const FILTERS: Mode[] = ["time", "words", "quotes", "zen", "drill"];
 
-/** Libellé compact du Mode d'un Run : « time 30s », « time ∞ », « words 25 », « quotes »… */
+/** Libellé compact du Mode d'un Run : « temps 30s », « temps ∞ », « mots 25 », « citations »… */
 export function modeLabel(config: RunConfig): string {
-  if (config.mode === "time") return config.modeValue === 0 ? "time ∞" : `time ${config.modeValue}s`;
-  if (config.mode === "words") return `words ${config.modeValue}`;
-  return config.mode;
+  if (config.mode === "time") return config.modeValue === 0 ? "temps ∞" : `temps ${config.modeValue}s`;
+  if (config.mode === "words") return `mots ${config.modeValue}`;
+  return MODE_LABELS[config.mode];
 }
 
 export class History {
@@ -53,7 +54,7 @@ export class History {
       this.render(
         res.entries.length > 0
           ? tableHtml(res.entries)
-          : `<div class="loading">Aucun Run${this.filter ? ` en Mode ${this.filter}` : ""} — joue une course !</div>`,
+          : `<div class="loading">Aucun Run${this.filter ? ` en Mode ${MODE_LABELS[this.filter]}` : ""} — joue une course !</div>`,
       );
     } catch {
       if (seq !== this.seq) return;
@@ -63,7 +64,7 @@ export class History {
 
   private render(body: string, profileView = false): void {
     const filterBtn = (m: Mode) =>
-      `<button data-filter="${m}" class="${this.filter === m ? "on" : ""}">${m}</button>`;
+      `<button data-filter="${m}" class="${this.filter === m ? "on" : ""}">${MODE_LABELS[m]}</button>`;
     this.root.innerHTML = `
       <section class="history">
         <div class="config">
@@ -140,19 +141,19 @@ function tableHtml(entries: HistoryEntry[]): string {
       (e) => `
         <tr>
           <td>${new Date(e.createdAt).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}</td>
-          <td>${e.kind === "race" ? "race" : "practice"}</td>
+          <td>${e.kind === "race" ? "course" : "solo"}</td>
           <td>${modeLabel(e.config)}</td>
           <td class="num">${e.wpm}</td>
           <td class="num">${e.accuracy}%</td>
           <td class="num">${(e.durationMs / 1000).toFixed(1)}s</td>
-          <td>${e.replayable ? `<button data-replay="${e.runId}">replay</button>` : ""}</td>
+          <td>${e.replayable ? `<button data-replay="${e.runId}">revoir</button>` : ""}</td>
         </tr>`,
     )
     .join("");
   return `
     <table class="history-table">
       <thead>
-        <tr><th>date</th><th>type</th><th>mode</th><th class="num">wpm</th><th class="num">acc</th><th class="num">durée</th><th></th></tr>
+        <tr><th>date</th><th>type</th><th>mode</th><th class="num">wpm</th><th class="num">précision</th><th class="num">durée</th><th></th></tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
