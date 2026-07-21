@@ -16,12 +16,20 @@ _Avoid_: Solo, Training, Free mode.
 A competitive Run inside a Room with **blocking input** (TypeRacer-style): an error must be corrected before advancing. Planned for Phase 2. The blocking input controller is built and testable in solo during the MVP, then rebound exclusively to Race later.
 _Avoid_: Match, Duel, Course.
 
+**Gap (écart)**:
+How far a Player finished behind the winner of a Race, in seconds. It is the headline of the finish — the number that gets said out loud — while absolute WPM is secondary.
+_Avoid_: Delta, Difference, Lag.
+
 **Mode**:
 The rule that decides what text is presented and when a Run ends — one of `Time`, `Words`, `Quotes`, `Zen`. Exactly one Mode per Run.
 
 **Setting**:
 An independent, cumulable text modifier applied on top of a Mode — currently `Punctuation` and `Numbers`. Zero or more per Run.
 _Avoid_: Modifier, Option, Toggle.
+
+**Preference**:
+How a Player wants the game to look on **their own machine** — typing font, colour palette, and the Display identity override. A Preference belongs to the device, never leaves it, and is deliberately **not** a Setting: it never alters the generated text, never enters the Config bucket, and never affects a score. Two Players in the same Race may see different fonts and colours and still be racing the same text. Changing a Preference never invalidates a PB.
+_Avoid_: Setting, Option, Config, Theme.
 
 **Keystroke log**:
 The recorded timeline of a Player's keystrokes during a Run (what was typed and when). The raw input from which all stats are derived; sent once to the backend for the Authoritative scoreboard and **persisted with the Run** (migration `0002`) as the raw material for the upcoming replay/analysis features.
@@ -45,6 +53,10 @@ _Avoid_: Weakness, Problem key, Trouble key.
 **Player**:
 A Discord user playing the game, identified by their Discord user ID (snowflake). No separate account exists — identity comes entirely from the Discord OAuth handshake.
 _Avoid_: User, Account, Profile.
+
+**Display identity**:
+The face a Player shows to the others during a session: a display name and an avatar. The name defaults to the Discord display name and **the Player may override it** with a nickname of their choosing; the override belongs to that Player's device, not to the game. The Display identity is **never stored by the game** — it is announced on joining, shown while the session lasts, and forgotten. A Player is always the snowflake (durable, owns the Runs); the Display identity is only how that Player is drawn on screen. It is never verified: two Players may show the same name. Anything persisted — history, PB, Lesson progress, leaderboards — names Players by snowflake, never by Display identity.
+_Avoid_: Username, Nickname, Profile.
 
 **Config bucket**:
 The exact combination that makes two Runs comparable: Mode + its value + language + active Settings. `Time 30s English Punctuation` and `Time 30s English` are different buckets.
