@@ -486,140 +486,6 @@ mod tests {
     }
 
     #[test]
-    fn perfect_the_cat() {
-        let s = compute_scoreboard(&input(
-            Mode::Words,
-            2,
-            "the cat",
-            log(&[(100.0, "t", None), (200.0, "h", None), (300.0, "e", None), (400.0, " ", None), (500.0, "c", None), (600.0, "a", None), (700.0, "t", None)]),
-            700.0,
-        ));
-        assert_eq!(s.wpm, 120.0);
-        assert_eq!(s.raw, 120.0);
-        assert_eq!(s.accuracy, 100.0);
-        assert_eq!(s.characters, CharacterBreakdown { correct: 7, incorrect: 0, extra: 0, missed: 0 });
-    }
-
-    #[test]
-    fn faute_interne_cxt() {
-        let s = compute_scoreboard(&input(
-            Mode::Words,
-            1,
-            "cat",
-            log(&[(100.0, "c", None), (200.0, "x", None), (300.0, "t", None)]),
-            300.0,
-        ));
-        assert_eq!(s.characters, CharacterBreakdown { correct: 2, incorrect: 1, extra: 0, missed: 0 });
-        assert_eq!(s.accuracy, 66.7);
-        assert_eq!(s.wpm, 80.0);
-        assert_eq!(s.raw, 120.0);
-    }
-
-    #[test]
-    fn extra_hixx() {
-        let s = compute_scoreboard(&input(
-            Mode::Words,
-            1,
-            "hi",
-            log(&[(100.0, "h", None), (200.0, "i", None), (300.0, "x", None), (400.0, "x", None)]),
-            400.0,
-        ));
-        assert_eq!(s.characters, CharacterBreakdown { correct: 2, incorrect: 2, extra: 2, missed: 0 });
-        assert_eq!(s.accuracy, 50.0);
-    }
-
-    #[test]
-    fn curseur_libre_correction_mot_anterieur() {
-        // "ab cd" : "xb" (1 faute), espace, retour corriger en "ab", espace, "cd".
-        let s = compute_scoreboard(&input(
-            Mode::Words,
-            2,
-            "ab cd",
-            log(&[
-                (100.0, "x", None), (200.0, "b", None), (300.0, " ", None),
-                (400.0, "", Some(ControlKey::Backspace)), // rouvre "xb"
-                (500.0, "", Some(ControlKey::Backspace)), // "xb" -> "x"
-                (600.0, "", Some(ControlKey::Backspace)), // "x" -> ""
-                (700.0, "a", None), (800.0, "b", None), (900.0, " ", None),
-                (1000.0, "c", None), (1100.0, "d", None),
-            ]),
-            1100.0,
-        ));
-        // État final "ab cd" parfait → pas d'extra/missed ; la frappe "x" reste en incorrect.
-        assert_eq!(s.characters, CharacterBreakdown { correct: 7, incorrect: 1, extra: 0, missed: 0 });
-        assert_eq!(s.accuracy, 87.5);
-        assert_eq!(s.wpm, 54.5);
-    }
-
-    #[test]
-    fn missed_espace_anticipe() {
-        let s = compute_scoreboard(&input(
-            Mode::Words,
-            2,
-            "cat dog",
-            log(&[(100.0, "c", None), (200.0, "a", None), (300.0, " ", None), (400.0, "d", None), (500.0, "o", None), (600.0, "g", None)]),
-            600.0,
-        ));
-        assert_eq!(s.characters, CharacterBreakdown { correct: 6, incorrect: 0, extra: 0, missed: 1 });
-    }
-
-    #[test]
-    fn serie_par_seconde_et_burst() {
-        let s = compute_scoreboard(&input(
-            Mode::Words,
-            3,
-            "aa bb cc",
-            log(&[
-                (100.0, "a", None), (200.0, "a", None), (300.0, " ", None),
-                (1100.0, "b", None), (1200.0, "b", None), (1300.0, " ", None),
-                (2100.0, "c", None), (2200.0, "c", None),
-            ]),
-            2200.0,
-        ));
-        assert_eq!(s.per_second.len(), 3);
-        assert_eq!(s.per_second[0], PerSecondPoint { t: 1.0, wpm: 36.0, raw: 36.0, errors: 0, burst: 120.0 });
-        assert_eq!(s.per_second[1], PerSecondPoint { t: 2.0, wpm: 36.0, raw: 36.0, errors: 0, burst: 120.0 });
-        assert_eq!(s.per_second[2], PerSecondPoint { t: 2.2, wpm: 43.6, raw: 43.6, errors: 0, burst: 240.0 });
-    }
-
-    #[test]
-    fn zen_acc_100_exclu_pb() {
-        let s = compute_scoreboard(&input(
-            Mode::Zen,
-            0,
-            "",
-            log(&[(100.0, "a", None), (200.0, "b", None), (300.0, "c", None), (400.0, " ", None), (500.0, "d", None), (600.0, "e", None), (700.0, "f", None)]),
-            1_000_000.0, // ignoré : la durée vient du dernier t du log, pas du client
-        ));
-        assert_eq!(s.characters, CharacterBreakdown { correct: 7, incorrect: 0, extra: 0, missed: 0 });
-        assert_eq!(s.accuracy, 100.0);
-        assert_eq!(s.wpm, 120.0); // 7 ÷ 5 ÷ (0.7/60)
-        assert!(!s.pb_eligible);
-    }
-
-    #[test]
-    fn zen_retour_arriere_etat_visible() {
-        // "teh" → 2× backspace → "he" ⇒ visible "the" (3 chars) ; effort brut = 5 frappes.
-        let s = compute_scoreboard(&input(
-            Mode::Zen,
-            0,
-            "",
-            log(&[
-                (100.0, "t", None), (200.0, "e", None), (300.0, "h", None),
-                (400.0, "", Some(ControlKey::Backspace)),
-                (500.0, "", Some(ControlKey::Backspace)),
-                (600.0, "h", None), (700.0, "e", None),
-            ]),
-            1_000_000.0, // ignoré, idem
-        ));
-        assert_eq!(s.wpm, 51.4); // 3 chars visibles ÷ 5 ÷ (0.7/60)
-        assert_eq!(s.raw, 85.7); // 5 frappes ÷ 5 ÷ (0.7/60)
-        assert_eq!(s.accuracy, 100.0);
-        assert_eq!(s.characters, CharacterBreakdown { correct: 5, incorrect: 0, extra: 0, missed: 0 });
-        assert!(!s.pb_eligible);
-    }
-
-    #[test]
     fn eligibilite_pb() {
         let k = log(&[(100.0, "a", None)]);
         assert!(!compute_scoreboard(&input(Mode::Time, 0, "the cat", k.clone(), 1000.0)).pb_eligible);
@@ -686,5 +552,85 @@ mod tests {
         let s = compute_scoreboard(&input(Mode::Words, 1, "the", vec![], 5000.0));
         assert_eq!(s.duration_ms, 0.0);
         assert!(s.per_second.is_empty());
+    }
+
+    #[test]
+    fn emoji_en_zen_compte_cote_rust_ignore_cote_ts_divergence_connue() {
+        // clen("😀") == 1 codepoint → acceptée et comptée ici. Côté TS, "😀".length === 2
+        // en UTF-16 : k.k.length===1 est faux, la référence l'ignore silencieusement.
+        // Divergence connue, non corrigée ici (aucun changement de production, issue #19) —
+        // ce test documente le comportement actuel, il ne le cautionne pas.
+        let s = compute_scoreboard(&input(Mode::Zen, 0, "", log(&[(100.0, "😀", None)]), 100.0));
+        assert_eq!(s.characters, CharacterBreakdown { correct: 1, incorrect: 0, extra: 0, missed: 0 });
+    }
+
+    // ------------------------------------------------------------------------
+    //  Vecteurs de parité TS/Rust (issue #19) — même fichier que scoreboard.test.ts.
+    //  Un cas ajouté ou changé fait échouer les DEUX ports s'ils divergent.
+    // ------------------------------------------------------------------------
+
+    #[derive(serde::Deserialize)]
+    struct VectorFile {
+        cases: Vec<VectorCase>,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct VectorCase {
+        name: String,
+        mode: Mode,
+        mode_value: i64,
+        target_text: String,
+        keystrokes: Vec<Keystroke>,
+        expected: Expected,
+    }
+
+    #[derive(serde::Deserialize, Default)]
+    #[serde(rename_all = "camelCase")]
+    struct Expected {
+        wpm: Option<f64>,
+        raw: Option<f64>,
+        accuracy: Option<f64>,
+        characters: Option<CharacterBreakdown>,
+        duration_ms: Option<f64>,
+        pb_eligible: Option<bool>,
+        per_second: Option<Vec<PerSecondPoint>>,
+    }
+
+    #[test]
+    fn parity_vectors_ts_rust() {
+        let file: VectorFile =
+            serde_json::from_str(include_str!("../../../test-vectors/scoreboard.json")).unwrap();
+        assert!(!file.cases.is_empty());
+        for case in file.cases {
+            let s = compute_scoreboard(&ScoreInput {
+                mode: case.mode,
+                mode_value: case.mode_value,
+                target_text: case.target_text,
+                keystrokes: case.keystrokes,
+            });
+            let e = case.expected;
+            if let Some(v) = e.wpm {
+                assert_eq!(s.wpm, v, "{}: wpm", case.name);
+            }
+            if let Some(v) = e.raw {
+                assert_eq!(s.raw, v, "{}: raw", case.name);
+            }
+            if let Some(v) = e.accuracy {
+                assert_eq!(s.accuracy, v, "{}: accuracy", case.name);
+            }
+            if let Some(v) = e.characters {
+                assert_eq!(s.characters, v, "{}: characters", case.name);
+            }
+            if let Some(v) = e.duration_ms {
+                assert_eq!(s.duration_ms, v, "{}: duration_ms", case.name);
+            }
+            if let Some(v) = e.pb_eligible {
+                assert_eq!(s.pb_eligible, v, "{}: pb_eligible", case.name);
+            }
+            if let Some(v) = e.per_second {
+                assert_eq!(s.per_second, v, "{}: per_second", case.name);
+            }
+        }
     }
 }

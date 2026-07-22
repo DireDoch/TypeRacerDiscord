@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { computeScoreboard, type ScoreInput } from "./scoreboard";
 import { FreeInput } from "../input/free-input";
 import type { Keystroke } from "../types";
+import vectorsFile from "../../../../test-vectors/scoreboard.json";
 
 /** Construit un log à partir de tokens [t, k(, ctrl)]. */
 function log(...events: Array<[number, string, ("backspace" | "backspace-word")?]>): Keystroke[] {
@@ -16,124 +17,7 @@ const base = (over: Partial<ScoreInput>): ScoreInput => ({
   ...over,
 });
 
-describe("computeScoreboard — saisie parfaite", () => {
-  it('"the cat" tapé sans faute', () => {
-    const s = computeScoreboard(
-      base({
-        keystrokes: log([100, "t"], [200, "h"], [300, "e"], [400, " "], [500, "c"], [600, "a"], [700, "t"]),
-      }),
-    );
-    expect(s.wpm).toBe(120); // 7 chars / 5 / (0.7/60)
-    expect(s.raw).toBe(120);
-    expect(s.accuracy).toBe(100);
-    expect(s.characters).toEqual({ correct: 7, incorrect: 0, extra: 0, missed: 0 });
-  });
-});
-
-describe("computeScoreboard — fautes / extra / missed", () => {
-  it("faute interne : 'cxt' pour 'cat'", () => {
-    const s = computeScoreboard(
-      base({ modeValue: 1, targetText: "cat", keystrokes: log([100, "c"], [200, "x"], [300, "t"]) }),
-    );
-    expect(s.characters).toEqual({ correct: 2, incorrect: 1, extra: 0, missed: 0 });
-    expect(s.accuracy).toBe(66.7);
-    expect(s.wpm).toBe(80); // 2 corrects
-    expect(s.raw).toBe(120); // 3 frappes
-  });
-
-  it("Extra : 'hixx' pour 'hi'", () => {
-    const s = computeScoreboard(
-      base({ modeValue: 1, targetText: "hi", keystrokes: log([100, "h"], [200, "i"], [300, "x"], [400, "x"]) }),
-    );
-    expect(s.characters).toEqual({ correct: 2, incorrect: 2, extra: 2, missed: 0 });
-    expect(s.accuracy).toBe(50);
-  });
-
-  it("curseur libre : corriger un mot antérieur retire sa pénalité du WPM net, pas de l'ACC", () => {
-    // "ab cd" : on tape "xb" (1 faute), espace, puis on revient corriger en "ab", espace, "cd".
-    const s = computeScoreboard(
-      base({
-        targetText: "ab cd",
-        keystrokes: log(
-          [100, "x"], [200, "b"], [300, " "],
-          [400, "", "backspace"], // buffer vide → rouvre "xb"
-          [500, "", "backspace"], // "xb" → "x"
-          [600, "", "backspace"], // "x" → ""
-          [700, "a"], [800, "b"], [900, " "],
-          [1000, "c"], [1100, "d"],
-        ),
-      }),
-    );
-    // État final "ab cd" parfait → aucun extra/missed ; la frappe "x" reste comptée en incorrect.
-    expect(s.characters).toEqual({ correct: 7, incorrect: 1, extra: 0, missed: 0 });
-    expect(s.accuracy).toBe(87.5); // 7 / 8 frappes (la faute corrigée pèse encore)
-    expect(s.wpm).toBe(54.5); // 5 chars corrects à l'état final (la faute ne pèse plus)
-  });
-
-  it("Missed : espace anticipé sur 'cat dog'", () => {
-    const s = computeScoreboard(
-      base({
-        targetText: "cat dog",
-        keystrokes: log([100, "c"], [200, "a"], [300, " "], [400, "d"], [500, "o"], [600, "g"]),
-      }),
-    );
-    expect(s.characters).toEqual({ correct: 6, incorrect: 0, extra: 0, missed: 1 });
-  });
-});
-
-describe("computeScoreboard — série par seconde et Burst", () => {
-  it("cumulatif, point final exact, Burst = mot le plus rapide", () => {
-    const s = computeScoreboard(
-      base({
-        modeValue: 3,
-        targetText: "aa bb cc",
-        keystrokes: log(
-          [100, "a"], [200, "a"], [300, " "],
-          [1100, "b"], [1200, "b"], [1300, " "],
-          [2100, "c"], [2200, "c"],
-        ),
-      }),
-    );
-    expect(s.perSecond).toHaveLength(3);
-    expect(s.perSecond[0]).toEqual({ t: 1, wpm: 36, raw: 36, errors: 0, burst: 120 });
-    expect(s.perSecond[1]).toEqual({ t: 2, wpm: 36, raw: 36, errors: 0, burst: 120 });
-    expect(s.perSecond[2]).toEqual({ t: 2.2, wpm: 43.6, raw: 43.6, errors: 0, burst: 240 });
-  });
-});
-
 describe("computeScoreboard — Zen et éligibilité PB", () => {
-  it("Zen : ACC 100, Correct/0/0/0, exclu des PB", () => {
-    const s = computeScoreboard({
-      mode: "zen",
-      modeValue: 0,
-      targetText: "",
-      keystrokes: log([100, "a"], [200, "b"], [300, "c"], [400, " "], [500, "d"], [600, "e"], [700, "f"]),
-    });
-    expect(s.characters).toEqual({ correct: 7, incorrect: 0, extra: 0, missed: 0 });
-    expect(s.accuracy).toBe(100);
-    expect(s.wpm).toBe(120); // 7 / 5 / (0.7/60) — durée dérivée du dernier t du log
-    expect(s.pbEligible).toBe(false);
-  });
-
-  it("Zen : le retour arrière efface (WPM = état visible, Raw = effort brut)", () => {
-    // "teh" → 2× backspace → "he" ⇒ visible "the" (3 chars) ; 5 frappes au total.
-    const s = computeScoreboard({
-      mode: "zen",
-      modeValue: 0,
-      targetText: "",
-      keystrokes: log(
-        [100, "t"], [200, "e"], [300, "h"],
-        [400, "", "backspace"], [500, "", "backspace"],
-        [600, "h"], [700, "e"],
-      ),
-    });
-    expect(s.wpm).toBe(51.4); // 3 chars visibles / 5 / (0.7/60)
-    expect(s.raw).toBe(85.7); // 5 frappes / 5 / (0.7/60)
-    expect(s.accuracy).toBe(100);
-    expect(s.characters).toEqual({ correct: 5, incorrect: 0, extra: 0, missed: 0 });
-    expect(s.pbEligible).toBe(false);
-  });
-
   it("Time infini exclu des PB ; Time fini éligible", () => {
     const k = log([100, "a"]);
     expect(computeScoreboard(base({ mode: "time", modeValue: 0, keystrokes: k })).pbEligible).toBe(false);
@@ -201,4 +85,68 @@ describe("computeScoreboard — cohérence avec un log RÉEL produit par FreeInp
     // correctes ("t","h","e"," ","c","a","t"), la frappe "x" reste en incorrect.
     expect(s.characters).toEqual({ correct: 7, incorrect: 1, extra: 0, missed: 0 });
   });
+});
+
+describe("computeScoreboard — divergence TS/Rust connue, non résolue ici (issue #19)", () => {
+  // Durée négative (Time, modeValue < 0) : l'issue #19 la documentait comme divergente
+  // (WPM négatif en TS, nul en Rust). Vérifié : déjà clos par le fix #11 — resolveDuration
+  // ne renvoie `modeValue * 1000` QUE si modeValue > 0 ; sinon (0 ou négatif) elle dérive
+  // du dernier t du log, toujours clampée ≥ 0, des deux côtés. Voir le vecteur
+  // "time_infini_ou_negatif_derive_du_log" dans test-vectors/scoreboard.json — les deux
+  // ports s'accordent déjà, rien à documenter comme divergent ici.
+
+  it("émoji en Zen : ignoré côté TS (UTF-16), compté côté Rust (codepoints)", () => {
+    // "😀".length === 2 en UTF-16 (JS) : k.k.length===1 est faux → la frappe est ignorée.
+    // Rust compte les codepoints (clen("😀") === 1) → la frappe est acceptée et comptée.
+    // Documente le bug, ne le corrige pas ici (issue #19).
+    const s = computeScoreboard({ mode: "zen", modeValue: 0, targetText: "", keystrokes: log([100, "😀"]) });
+    expect(s.characters).toEqual({ correct: 0, incorrect: 0, extra: 0, missed: 0 }); // frappe ignorée
+  });
+});
+
+// ----------------------------------------------------------------------------
+//  Vecteurs de parité TS/Rust (issue #19) — lus tels quels par replay.rs.
+//  Un cas ajouté ou changé ici fait échouer les DEUX ports s'ils divergent.
+// ----------------------------------------------------------------------------
+
+interface VectorExpected {
+  wpm?: number;
+  raw?: number;
+  accuracy?: number;
+  characters?: { correct: number; incorrect: number; extra: number; missed: number };
+  durationMs?: number;
+  pbEligible?: boolean;
+  perSecond?: unknown[];
+}
+
+interface VectorCase {
+  name: string;
+  mode: ScoreInput["mode"];
+  modeValue: number;
+  targetText: string;
+  keystrokes: Keystroke[];
+  expected: VectorExpected;
+}
+
+const vectors = vectorsFile as unknown as { cases: VectorCase[] };
+
+describe("computeScoreboard — vecteurs de parité TS/Rust (issue #19)", () => {
+  for (const c of vectors.cases) {
+    it(c.name, () => {
+      const s = computeScoreboard({
+        mode: c.mode,
+        modeValue: c.modeValue,
+        targetText: c.targetText,
+        keystrokes: c.keystrokes,
+      });
+      const e = c.expected;
+      if (e.wpm !== undefined) expect(s.wpm).toBe(e.wpm);
+      if (e.raw !== undefined) expect(s.raw).toBe(e.raw);
+      if (e.accuracy !== undefined) expect(s.accuracy).toBe(e.accuracy);
+      if (e.characters !== undefined) expect(s.characters).toEqual(e.characters);
+      if (e.durationMs !== undefined) expect(s.durationMs).toBe(e.durationMs);
+      if (e.pbEligible !== undefined) expect(s.pbEligible).toBe(e.pbEligible);
+      if (e.perSecond !== undefined) expect(s.perSecond).toEqual(e.perSecond);
+    });
+  }
 });
