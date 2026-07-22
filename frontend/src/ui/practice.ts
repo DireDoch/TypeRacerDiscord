@@ -18,7 +18,7 @@ import { generateWithRng, initialWordCount } from "../core/text-gen";
 import { generateDrillText } from "../core/text-gen/drill";
 import { Rng } from "../core/text-gen/rng";
 import { liveWpm, liveWpmZen } from "../live-stats";
-import { submitRun, fetchQuote, fetchProfileAnalysis, HttpError } from "../api";
+import { submitRun, fetchQuote, fetchProfileAnalysis, isIdentityError, IDENTITY_ERROR_MESSAGE } from "../api";
 import { renderResults } from "./results";
 import { runReplay } from "./replay";
 
@@ -81,6 +81,8 @@ export class Practice {
   /** Texte en chargement asynchrone (Quote ou profil Drill) / échec du chargement. */
   private loadingText = false;
   private loadError = false;
+  /** true si le chargement raté est un problème d'identité (pas un service indisponible). */
+  private loadErrorIsIdentity = false;
   /** Drill sans profil : pas assez de données analysées pour cibler des Weak spots. */
   private drillNoProfile = false;
   /** Jeton anti-course : un reset() asynchrone obsolète (mode rechangé) s'auto-annule. */
@@ -130,6 +132,7 @@ export class Practice {
     this.quoteAuthor = undefined;
     this.quoteWikipediaUrl = undefined;
     this.loadError = false;
+    this.loadErrorIsIdentity = false;
     this.drillNoProfile = false;
 
     if (this.config.mode === "quotes") {
@@ -145,10 +148,11 @@ export class Practice {
         this.quoteAuthor = quote.author;
         this.quoteWikipediaUrl = quote.wikipediaUrl;
         this.targetWords = quote.text.split(" ").filter((w) => w.length > 0);
-      } catch {
+      } catch (e) {
         if (seq !== this.resetSeq) return;
         this.loadingText = false;
         this.loadError = true;
+        this.loadErrorIsIdentity = isIdentityError(e);
         this.render();
         return;
       }
@@ -170,10 +174,11 @@ export class Practice {
           return;
         }
         this.targetWords = generateDrillText(profile.weakSpots, new Rng(this.seed));
-      } catch {
+      } catch (e) {
         if (seq !== this.resetSeq) return;
         this.loadingText = false;
         this.loadError = true;
+        this.loadErrorIsIdentity = isIdentityError(e);
         this.render();
         return;
       }
@@ -265,7 +270,7 @@ export class Practice {
       });
     } catch (e) {
       // Le log (this.log) n'est pas touché : "réessayer" relance finish() avec les mêmes frappes.
-      this.renderSubmitError(e instanceof HttpError && e.status === 401 ? "auth" : "network");
+      this.renderSubmitError(isIdentityError(e) ? "auth" : "network");
       return;
     }
 
@@ -448,8 +453,14 @@ export class Practice {
       return `<div class="loading">${drill ? "Analyse de tes dernières courses…" : "Chargement d'une citation…"}</div>`;
     if (this.drillNoProfile)
       return `<div class="loading">Pas encore assez de données pour cibler tes faiblesses — joue d'abord quelques courses (time, words…), puis reviens ici.</div>`;
-    if (this.loadError)
-      return `<div class="loading">${drill ? "Impossible de charger ton profil." : "Impossible de charger la citation."} Tab pour réessayer.</div>`;
+    if (this.loadError) {
+      const base = this.loadErrorIsIdentity
+        ? IDENTITY_ERROR_MESSAGE
+        : drill
+          ? "Impossible de charger ton profil."
+          : "Impossible de charger la citation.";
+      return `<div class="loading">${base} Tab pour réessayer.</div>`;
+    }
     if (this.config.mode === "zen") return this.zenHtml();
     return this.wordsHtml();
   }

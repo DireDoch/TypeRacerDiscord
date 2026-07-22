@@ -8,6 +8,9 @@
 //
 //  Identité : le Bearer token vient de discord.ts (handshake Embedded App SDK, ou
 //  token de dev hors Discord). Jamais de player_id dans le corps.
+//
+//  Toutes les requêtes passent par `request()` : préfixe `/.proxy` (CSP Discord) et
+//  Bearer token appliqués une seule fois, un nouvel endpoint ne peut pas les oublier.
 // =============================================================================
 
 import type {
@@ -24,97 +27,93 @@ import { getAuthToken, proxyBase } from "./discord";
 /** Le scoreboard affiché provient maintenant du backend autoritaire. */
 export const AUTHORITATIVE_BACKEND = true;
 
-/** Erreur HTTP taguée du status : distingue un 401 (token expiré) d'une panne réseau. */
+/** Réponse HTTP non-2xx, taguée du status (distingue un 401 d'un 500/502). */
 export class HttpError extends Error {
   constructor(readonly status: number, message: string) {
     super(message);
   }
 }
 
+/** getAuthToken() a échoué : pas de handshake Discord valide (pas encore un 401 serveur). */
+export class IdentityError extends Error {}
+
+/** fetch() a rejeté avant réponse : hors ligne, backend injoignable. */
+export class NetworkError extends Error {}
+
+/** true si l'échec vient de l'identité (à reprendre depuis Discord), pas du service. */
+export function isIdentityError(e: unknown): boolean {
+  return e instanceof IdentityError || (e instanceof HttpError && e.status === 401);
+}
+
+/** Message générique pour un échec d'identité, partagé par tous les écrans. */
+export const IDENTITY_ERROR_MESSAGE = "Identité Discord perdue — reviens depuis Discord pour te reconnecter.";
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  let token: string;
+  try {
+    token = await getAuthToken();
+  } catch (e) {
+    throw new IdentityError(e instanceof Error ? e.message : String(e));
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`${proxyBase()}${path}`, {
+      ...init,
+      headers: { ...init?.headers, Authorization: `Bearer ${token}` },
+    });
+  } catch (e) {
+    throw new NetworkError(e instanceof Error ? e.message : String(e));
+  }
+  if (!res.ok) throw new HttpError(res.status, `${init?.method ?? "GET"} ${path} → ${res.status}`);
+  return res.json();
+}
+
 /** Soumet un Run et renvoie le scoreboard autoritaire + verdict PB (POST /api/runs). */
-export async function submitRun(req: SubmitRunRequest): Promise<SubmitRunResponse> {
-  const token = await getAuthToken();
-  const res = await fetch(`${proxyBase()}/api/runs`, {
+export function submitRun(req: SubmitRunRequest): Promise<SubmitRunResponse> {
+  return request<SubmitRunResponse>("/api/runs", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
   });
-  if (!res.ok) throw new HttpError(res.status, `POST /api/runs → ${res.status}`);
-  return res.json();
 }
 
 /** Historique du joueur (GET /api/history), du plus récent au plus ancien. */
-export async function fetchHistory(mode?: string): Promise<HistoryResponse> {
-  const token = await getAuthToken();
+export function fetchHistory(mode?: string): Promise<HistoryResponse> {
   const qs = mode ? `?mode=${encodeURIComponent(mode)}` : "";
-  const res = await fetch(`${proxyBase()}/api/history${qs}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) throw new Error(`GET /api/history → ${res.status}`);
-  return res.json();
+  return request<HistoryResponse>(`/api/history${qs}`);
 }
 
 /** Un Run complet pour le Replay (GET /api/runs/:id). 404 si non rejouable. */
-export async function fetchRun(runId: string): Promise<RunDetailResponse> {
-  const token = await getAuthToken();
-  const res = await fetch(`${proxyBase()}/api/runs/${encodeURIComponent(runId)}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) throw new Error(`GET /api/runs/${runId} → ${res.status}`);
-  return res.json();
+export function fetchRun(runId: string): Promise<RunDetailResponse> {
+  return request<RunDetailResponse>(`/api/runs/${encodeURIComponent(runId)}`);
 }
 
 /** Weak spots agrégés sur les derniers Runs (GET /api/profile/analysis). */
-export async function fetchProfileAnalysis(): Promise<AnalysisResponse> {
-  const token = await getAuthToken();
-  const res = await fetch(`${proxyBase()}/api/profile/analysis`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) throw new Error(`GET /api/profile/analysis → ${res.status}`);
-  return res.json();
+export function fetchProfileAnalysis(): Promise<AnalysisResponse> {
+  return request<AnalysisResponse>("/api/profile/analysis");
 }
 
 /** Weak spots d'un Run (GET /api/runs/:id/analysis). */
-export async function fetchAnalysis(runId: string): Promise<AnalysisResponse> {
-  const token = await getAuthToken();
-  const res = await fetch(`${proxyBase()}/api/runs/${encodeURIComponent(runId)}/analysis`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) throw new Error(`GET /api/runs/${runId}/analysis → ${res.status}`);
-  return res.json();
+export function fetchAnalysis(runId: string): Promise<AnalysisResponse> {
+  return request<AnalysisResponse>(`/api/runs/${encodeURIComponent(runId)}/analysis`);
 }
 
 /** Progression « Apprendre » du joueur (GET /api/learn/progress). */
-export async function fetchLearnProgress(): Promise<LearnProgress> {
-  const token = await getAuthToken();
-  const res = await fetch(`${proxyBase()}/api/learn/progress`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) throw new Error(`GET /api/learn/progress → ${res.status}`);
-  return res.json();
+export function fetchLearnProgress(): Promise<LearnProgress> {
+  return request<LearnProgress>("/api/learn/progress");
 }
 
 /** Enregistre une progression « Apprendre » (POST — le serveur garde le MAX). */
-export async function submitLearnProgress(completed: number): Promise<LearnProgress> {
-  const token = await getAuthToken();
-  const res = await fetch(`${proxyBase()}/api/learn/progress`, {
+export function submitLearnProgress(completed: number): Promise<LearnProgress> {
+  return request<LearnProgress>("/api/learn/progress", {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ completed }),
   });
-  if (!res.ok) throw new Error(`POST /api/learn/progress → ${res.status}`);
-  return res.json();
 }
 
 /** Récupère une Quote pour un Run en Mode Quotes (proxy serveur API-Ninjas). */
-export async function fetchQuote(): Promise<Quote> {
-  const token = await getAuthToken();
-  const res = await fetch(`${proxyBase()}/api/quote`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!res.ok) throw new Error(`GET /api/quote → ${res.status}`);
-  return res.json();
+export function fetchQuote(): Promise<Quote> {
+  return request<Quote>("/api/quote");
 }

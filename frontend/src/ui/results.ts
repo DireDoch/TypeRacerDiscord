@@ -16,7 +16,7 @@ import {
   Legend,
 } from "chart.js";
 import type { AnalysisResponse, SubmitRunResponse, WeakSpot } from "../core/types";
-import { AUTHORITATIVE_BACKEND, fetchAnalysis } from "../api";
+import { AUTHORITATIVE_BACKEND, fetchAnalysis, isIdentityError, IDENTITY_ERROR_MESSAGE } from "../api";
 
 Chart.register(
   LineController,
@@ -102,8 +102,8 @@ async function analyze(root: HTMLElement, runId: string): Promise<void> {
   let a: AnalysisResponse;
   try {
     a = await fetchAnalysis(runId);
-  } catch {
-    el.innerHTML = `<p class="hint">Analyse indisponible pour ce Run.</p>`;
+  } catch (e) {
+    el.innerHTML = `<p class="hint">${isIdentityError(e) ? IDENTITY_ERROR_MESSAGE : "Analyse indisponible pour ce Run."}</p>`;
     return;
   }
   if (!root.querySelector("#analysis")) return; // écran quitté pendant le fetch

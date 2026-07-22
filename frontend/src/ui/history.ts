@@ -8,7 +8,7 @@
 // =============================================================================
 
 import type { HistoryEntry, Mode, RunConfig } from "../core/types";
-import { fetchHistory, fetchProfileAnalysis, fetchRun } from "../api";
+import { fetchHistory, fetchProfileAnalysis, fetchRun, isIdentityError, IDENTITY_ERROR_MESSAGE } from "../api";
 import { runReplay } from "./replay";
 import { analysisHtml } from "./results";
 import { MODE_LABELS } from "./practice";
@@ -56,9 +56,11 @@ export class History {
           ? tableHtml(res.entries)
           : `<div class="loading">Aucun Run${this.filter ? ` en Mode ${MODE_LABELS[this.filter]}` : ""} — joue une course !</div>`,
       );
-    } catch {
+    } catch (e) {
       if (seq !== this.seq) return;
-      this.render(`<div class="loading">Impossible de charger l'historique.</div>`);
+      this.render(
+        `<div class="loading">${isIdentityError(e) ? IDENTITY_ERROR_MESSAGE : "Impossible de charger l'historique."}</div>`,
+      );
     }
   }
 
@@ -106,9 +108,12 @@ export class History {
           : `<p class="hint">${a.runsAnalyzed} course${a.runsAnalyzed > 1 ? "s" : ""} analysée${a.runsAnalyzed > 1 ? "s" : ""}.</p>
              ${analysisHtml(a, "sur tes dernières courses")}`;
       this.render(body, true);
-    } catch {
+    } catch (e) {
       if (seq !== this.seq) return;
-      this.render(`<div class="loading">Impossible de charger le profil.</div>`, true);
+      this.render(
+        `<div class="loading">${isIdentityError(e) ? IDENTITY_ERROR_MESSAGE : "Impossible de charger le profil."}</div>`,
+        true,
+      );
     }
   }
 
@@ -128,9 +133,11 @@ export class History {
           void this.load();
         },
       });
-    } catch {
+    } catch (e) {
       if (seq !== this.seq) return;
-      this.render(`<div class="loading">Impossible de charger ce Run.</div>`);
+      this.render(
+        `<div class="loading">${isIdentityError(e) ? IDENTITY_ERROR_MESSAGE : "Impossible de charger ce Run."}</div>`,
+      );
     }
   }
 }
