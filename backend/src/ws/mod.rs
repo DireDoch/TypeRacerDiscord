@@ -37,6 +37,24 @@ const ROOM_WORD_COUNT: usize = 30;
 /// Profondeur du canal de diffusion par Room (messages en vol tolérés).
 const BROADCAST_CAP: usize = 64;
 
+/// État de course d'une Room (issue #18) — remplace trois champs mutés indépendamment
+/// (`start_at_epoch_ms: Option`, `racers: Vec`, `finishers: Vec` : 8 combinaisons
+/// représentables, 2 légales). Racers et finishers n'existent QU'ensemble, avec t=0 —
+/// un état illégal (t=0 posé sans partants, par ex.) n'est plus représentable.
+pub enum RaceState {
+    /// Pas de course en cours : en attente de StartRace.
+    Lobby,
+    /// Course en cours. `racers` figés au départ (voir `all_racers_done`) ; `finishers`
+    /// grandit jusqu'à `racers.len()`.
+    Racing { start_at_epoch_ms: i64, racers: Vec<PlayerId>, finishers: Vec<(PlayerId, f64)> },
+}
+
+impl RaceState {
+    pub fn is_racing(&self) -> bool {
+        matches!(self, RaceState::Racing { .. })
+    }
+}
+
 /// Une Room : une Race en cours, scopée à un salon vocal Discord.
 pub struct Room {
     pub channel_id: ChannelId,
@@ -45,13 +63,7 @@ pub struct Room {
     pub owner: PlayerId,
     pub seed: u64,
     pub target_text: String,
-    /// t=0 partagé une fois la Race lancée.
-    pub start_at_epoch_ms: Option<i64>,
-    /// Partants figés au RaceStart (vide = pas de course en cours). Un joueur qui
-    /// rejoint en cours de course n'est pas attendu ; un partant qui quitte non plus.
-    pub racers: Vec<PlayerId>,
-    /// Joueurs ayant fini (ordre d'arrivée) + leur WPM autoritaire.
-    pub finishers: Vec<(PlayerId, f64)>,
+    pub state: RaceState,
     /// Diffusion des ServerEvent vers tous les sockets du salon.
     pub tx: broadcast::Sender<ServerEvent>,
 }
@@ -155,9 +167,7 @@ fn join_room(rooms: &Rooms, channel_id: &str, player_id: &str) -> broadcast::Rec
             owner: player_id.to_string(), // 1er arrivé = owner
             seed: seed as u64,
             target_text,
-            start_at_epoch_ms: None,
-            racers: Vec::new(),
-            finishers: Vec::new(),
+            state: RaceState::Lobby,
             tx,
         }
     });
@@ -174,6 +184,10 @@ fn leave_room(rooms: &Rooms, channel_id: &str, player_id: &str) {
     let mut rooms = rooms.lock().unwrap();
     if let Some(room) = rooms.get_mut(channel_id) {
         room.players.retain(|p| p != player_id);
+        // Abandon total (y compris juste après le départ, sans état "décompte" dédié
+        // côté serveur — voir CONTEXT.md) : clôt la course AVANT de retirer une Room
+        // désormais vide, sinon elle reste gelée en RaceState::Racing (issue #23).
+        close_race(room, true);
         if room.players.is_empty() {
             rooms.remove(channel_id); // tx droppé → forwards des sockets se terminent
             return;
@@ -182,13 +196,75 @@ fn leave_room(rooms: &Rooms, channel_id: &str, player_id: &str) {
             room.owner = room.players[0].clone(); // transfert au suivant dans la pile
         }
         let _ = room.tx.send(room_state(room));
-        // Si le partant était le dernier attendu, la course se termine maintenant.
-        if room.start_at_epoch_ms.is_some()
-            && all_racers_done(&room.racers, &room.players, &room.finishers)
-        {
-            end_race(room);
+    }
+}
+
+/// Clôt une course en cours, déclarant abandon (0 WPM, pas de recompute sur un log vide —
+/// l'accuracy y vaudrait 100, pas 0, piège de l'issue #23) tout partant pas encore fini.
+/// Aucun Run n'est persisté pour un abandon : rien à exclure des PB, rien à polluer.
+///
+/// `require_absent` : si vrai, ne clôt QUE si aucun partant en attente n'est encore
+/// connecté — abandon "tout le monde est parti" (#23, appelé depuis `leave_room`). Si
+/// faux, clôt sans condition de présence — watchdog de durée expirée (#24, quelqu'un
+/// peut très bien être encore connecté sans avoir rien envoyé depuis 10 minutes).
+fn close_race(room: &mut Room, require_absent: bool) {
+    let pending: Vec<PlayerId> = match &room.state {
+        RaceState::Racing { racers, finishers, .. } => {
+            racers.iter().filter(|r| !finishers.iter().any(|(p, _)| p == *r)).cloned().collect()
+        }
+        RaceState::Lobby => return,
+    };
+    if require_absent && pending.iter().any(|r| room.players.contains(r)) {
+        return; // au moins un partant présent n'a pas fini : la course continue
+    }
+    if let RaceState::Racing { finishers, .. } = &mut room.state {
+        for r in &pending {
+            finishers.push((r.clone(), 0.0));
         }
     }
+    for r in &pending {
+        let _ = room.tx.send(ServerEvent::PlayerFinished { player_id: r.clone(), wpm: 0.0 });
+    }
+    end_race(room);
+}
+
+/// Seuil au-delà duquel une course est jugée anormalement longue (issue #24) : un
+/// client peut disparaître sans jamais envoyer LeaveRoom (perte réseau, crash) — un
+/// watchdog client ne couvrirait pas ce cas, la fermeture doit venir du serveur. Zen et
+/// Time infini n'existent pas en Race : 10 min est un plafond sûr pour le seul Mode
+/// actuel (Words) — à revoir si la Race gagne un Mode à durée libre.
+const RACE_MAX_DURATION_MS: i64 = 10 * 60 * 1000;
+/// Fréquence de la vérification watchdog — pas besoin d'être plus précis que ça pour
+/// un seuil de 10 minutes.
+const WATCHDOG_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Clôt les Rooms dont la course dépasse RACE_MAX_DURATION_MS. Horloge injectée (`now`)
+/// pour rester testable sans attendre 10 minutes en vrai (issue #24).
+fn close_overlong_races(rooms: &Rooms, now: i64) {
+    let mut rooms = rooms.lock().unwrap();
+    for room in rooms.values_mut() {
+        let overlong = match &room.state {
+            RaceState::Racing { start_at_epoch_ms, .. } => now - start_at_epoch_ms > RACE_MAX_DURATION_MS,
+            RaceState::Lobby => false,
+        };
+        if overlong {
+            close_race(room, false);
+        }
+    }
+}
+
+/// Boucle watchdog : vérifie toutes les Rooms à intervalle régulier (issue #24). À
+/// spawn une fois au démarrage (voir main.rs). Chaque tick ne fait que scanner + fermer
+/// les Rooms trop longues — aucun recompute, aucune DB, le Mutex global n'est jamais
+/// tenu au-delà de cette opération O(nombre de Rooms).
+pub fn spawn_watchdog(rooms: Rooms) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(WATCHDOG_CHECK_INTERVAL);
+        loop {
+            interval.tick().await;
+            close_overlong_races(&rooms, now_epoch_ms());
+        }
+    });
 }
 
 /// StartRace : accepté du seul owner, hors course en cours. Fige les partants,
@@ -196,12 +272,15 @@ fn leave_room(rooms: &Rooms, channel_id: &str, player_id: &str) {
 fn start_race(rooms: &Rooms, channel_id: &str, player_id: &str) {
     let mut rooms = rooms.lock().unwrap();
     if let Some(room) = rooms.get_mut(channel_id) {
-        if room.owner != player_id || room.start_at_epoch_ms.is_some() {
+        if room.owner != player_id || room.state.is_racing() {
             return; // non-owner ou course déjà lancée : ignoré
         }
-        room.racers = room.players.clone();
         let start = now_epoch_ms();
-        room.start_at_epoch_ms = Some(start);
+        room.state = RaceState::Racing {
+            start_at_epoch_ms: start,
+            racers: room.players.clone(),
+            finishers: Vec::new(),
+        };
         let _ = room.tx.send(ServerEvent::RaceStart { start_at_epoch_ms: start });
     }
 }
@@ -217,45 +296,96 @@ fn relay_progress(rooms: &Rooms, channel_id: &str, player_id: &str, chars_done: 
     }
 }
 
-/// Finish : recompute AUTORITAIRE contre le texte du serveur, diffuse PlayerFinished,
-/// puis RaceOver (classé par WPM) quand tous les présents ont fini. Le Run est aussi
-/// persisté dans `runs` (kind "race") — historique seulement, jamais PB : la fin
-/// stricte (texte 100 % exact) le rend incomparable aux buckets Practice.
+/// Résultat d'une tentative d'enregistrer une arrivée.
+#[derive(Debug, PartialEq, Eq)]
+enum FinishOutcome {
+    /// Pas un partant de cette course, ou déjà fini : ignoré (doublon ou état périmé).
+    Rejected,
+    Recorded,
+    /// Enregistré, et c'était le dernier partant attendu : la course est close.
+    RaceOver,
+}
+
+/// Enregistre l'arrivée d'un partant (rejette les non-partants et les doublons),
+/// diffuse PlayerFinished, et clôt la course si c'était la dernière arrivée attendue.
+/// Machine d'état PURE : aucun socket, aucune DB — un seul paramètre (`pool`, dans
+/// `finish_race`) séparait ça d'une couverture complète (issue #18).
+fn record_finish(rooms: &Rooms, channel_id: &str, player_id: &str, wpm: f64) -> FinishOutcome {
+    let mut rooms = rooms.lock().unwrap();
+    let Some(room) = rooms.get_mut(channel_id) else { return FinishOutcome::Rejected };
+
+    let eligible = match &room.state {
+        RaceState::Racing { racers, finishers, .. } => {
+            racers.iter().any(|p| p == player_id) && !finishers.iter().any(|(p, _)| p == player_id)
+        }
+        RaceState::Lobby => false,
+    };
+    if !eligible {
+        return FinishOutcome::Rejected;
+    }
+
+    let RaceState::Racing { finishers, .. } = &mut room.state else { unreachable!("vérifié ci-dessus") };
+    finishers.push((player_id.to_string(), wpm));
+    let _ = room.tx.send(ServerEvent::PlayerFinished { player_id: player_id.to_string(), wpm });
+
+    let done = match &room.state {
+        RaceState::Racing { racers, finishers, .. } => all_racers_done(racers, &room.players, finishers),
+        RaceState::Lobby => false,
+    };
+    if done {
+        end_race(room);
+        FinishOutcome::RaceOver
+    } else {
+        FinishOutcome::Recorded
+    }
+}
+
+/// Finish : recompute AUTORITAIRE contre le texte du serveur, puis enregistre l'arrivée
+/// (`record_finish`). Le Run est aussi persisté dans `runs` (kind "race") — historique
+/// seulement, jamais PB : la fin stricte (texte 100 % exact) le rend incomparable aux
+/// buckets Practice.
 fn finish_race(
     rooms: &Rooms,
     channel_id: &str,
     player_id: &str,
     keystrokes: Vec<Keystroke>,
-    ended_at_ms: f64,
+    _ended_at_ms: f64, // wire uniquement : la durée vient du log, jamais du client (issue #11)
     pool: &SqlitePool,
 ) {
-    let mut rooms = rooms.lock().unwrap();
-    let Some(room) = rooms.get_mut(channel_id) else { return };
-    if !room.racers.iter().any(|p| p == player_id) {
-        return; // pas un partant de CETTE course (ou pas de course) : ignoré
-    }
-    if room.finishers.iter().any(|(p, _)| p == player_id) {
-        return; // déjà fini : on ignore un doublon
-    }
+    // Vérif préliminaire, bref verrou : évite le recompute (coûteux) pour un partant déjà
+    // rejeté d'office. `record_finish` refait l'authoritative check plus bas, verrou séparé.
+    let target_text = {
+        let rooms = rooms.lock().unwrap();
+        let Some(room) = rooms.get(channel_id) else { return };
+        let eligible = match &room.state {
+            RaceState::Racing { racers, finishers, .. } => {
+                racers.iter().any(|p| p == player_id) && !finishers.iter().any(|(p, _)| p == player_id)
+            }
+            RaceState::Lobby => false,
+        };
+        if !eligible {
+            return;
+        }
+        room.target_text.clone()
+    };
 
     // Sérialisé avant le recompute (qui prend possession des keystrokes).
     let keystroke_log = serde_json::to_string(&keystrokes).unwrap_or_else(|_| "[]".to_string());
 
     // Race = Words sur le texte du salon (le serveur possède seed/texte/config).
-    let mode_value = room.target_text.split(' ').count() as i64;
+    // Hors verrou : le recompute (O(n) sur le log) ne doit pas bloquer les autres Rooms.
+    let mode_value = target_text.split(' ').count() as i64;
     let mut sb = compute_scoreboard(&ScoreInput {
         mode: Mode::Words,
         mode_value,
-        target_text: room.target_text.clone(),
+        target_text: target_text.clone(),
         keystrokes,
-        ended_at_ms,
     });
 
-    room.finishers.push((player_id.to_string(), sb.wpm));
-    let _ = room.tx.send(ServerEvent::PlayerFinished {
-        player_id: player_id.to_string(),
-        wpm: sb.wpm,
-    });
+    // Verrou séparé, bref : enregistrement authoritative (l'état a pu changer entretemps).
+    if record_finish(rooms, channel_id, player_id, sb.wpm) == FinishOutcome::Rejected {
+        return;
+    }
 
     // Persistance hors verrou (spawn) : l'échec ne casse pas la course, il se logue.
     sb.pb_eligible = false;
@@ -268,7 +398,6 @@ fn finish_race(
     };
     let pool = pool.clone();
     let pid = player_id.to_string();
-    let target_text = room.target_text.clone();
     tokio::spawn(async move {
         let run_id = format!("r_{}", now_epoch_nanos());
         if let Err(e) = crate::store::insert_run(
@@ -279,10 +408,6 @@ fn finish_race(
             eprintln!("persistance du Run de Race ({pid}) : {e}");
         }
     });
-
-    if all_racers_done(&room.racers, &room.players, &room.finishers) {
-        end_race(room);
-    }
 }
 
 /// Course finie quand chaque partant ENCORE PRÉSENT a fini. Les partants sont figés
@@ -300,18 +425,17 @@ fn all_racers_done(
             .all(|r| finishers.iter().any(|(p, _)| p == r))
 }
 
-/// Clôt la course : diffuse le classement (par WPM), puis prépare la revanche —
-/// nouveau seed + nouveau texte (l'ancien est mémorisé par les joueurs) re-diffusés
-/// via RoomState. L'owner peut relancer StartRace depuis l'écran RaceOver.
+/// Clôt la course : diffuse le classement (par WPM décroissant), puis prépare la
+/// revanche — nouveau seed + nouveau texte (l'ancien est mémorisé par les joueurs)
+/// re-diffusés via RoomState. L'owner peut relancer StartRace depuis l'écran RaceOver.
 fn end_race(room: &mut Room) {
-    let mut ranked = room.finishers.clone();
+    let RaceState::Racing { finishers, .. } = &room.state else { return }; // rien à clore
+    let mut ranked = finishers.clone();
     ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     let ranking = ranked.into_iter().map(|(p, _)| p).collect();
     let _ = room.tx.send(ServerEvent::RaceOver { ranking });
 
-    room.finishers.clear();
-    room.racers.clear();
-    room.start_at_epoch_ms = None;
+    room.state = RaceState::Lobby;
     room.seed = fresh_seed() as u64;
     room.target_text =
         generate_text(&GenSettings { punctuation: false, numbers: false }, ROOM_WORD_COUNT, room.seed as u32)
@@ -353,10 +477,17 @@ fn now_epoch_nanos() -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use super::all_racers_done;
+    use super::*;
 
     fn s(v: &[&str]) -> Vec<String> {
         v.iter().map(|x| x.to_string()).collect()
+    }
+
+    fn racers_of(rooms: &Rooms, channel_id: &str) -> Vec<PlayerId> {
+        match &rooms.lock().unwrap().get(channel_id).unwrap().state {
+            RaceState::Racing { racers, .. } => racers.clone(),
+            RaceState::Lobby => panic!("pas en course"),
+        }
     }
 
     #[test]
@@ -375,5 +506,227 @@ mod tests {
         assert!(all_racers_done(&racers, &s(&["a", "b", "spectateur"]), &fin_ab));
         // Un partant qui QUITTE n'est plus attendu : a fini + b parti → fini.
         assert!(all_racers_done(&racers, &s(&["a"]), &fin_a));
+    }
+
+    #[test]
+    fn actions_sans_joinroom_prealable_sont_des_no_op() {
+        // issue #18 : StartRace/Progress/Finish sur un salon jamais rejoint (aucune Room
+        // créée) sont ignorés — pas de panique, pas de Room créée par effet de bord.
+        let rooms = new_rooms();
+        start_race(&rooms, "c1", "p1");
+        relay_progress(&rooms, "c1", "p1", 5);
+        assert_eq!(record_finish(&rooms, "c1", "p1", 80.0), FinishOutcome::Rejected);
+        assert!(rooms.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn owner_premier_arrive_et_transfert_au_depart() {
+        let rooms = new_rooms();
+        join_room(&rooms, "c1", "p1");
+        join_room(&rooms, "c1", "p2");
+        assert_eq!(rooms.lock().unwrap().get("c1").unwrap().owner, "p1");
+
+        leave_room(&rooms, "c1", "p1");
+        assert_eq!(rooms.lock().unwrap().get("c1").unwrap().owner, "p2");
+    }
+
+    #[test]
+    fn start_race_reserve_a_lowner_et_refuse_pendant_une_course() {
+        let rooms = new_rooms();
+        join_room(&rooms, "c1", "p1"); // owner
+        join_room(&rooms, "c1", "p2");
+
+        start_race(&rooms, "c1", "p2"); // pas l'owner : ignoré
+        assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+
+        start_race(&rooms, "c1", "p1"); // owner : accepté
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+
+        let start_at = |rooms: &Rooms| match &rooms.lock().unwrap().get("c1").unwrap().state {
+            RaceState::Racing { start_at_epoch_ms, .. } => *start_at_epoch_ms,
+            RaceState::Lobby => panic!("pas en course"),
+        };
+        let avant = start_at(&rooms);
+        start_race(&rooms, "c1", "p1"); // déjà en course : ignoré, t=0 inchangé
+        assert_eq!(start_at(&rooms), avant);
+    }
+
+    #[test]
+    fn gel_des_partants() {
+        let rooms = new_rooms();
+        join_room(&rooms, "c1", "p1");
+        join_room(&rooms, "c1", "p2");
+        start_race(&rooms, "c1", "p1");
+
+        join_room(&rooms, "c1", "p3"); // rejoint APRÈS le départ
+        assert_eq!(racers_of(&rooms, "c1"), s(&["p1", "p2"])); // p3 absent : pas un partant
+        assert_eq!(rooms.lock().unwrap().get("c1").unwrap().players, s(&["p1", "p2", "p3"])); // mais présent
+    }
+
+    #[test]
+    fn rejet_des_arrivees_en_double_et_des_non_partants() {
+        let rooms = new_rooms();
+        join_room(&rooms, "c1", "p1");
+        join_room(&rooms, "c1", "p2");
+        start_race(&rooms, "c1", "p1");
+        join_room(&rooms, "c1", "spectateur"); // rejoint après le départ : pas un partant
+
+        assert_eq!(record_finish(&rooms, "c1", "spectateur", 999.0), FinishOutcome::Rejected);
+        assert_eq!(record_finish(&rooms, "c1", "p1", 80.0), FinishOutcome::Recorded);
+        assert_eq!(record_finish(&rooms, "c1", "p1", 999.0), FinishOutcome::Rejected); // doublon
+    }
+
+    #[test]
+    fn classement_par_wpm_decroissant() {
+        let rooms = new_rooms();
+        join_room(&rooms, "c1", "p1");
+        join_room(&rooms, "c1", "p2");
+        start_race(&rooms, "c1", "p1");
+        let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
+
+        assert_eq!(record_finish(&rooms, "c1", "p1", 60.0), FinishOutcome::Recorded);
+        assert_eq!(record_finish(&rooms, "c1", "p2", 90.0), FinishOutcome::RaceOver);
+
+        let mut ranking = None;
+        while let Ok(ev) = rx.try_recv() {
+            if let ServerEvent::RaceOver { ranking: r } = ev {
+                ranking = Some(r);
+            }
+        }
+        assert_eq!(ranking, Some(s(&["p2", "p1"]))); // p2 (90) devant p1 (60)
+    }
+
+    #[test]
+    fn revanche_sur_texte_neuf() {
+        let rooms = new_rooms();
+        join_room(&rooms, "c1", "p1");
+        let texte_avant = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
+
+        start_race(&rooms, "c1", "p1");
+        assert_eq!(record_finish(&rooms, "c1", "p1", 60.0), FinishOutcome::RaceOver);
+
+        {
+            let guard = rooms.lock().unwrap();
+            let room = guard.get("c1").unwrap();
+            assert!(!room.state.is_racing()); // retour au Lobby
+            assert_ne!(room.target_text, texte_avant); // nouveau texte pour la revanche
+        }
+
+        // L'owner peut relancer une course sur ce texte neuf.
+        start_race(&rooms, "c1", "p1");
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    }
+
+    #[test]
+    fn abandon_total_pendant_le_decompte_clot_immediatement() {
+        // issue #23 : personne n'a encore fini (voire tapé) — "pendant le décompte" côté
+        // serveur, puisqu'il n'y a pas d'état dédié pour ça (voir CONTEXT.md). Un
+        // spectateur qui reste EMPÊCHE la Room d'être retirée par le garde "vide" — sans
+        // le fix, elle resterait gelée en RaceState::Racing pour toujours (le bug décrit).
+        let rooms = new_rooms();
+        join_room(&rooms, "c1", "p1");
+        join_room(&rooms, "c1", "p2");
+        start_race(&rooms, "c1", "p1");
+        join_room(&rooms, "c1", "spectateur"); // rejoint après le départ, ne part jamais
+
+        leave_room(&rooms, "c1", "p1");
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing()); // p2 encore là
+
+        leave_room(&rooms, "c1", "p2"); // dernier PARTANT : clôture immédiate malgré le spectateur
+        assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+
+        // Utilisable de nouveau : l'owner (transféré au spectateur) peut relancer.
+        start_race(&rooms, "c1", "spectateur");
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    }
+
+    #[test]
+    fn abandon_partiel_classement_a_zero_pour_les_partants_jamais_finis() {
+        let rooms = new_rooms();
+        join_room(&rooms, "c1", "p1");
+        join_room(&rooms, "c1", "p2");
+        join_room(&rooms, "c1", "p3");
+        start_race(&rooms, "c1", "p1");
+        let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
+
+        assert_eq!(record_finish(&rooms, "c1", "p1", 80.0), FinishOutcome::Recorded);
+        leave_room(&rooms, "c1", "p2"); // abandonne sans finir
+        leave_room(&rooms, "c1", "p3"); // dernier partant restant : clôture
+
+        let mut finished_wpm = std::collections::HashMap::new();
+        let mut ranking = None;
+        while let Ok(ev) = rx.try_recv() {
+            match ev {
+                ServerEvent::PlayerFinished { player_id, wpm } => {
+                    finished_wpm.insert(player_id, wpm);
+                }
+                ServerEvent::RaceOver { ranking: r } => ranking = Some(r),
+                _ => {}
+            }
+        }
+        // p2 et p3 apparaissent à 0 WPM (pas de recompute sur log vide, valeur explicite).
+        assert_eq!(finished_wpm.get("p2"), Some(&0.0));
+        assert_eq!(finished_wpm.get("p3"), Some(&0.0));
+        assert_eq!(ranking, Some(s(&["p1", "p2", "p3"]))); // p1 (80) devant les abandons (0)
+    }
+
+    #[test]
+    fn abandon_ne_bloque_pas_une_revanche() {
+        let rooms = new_rooms();
+        join_room(&rooms, "c1", "p1");
+        join_room(&rooms, "c1", "p2");
+        start_race(&rooms, "c1", "p1");
+        leave_room(&rooms, "c1", "p1");
+        leave_room(&rooms, "c1", "p2");
+
+        // La Room a été retirée (vide), mais rejoindre en recrée une aussitôt utilisable.
+        join_room(&rooms, "c1", "p1");
+        join_room(&rooms, "c1", "p2");
+        start_race(&rooms, "c1", "p1");
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    }
+
+    #[test]
+    fn watchdog_clot_une_course_trop_longue_meme_si_tout_le_monde_est_encore_la() {
+        // issue #24 : contrairement à l'abandon "tout le monde est parti" (#23), le
+        // watchdog ferme même si des joueurs sont TOUJOURS connectés (silencieux depuis
+        // 10 min : perte réseau, crash — pas de LeaveRoom envoyé).
+        let rooms = new_rooms();
+        join_room(&rooms, "c1", "p1");
+        join_room(&rooms, "c1", "p2");
+        start_race(&rooms, "c1", "p1");
+        let start = match &rooms.lock().unwrap().get("c1").unwrap().state {
+            RaceState::Racing { start_at_epoch_ms, .. } => *start_at_epoch_ms,
+            RaceState::Lobby => panic!("pas en course"),
+        };
+        let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
+
+        close_overlong_races(&rooms, start + RACE_MAX_DURATION_MS - 1); // pas encore expiré
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+
+        close_overlong_races(&rooms, start + RACE_MAX_DURATION_MS + 1); // expiré
+        assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+
+        // p1 et p2 (jamais finis, toujours "connectés") apparaissent à 0 WPM.
+        let mut finished_wpm = std::collections::HashMap::new();
+        while let Ok(ev) = rx.try_recv() {
+            if let ServerEvent::PlayerFinished { player_id, wpm } = ev {
+                finished_wpm.insert(player_id, wpm);
+            }
+        }
+        assert_eq!(finished_wpm.get("p1"), Some(&0.0));
+        assert_eq!(finished_wpm.get("p2"), Some(&0.0));
+
+        // Room utilisable de nouveau (revanche).
+        start_race(&rooms, "c1", "p1");
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    }
+
+    #[test]
+    fn watchdog_ignore_les_rooms_en_lobby() {
+        let rooms = new_rooms();
+        join_room(&rooms, "c1", "p1");
+        close_overlong_races(&rooms, now_epoch_ms() + 100 * RACE_MAX_DURATION_MS);
+        assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing()); // toujours Lobby, intact
     }
 }

@@ -1,12 +1,12 @@
 // =============================================================================
 //  ui/practice.ts — écran de Practice (saisie libre, solo, MVP).
 //
-//  Machine d'état : idle → countdown(3s) → running → finished.
+//  Machine d'état : idle → running → finished.
 //  Câble le core/ pur : generateWithRng (texte seedé), RunClock (t=0 monotone),
 //  FreeInput (curseur libre, log brut). À la fin : api.submitRun → résultats.
 //
-//  t=0 = fin du décompte (PAS la 1re frappe). Le temps de réaction est compté, comme
-//  figé dans CONTEXT.md. Seul countdown→running appelle clock.start().
+//  t=0 = la 1re frappe (PAS de décompte en solo — ADR 0004, CONTEXT.md « Origine du
+//  temps »). Le temps de réaction n'est pas mesuré : personne d'autre n'attend.
 // =============================================================================
 
 import type { RunConfig, RunPhase, KeystrokeLog, Keystroke } from "../core/types";
@@ -17,22 +17,11 @@ import { generateWithRng, initialWordCount } from "../core/text-gen";
 import { generateDrillText } from "../core/text-gen/drill";
 import { Rng } from "../core/text-gen/rng";
 import { liveWpm, liveWpmZen } from "../live-stats";
-import { submitRun, fetchQuote, fetchProfileAnalysis } from "../api";
+import { submitRun, fetchQuote, fetchProfileAnalysis, isIdentityError, IDENTITY_ERROR_MESSAGE } from "../api";
 import { renderResults } from "./results";
 import { runReplay } from "./replay";
-
-/**
- * Libellés français des Modes (le reste de l'app est en français). Source unique :
- * barre de config, filtres et colonne « mode » de l'Historique. Les valeurs
- * `data-mode` restent en anglais — c'est le domaine, pas de l'affichage.
- */
-export const MODE_LABELS: Record<RunConfig["mode"], string> = {
-  time: "temps",
-  words: "mots",
-  quotes: "citations",
-  zen: "zen",
-  drill: "entraînement",
-};
+import { MODE_LABELS } from "./mode-labels";
+import { wordsHtml, zenHtml, slideWindow, placeCaret } from "./typing-zone";
 
 // 0 = Time infini (horloge désactivée, mots en flux continu, fin sur Shift+Enter).
 const TIME_VALUES = [15, 30, 60, 120, 0];
@@ -78,6 +67,8 @@ export class Practice {
   /** Texte en chargement asynchrone (Quote ou profil Drill) / échec du chargement. */
   private loadingText = false;
   private loadError = false;
+  /** true si le chargement raté est un problème d'identité (pas un service indisponible). */
+  private loadErrorIsIdentity = false;
   /** Drill sans profil : pas assez de données analysées pour cibler des Weak spots. */
   private drillNoProfile = false;
   /** Jeton anti-course : un reset() asynchrone obsolète (mode rechangé) s'auto-annule. */
@@ -122,6 +113,7 @@ export class Practice {
     this.quoteAuthor = undefined;
     this.quoteWikipediaUrl = undefined;
     this.loadError = false;
+    this.loadErrorIsIdentity = false;
     this.drillNoProfile = false;
 
     if (this.config.mode === "quotes") {
@@ -137,10 +129,11 @@ export class Practice {
         this.quoteAuthor = quote.author;
         this.quoteWikipediaUrl = quote.wikipediaUrl;
         this.targetWords = quote.text.split(" ").filter((w) => w.length > 0);
-      } catch {
+      } catch (e) {
         if (seq !== this.resetSeq) return;
         this.loadingText = false;
         this.loadError = true;
+        this.loadErrorIsIdentity = isIdentityError(e);
         this.render();
         return;
       }
@@ -162,10 +155,11 @@ export class Practice {
           return;
         }
         this.targetWords = generateDrillText(profile.weakSpots, new Rng(this.seed));
-      } catch {
+      } catch (e) {
         if (seq !== this.resetSeq) return;
         this.loadingText = false;
         this.loadError = true;
+        this.loadErrorIsIdentity = isIdentityError(e);
         this.render();
         return;
       }
@@ -201,33 +195,31 @@ export class Practice {
     this.renderWords();
   }
 
-  private startCountdown(): void {
-    if (this.phase !== "idle") return;
-    // Rien à taper encore : texte en chargement/erreur (Quote, profil Drill), ou Mode à
-    // texte cible sans mots (dont Drill sans profil). Zen n'a jamais de cible mais
-    // démarre quand même (le joueur tape librement).
-    if (this.loadingText) return;
-    if (this.targetWords.length === 0 && this.config.mode !== "zen") return;
-    this.phase = "countdown";
-    let n = 3;
-    this.renderCountdown(n);
-    const tick = () => {
-      n -= 1;
-      if (n <= 0) {
-        this.beginRun();
-        return;
-      }
-      this.renderCountdown(n);
-      window.setTimeout(tick, 1000);
-    };
-    window.setTimeout(tick, 1000);
+  /** true si une frappe peut démarrer le Run (texte prêt, ou Zen qui n'en a pas besoin). */
+  private canStart(): boolean {
+    if (this.phase !== "idle" || this.loadingText) return false;
+    return this.targetWords.length > 0 || this.config.mode === "zen";
   }
 
-  private beginRun(): void {
+  /** 1re frappe : t=0 ici (pas de décompte en solo — ADR 0004), et elle compte déjà. */
+  private beginRun(e: KeyboardEvent): void {
     this.phase = "running";
     this.clock.start(); // t=0
     this.render();
     this.loop();
+    this.handleTypingKey(e);
+  }
+
+  private handleTypingKey(e: KeyboardEvent): void {
+    const k: Keystroke | null = this.controller.handleKey(e.key, e.ctrlKey, this.clock.elapsed());
+    if (k) this.log.push(k);
+    if (!this.isEndless() && this.controller.isComplete()) {
+      void this.finish();
+      return;
+    }
+    this.retopIfNeeded(); // Time infini : réalimente si le curseur approche du bout.
+    this.renderWords();
+    this.updateLiveBar(this.clock.elapsed());
   }
 
   /** Boucle d'affichage : compteur live + fin de Run en mode Time. */
@@ -236,7 +228,7 @@ export class Practice {
     const elapsed = this.clock.elapsed();
 
     if (this.config.mode === "time" && this.config.modeValue > 0 && elapsed >= this.config.modeValue * 1000) {
-      this.finish();
+      void this.finish();
       return;
     }
 
@@ -250,14 +242,21 @@ export class Practice {
     this.phase = "finished";
     const endedAtMs = this.clock.started ? this.clock.elapsed() : 0;
 
-    const res = await submitRun({
-      config: this.config,
-      seed: this.seed,
-      targetText: this.targetWords.join(" "),
-      quoteId: this.config.mode === "quotes" ? this.quoteId : undefined,
-      keystrokes: this.log,
-      endedAtMs,
-    });
+    let res: Awaited<ReturnType<typeof submitRun>>;
+    try {
+      res = await submitRun({
+        config: this.config,
+        seed: this.seed,
+        targetText: this.targetWords.join(" "),
+        quoteId: this.config.mode === "quotes" ? this.quoteId : undefined,
+        keystrokes: this.log,
+        endedAtMs,
+      });
+    } catch (e) {
+      // Le log (this.log) n'est pas touché : "réessayer" relance finish() avec les mêmes frappes.
+      this.renderSubmitError(isIdentityError(e) ? "auth" : "network");
+      return;
+    }
 
     const attribution =
       this.config.mode === "quotes" && this.quoteAuthor
@@ -294,37 +293,28 @@ export class Practice {
       return;
     }
 
+    const isTypingKey = e.key === "Backspace" || e.key === " " || e.key.length === 1;
+
     if (this.phase === "idle") {
-      // Première interaction clavier → lance le décompte (sauf modificateurs seuls).
-      if (e.key.length === 1 || e.key === "Enter") {
-        e.preventDefault();
-        this.startCountdown();
-      }
+      // 1re frappe → démarre le Run directement (pas de décompte en solo — ADR 0004).
+      if (!this.canStart() || !isTypingKey) return;
+      e.preventDefault();
+      this.beginRun(e);
       return;
     }
 
-    if (this.phase !== "running") return; // countdown : on ignore les frappes
+    if (this.phase !== "running") return;
 
     // Shift+Enter termine Zen / Time infini (pas de fin naturelle).
     if (e.key === "Enter" && e.shiftKey) {
       e.preventDefault();
-      this.finish();
+      void this.finish();
       return;
     }
 
-    if (e.key === "Backspace" || e.key === " " || e.key.length === 1) {
+    if (isTypingKey) {
       e.preventDefault();
-      const k: Keystroke | null = this.controller.handleKey(e.key, e.ctrlKey, this.clock.elapsed());
-      if (k) this.log.push(k);
-
-      // Endless (Zen / Time infini) : jamais de fin naturelle → seul Shift+Enter termine.
-      if (!this.isEndless() && this.controller.isComplete()) {
-        this.finish();
-        return;
-      }
-      this.retopIfNeeded(); // Time infini : réalimente si le curseur approche du bout.
-      this.renderWords();
-      this.updateLiveBar(this.clock.elapsed());
+      this.handleTypingKey(e);
     }
   }
 
@@ -344,7 +334,9 @@ export class Practice {
     `;
     this.wireConfigBar();
     const wordsEl = this.root.querySelector<HTMLElement>("#words")!;
-    wordsEl.addEventListener("click", () => this.startCountdown());
+    // Le clic ne démarre plus rien lui-même (t=0 = 1re frappe, ADR 0004) : il ne fait
+    // que donner le focus, la frappe qui suit démarre le Run.
+    wordsEl.addEventListener("click", () => wordsEl.focus());
     // Le passage en `running` repasse par render() : sans ceci le bloc resterait
     // caché et le 1er caractère (qui s'inverse sous lui) serait invisible.
     placeCaret(wordsEl);
@@ -353,34 +345,29 @@ export class Practice {
   private renderWords(): void {
     const el = this.root.querySelector<HTMLElement>("#words");
     if (!el) return;
-    el.innerHTML = this.config.mode === "zen" ? this.zenHtml() : this.wordsHtml();
-    this.slideWindow(el);
+    const view = this.controller.view();
+    el.innerHTML =
+      this.config.mode === "zen" ? zenHtml(view, this.phase === "running") : wordsHtml(this.targetWords, view, this.phase === "running");
+    // Zen : pas de cible, le mot actif (pour la fenêtre glissante) est le dernier tapé.
+    slideWindow(el, this.config.mode === "zen" ? view.lockedWords.length : view.wordIndex);
     placeCaret(el); // après slideWindow : la position du bloc dépend du scrollTop.
   }
 
-  /**
-   * Fenêtre glissante de 3 lignes (style Monkeytype) : après chaque rendu, garde la
-   * ligne du mot actif au MILIEU. Le conteneur est clippé par le CSS (max-height +
-   * overflow hidden) ; on le fait défiler programmatiquement par lignes entières.
-   * Marche avec le wrap dynamique et le flux continu du Time infini : on mesure
-   * l'offsetTop réel du mot actif après rendu, on ne compte pas les mots par ligne.
-   */
-  private slideWindow(container: HTMLElement): void {
-    const words = container.querySelectorAll<HTMLElement>(".word");
-    if (words.length === 0) return;
-    // Zen : pas de cible, le mot actif est le dernier tapé.
-    const active =
-      this.config.mode === "zen"
-        ? words[words.length - 1]
-        : words[Math.min(this.controller.view().wordIndex, words.length - 1)];
-    const lineHeight = parseFloat(getComputedStyle(container).lineHeight);
-    if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
-    container.scrollTop = windowScrollTop(active.offsetTop, lineHeight);
-  }
-
-  private renderCountdown(n: number): void {
-    const el = this.root.querySelector<HTMLElement>("#words");
-    if (el) el.innerHTML = `<div class="countdown">${n}</div>`;
+  /** POST /api/runs raté : le Run (this.log) reste en mémoire, "réessayer" relance finish(). */
+  private renderSubmitError(kind: "auth" | "network"): void {
+    const msg =
+      kind === "auth"
+        ? "Session Discord expirée — reviens depuis le menu Discord puis réessaie."
+        : "Envoi impossible (backend injoignable). Tes frappes sont gardées : réessaie.";
+    this.root.innerHTML = `
+      <section class="results">
+        <p class="hint">${msg}</p>
+        <button id="retrySubmit" class="primary">Réessayer</button>
+      </section>
+    `;
+    this.root
+      .querySelector<HTMLButtonElement>("#retrySubmit")!
+      .addEventListener("click", () => void this.finish());
   }
 
   private updateLiveBar(elapsed: number): void {
@@ -421,38 +408,21 @@ export class Practice {
       return `<div class="loading">${drill ? "Analyse de tes dernières courses…" : "Chargement d'une citation…"}</div>`;
     if (this.drillNoProfile)
       return `<div class="loading">Pas encore assez de données pour cibler tes faiblesses — joue d'abord quelques courses (time, words…), puis reviens ici.</div>`;
-    if (this.loadError)
-      return `<div class="loading">${drill ? "Impossible de charger ton profil." : "Impossible de charger la citation."} Tab pour réessayer.</div>`;
-    if (this.config.mode === "zen") return this.zenHtml();
-    return this.wordsHtml();
-  }
-
-  private wordsHtml(): string {
-    const view = this.controller.view();
-    return this.targetWords
-      .map((target, i) => {
-        if (i < view.lockedWords.length) return renderWord(target, view.lockedWords[i], false);
-        if (i === view.wordIndex) return renderWord(target, view.typed, this.phase === "running");
-        return renderWord(target, "", false);
-      })
-      .join("");
-  }
-
-  /**
-   * Rendu du Mode Zen : aucun texte cible à l'écran, on affiche uniquement ce que le
-   * joueur tape (tout est « correct » — miroir de replay_zen). Le curseur suit le buffer.
-   */
-  private zenHtml(): string {
-    if (this.phase === "idle") {
-      return `<div class="loading">Zen · tape librement — Shift+Enter pour terminer.</div>`;
+    if (this.loadError) {
+      const base = this.loadErrorIsIdentity
+        ? IDENTITY_ERROR_MESSAGE
+        : drill
+          ? "Impossible de charger ton profil."
+          : "Impossible de charger la citation.";
+      return `<div class="loading">${base} Tab pour réessayer.</div>`;
     }
     const view = this.controller.view();
-    const caret = this.phase === "running" ? `<span class="caret"></span>` : "";
-    const words = view.lockedWords
-      .map((w) => `<span class="word"><span class="correct">${escapeText(w)}</span></span> `)
-      .join("");
-    const current = `<span class="word"><span class="correct">${escapeText(view.typed)}</span>${caret}</span>`;
-    return words + current;
+    if (this.config.mode === "zen") {
+      // Idle : rien encore tapé, le placeholder invite à démarrer plutôt que le rendu Zen vide.
+      if (this.phase === "idle") return `<div class="loading">Zen · tape librement — Shift+Enter pour terminer.</div>`;
+      return zenHtml(view, this.phase === "running");
+    }
+    return wordsHtml(this.targetWords, view, this.phase === "running");
   }
 
   private hintText(): string {
@@ -537,71 +507,4 @@ export class Practice {
       .querySelector<HTMLButtonElement>("[data-nav]")
       ?.addEventListener("click", () => this.onExit?.());
   }
-}
-
-/**
- * Défilement (px) qui garde la ligne du mot actif au MILIEU des 3 lignes visibles :
- * lignes 0 et 1 → pas de défilement ; ligne n ≥ 2 → (n-1) lignes masquées en haut
- * (le curseur ne touche jamais la ligne du bas). Pure — testée dans practice.test.ts.
- * `wordTop` = offsetTop du mot actif (arrondi par le DOM, d'où le Math.round).
- */
-export function windowScrollTop(wordTop: number, lineHeight: number): number {
-  const line = Math.round(wordTop / lineHeight);
-  return Math.max(0, line - 1) * lineHeight;
-}
-
-/** Rend un mot caractère par caractère (correct / incorrect / extra / untyped + curseur). */
-export function renderWord(target: string, typed: string, withCaret: boolean): string {
-  const spans: string[] = [];
-  const len = Math.max(target.length, typed.length);
-  for (let i = 0; i < len; i++) {
-    // Curseur bloc : le caractère RECOUVERT porte .at-cursor et s'inverse (couleur
-    // du fond sur le corail, 7:1) — c'est ce qui le garde lisible sous le bloc.
-    const cur = withCaret && i === typed.length ? " at-cursor" : "";
-    if (i < typed.length) {
-      const cls = i >= target.length ? "extra" : typed[i] === target[i] ? "correct" : "incorrect";
-      spans.push(`<span class="${cls}${cur}">${escapeChar(typed[i])}</span>`);
-    } else {
-      spans.push(`<span class="untyped${cur}">${escapeChar(target[i])}</span>`);
-    }
-  }
-  // Curseur au-delà du dernier caractère : aucun glyphe à recouvrir, on laisse un
-  // repère de largeur nulle (le bloc garde sa dernière largeur mesurée).
-  if (withCaret && typed.length >= len) spans.push(`<span class="caret"></span>`);
-  return `<span class="word">${spans.join("")}</span> `;
-}
-
-/**
- * Place le curseur bloc sur le caractère courant de `container` (.words). Le bloc
- * est un élément UNIQUE, frère de .words (les rendus font `innerHTML =`, qui
- * détruirait un enfant et annulerait sa transition) : on ne fait que le déplacer,
- * le glissement est la `transition: transform` du CSS.
- */
-export function placeCaret(container: HTMLElement): void {
-  const block = container.parentElement?.querySelector<HTMLElement>(".caret-block");
-  if (!block) return;
-  const anchor = container.querySelector<HTMLElement>(".at-cursor, .caret");
-  block.style.opacity = anchor ? "1" : "0";
-  if (!anchor) return;
-  // ponytail: en fin de mot l'ancre est vide (0×0) → on garde les dernières
-  // mesures. La zone de frappe est en mono : tous les glyphes ont la même boîte.
-  if (anchor.offsetWidth) block.style.width = `${anchor.offsetWidth}px`;
-  if (anchor.offsetHeight) block.style.height = `${anchor.offsetHeight}px`;
-  const x = container.offsetLeft + anchor.offsetLeft;
-  const y = container.offsetTop + anchor.offsetTop - container.scrollTop;
-  block.style.transform = `translate(${x}px, ${y}px)`;
-}
-
-function escapeChar(ch: string): string {
-  if (ch === "<") return "&lt;";
-  if (ch === ">") return "&gt;";
-  if (ch === "&") return "&amp;";
-  return ch;
-}
-
-/** Échappe une chaîne entière (Zen : le texte tapé par le joueur). */
-export function escapeText(s: string): string {
-  let out = "";
-  for (const ch of s) out += escapeChar(ch);
-  return out;
 }

@@ -6,7 +6,8 @@
 //  Toute modification ici doit être répercutée à l'identique côté Rust.
 //
 //  Règles de calcul figées (issues du grilling) :
-//   - t=0  = fin du compte à rebours (PAS la 1re frappe). Horloge monotone.
+//   - t=0  = 1re frappe en solo, `RaceStart` en multijoueur (pas de décompte en solo —
+//            ADR 0004). Horloge monotone.
 //   - WPM  = chars corrects à l'ÉTAT FINAL ÷ 5 ÷ minutes (style Monkeytype).
 //   - ACC  = frappes correctes ÷ total frappes, PAR FRAPPE. Backspace neutre.
 //            Extra (au-delà du mot) = frappe incorrecte.
@@ -58,7 +59,7 @@ export type ControlKey = "backspace" | "backspace-word";
  * Un événement clavier brut. Format minimal (option A du grilling).
  *  - frappe de caractère : { t, k: "a" }     (espace inclus, k = " ")
  *  - contrôle            : { t, k: "", ctrl: "backspace" }
- * `t` est en millisecondes depuis t=0 (fin du compte à rebours).
+ * `t` est en millisecondes depuis t=0 (1re frappe en solo, `RaceStart` en Race).
  */
 export interface Keystroke {
   t: number;
@@ -77,8 +78,7 @@ export type KeystrokeLog = Keystroke[];
 
 export type RunPhase =
   | "idle" // écran de config, rien de démarré
-  | "countdown" // compte à rebours de 3 s avant t=0
-  | "running" // le joueur tape ; le log se remplit
+  | "running" // le joueur tape (dès la 1re frappe, pas de décompte en solo — ADR 0004) ; le log se remplit
   | "finished"; // terminé ; on attend / affiche le scoreboard autoritaire
 
 export interface RunState {
@@ -178,10 +178,10 @@ export interface SubmitRunRequest {
   quoteId?: string;
   keystrokes: KeystrokeLog;
   /**
-   * Instant de fin du Run, en ms depuis t=0. Le serveur s'en sert pour les durées
-   * que le log seul ne révèle pas : Zen et Time infini finissent sur Shift+Enter
-   * (qui n'est pas une frappe). Pour Time fini la durée = modeValue (le serveur ignore
-   * cette valeur) ; pour Words/Quotes le serveur la recoupe avec l'instant de complétion.
+   * Instant de fin du Run, en ms depuis t=0 (indicatif). Le serveur NE LUI FAIT PAS
+   * CONFIANCE pour la durée autoritaire : falsifiable, il l'ignore. Pour Time fini la
+   * durée = modeValue ; sinon elle est dérivée du dernier timestamp du log de frappes
+   * (source faisant foi), bornée pour éviter un Run "aberrant".
    */
   endedAtMs: number;
 }

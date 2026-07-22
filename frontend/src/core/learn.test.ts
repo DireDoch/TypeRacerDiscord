@@ -3,16 +3,16 @@
 // =============================================================================
 
 import { describe, expect, it } from "vitest";
-import { generateLessonText, requiredAccuracy, LESSONS } from "./learn";
+import { generateLessonExercise, generateLessonText, requiredAccuracy, LESSONS } from "./learn";
 import { Rng } from "./text-gen/rng";
 
 describe("requiredAccuracy (barème statique par tranches)", () => {
-  it("leçons 1–10 indulgentes, tranches suivantes plus strictes", () => {
+  it("leçons 1–5 indulgentes, tranches suivantes plus strictes", () => {
     expect(requiredAccuracy(0)).toBe(70);
-    expect(requiredAccuracy(9)).toBe(70);
-    expect(requiredAccuracy(10)).toBe(80);
-    expect(requiredAccuracy(19)).toBe(80);
-    expect(requiredAccuracy(20)).toBe(90);
+    expect(requiredAccuracy(4)).toBe(70);
+    expect(requiredAccuracy(5)).toBe(80);
+    expect(requiredAccuracy(9)).toBe(80);
+    expect(requiredAccuracy(10)).toBe(90);
     expect(requiredAccuracy(99)).toBe(90);
   });
 });
@@ -33,14 +33,22 @@ describe("generateLessonText", () => {
   });
 });
 
-describe("LESSONS (socle)", () => {
-  it("2–3 leçons complètes : titre, contenu, touches, exercice", () => {
+describe("LESSONS (cursus complet)", () => {
+  it("chaque leçon : titre, contenu, jeu de touches ou mots, exercice", () => {
     expect(LESSONS.length).toBeGreaterThanOrEqual(2);
     for (const l of LESSONS) {
       expect(l.title.length).toBeGreaterThan(0);
       expect(l.content.length).toBeGreaterThan(0);
-      expect(l.keys.length).toBeGreaterThan(0);
       expect(l.tokens).toBeGreaterThan(0);
+      // Une leçon `words` tire de la word-list (keys vide, volontaire) ; sinon touches fixes.
+      expect(l.words ? l.keys.length === 0 : l.keys.length > 0).toBe(true);
+    }
+  });
+
+  it("generateLessonExercise produit `tokens` jetons pour chaque leçon, y compris `words`", () => {
+    for (const l of LESSONS) {
+      const ex = generateLessonExercise(l, new Rng(1));
+      expect(ex).toHaveLength(l.tokens);
     }
   });
 });

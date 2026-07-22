@@ -61,6 +61,7 @@ async fn main() {
     let identity = Arc::new(Identity::new(DiscordConfig::from_env()));
     let quotes = Arc::new(QuoteClient::from_env());
     let rooms = ws::new_rooms();
+    ws::spawn_watchdog(rooms.clone()); // clôt les courses anormalement longues (issue #24)
     let state = AppState { pool, identity, quotes, rooms };
 
     // Build statique de Vite (origine unique). Surcoûtable via STATIC_DIR.
@@ -143,7 +144,6 @@ async fn submit_run(
         mode_value: req.config.mode_value,
         target_text: req.target_text,
         keystrokes: req.keystrokes,
-        ended_at_ms: req.ended_at_ms,
     });
 
     // PB précédent du bucket (avant insertion) → verdict.

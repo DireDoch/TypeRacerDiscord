@@ -10,13 +10,13 @@
 // =============================================================================
 
 import type { Keystroke, KeystrokeLog } from "../core/types";
-import { LESSONS, generateLessonText, requiredAccuracy } from "../core/learn";
+import { LESSONS, generateLessonExercise, requiredAccuracy } from "../core/learn";
 import { Rng, randomSeed } from "../core/text-gen/rng";
 import { FreeInput } from "../core/input/free-input";
 import type { InputController } from "../core/input/controller";
 import { computeScoreboard } from "../core/stats/scoreboard";
 import { fetchLearnProgress, submitLearnProgress } from "../api";
-import { renderWord, placeCaret } from "./practice";
+import { wordsHtml, placeCaret } from "./typing-zone";
 
 export class Learn {
   private view: "list" | "lesson" = "list";
@@ -76,7 +76,7 @@ export class Learn {
 
   private startExercise(): void {
     const lesson = LESSONS[this.lessonIndex];
-    this.targetWords = generateLessonText(lesson.keys, lesson.tokens, new Rng(randomSeed()));
+    this.targetWords = generateLessonExercise(lesson, new Rng(randomSeed()));
     this.controller = new FreeInput(this.targetWords);
     this.log = [];
     this.startedAt = null;
@@ -100,21 +100,20 @@ export class Learn {
       const k: Keystroke | null = this.controller.handleKey(e.key, e.ctrlKey, t);
       if (k) this.log.push(k);
       if (this.controller.isComplete()) {
-        this.finishExercise(t);
+        this.finishExercise();
         return;
       }
       this.renderWords();
     }
   }
 
-  private finishExercise(endedAtMs: number): void {
+  private finishExercise(): void {
     // Réutilise la référence locale de l'algo : seule l'accuracy (par frappe) gate.
     const sb = computeScoreboard({
       mode: "words",
       modeValue: this.targetWords.length,
       targetText: this.targetWords.join(" "),
       keystrokes: this.log,
-      endedAtMs,
     });
     const passed = sb.accuracy >= requiredAccuracy(this.lessonIndex);
     this.result = { accuracy: sb.accuracy, passed };
@@ -166,9 +165,9 @@ export class Learn {
     return `
       <h2>${this.lessonIndex + 1}. ${lesson.title}</h2>
       ${content}
-      <p class="hint">Exercice — touches : <strong>${lesson.keys.join(" ")}</strong> · accuracy requise : ≥ ${requiredAccuracy(this.lessonIndex)}% · la vitesse ne compte pas.</p>
+      <p class="hint">Exercice — ${lesson.words ? "mots complets" : `touches : <strong>${lesson.keys.join(" ")}</strong>`} · accuracy requise : ≥ ${requiredAccuracy(this.lessonIndex)}% · la vitesse ne compte pas.</p>
       <div class="words-wrap">
-        <div class="words" id="words">${this.result ? "" : this.wordsHtml()}</div>
+        <div class="words" id="words">${this.result ? "" : this.wordsAreaHtml()}</div>
         <div class="caret-block"></div>
       </div>
       ${this.result ? this.resultHtml() : `<p class="hint">Tape pour commencer · Tab pour un autre exercice</p>`}
@@ -186,22 +185,15 @@ export class Learn {
     return `<p><strong>${r.accuracy}%</strong> d'accuracy — leçon complétée ! 🎉 ${next}</p>`;
   }
 
-  private wordsHtml(): string {
-    const view = this.controller.view();
-    const running = this.startedAt !== null;
-    return this.targetWords
-      .map((target, i) => {
-        if (i < view.lockedWords.length) return renderWord(target, view.lockedWords[i], false);
-        if (i === view.wordIndex) return renderWord(target, view.typed, running || i === 0);
-        return renderWord(target, "", false);
-      })
-      .join("");
+  private wordsAreaHtml(): string {
+    // Le curseur reste visible dès l'idle (avant la 1re frappe) : ça invite à démarrer.
+    return wordsHtml(this.targetWords, this.controller.view(), true);
   }
 
   private renderWords(): void {
     const el = this.root.querySelector<HTMLElement>("#words");
     if (!el) return;
-    el.innerHTML = this.wordsHtml();
+    el.innerHTML = this.wordsAreaHtml();
     placeCaret(el);
   }
 

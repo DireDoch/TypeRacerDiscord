@@ -75,7 +75,7 @@ A Practice Mode whose text targets the Player's current Weak spots: a short warm
 _Avoid_: Practice mode, Training, Exercise mode.
 
 **Quote**:
-The fixed text fetched for a Quotes Run (text + author), via the Rust quote proxy. Settings and length controls do not apply — the Player types the whole Quote. The author name builds a "learn more" link to that author's Wikipedia page.
+The fixed text fetched for a Quotes Run (text + author), via the Rust quote proxy. Settings and length controls do not apply — the Player types the whole Quote. The author name builds a "learn more" link to that author's Wikipedia page. Quote length varies Run to Run but the Config bucket doesn't capture it, so Quotes never produce a PB (same rule as Drill: uncaptured text variation makes Runs incomparable).
 _Avoid_: Citation, Passage.
 
 **Lesson**:
@@ -121,15 +121,25 @@ Option « événements bruts » : liste ordonnée de `{ t, k, ctrl? }`. `t` = ms
 uniquement (pas de navigation au curseur). Voir `frontend/src/core/types.ts`.
 
 **Origine du temps (t=0).**
-t=0 = fin du compte à rebours de 3 s (PAS la 1re frappe). Horloge **monotone**
-(`performance.now()`, jamais `Date.now()`). Le temps de réaction est compté. En solo
-t=0 est un événement local ; en Phase 2 ce sera le `RaceStart` serveur — seul
-`RunClock.start()` (`core/clock.ts`) bascule.
+Horloge **monotone** (`performance.now()`, jamais `Date.now()`), seul `RunClock.start()`
+(`core/clock.ts`) bascule — mais l'événement qui déclenche t=0 dépend du contexte, et donc
+ce que mesure le temps de réaction aussi :
+- **Solo** (Practice, Apprendre) : t=0 = la **1re frappe** du Player. Pas de décompte, pas
+  de délai imposé ; le temps de réaction n'est **pas** mesuré (il n'y a personne d'autre à
+  attendre). Décision explicite — voir `Docs/adr/0004-solo-sans-decompte.md`.
+- **Multijoueur** (Race) : t=0 = `RaceStart`, l'événement serveur qui synchronise tous les
+  Players. Un décompte local de 3 s le précède (texte visible en entier pendant l'attente,
+  jamais masqué) ; le temps de réaction (RaceStart → 1re frappe) **est** compté — il reflète
+  la réactivité du Player face à un signal partagé, pas un artefact de mesure.
+
+Solo et Race ne mesurent donc pas la même chose et ne sont **jamais comparés entre eux**
+pour un PB (Race est déjà exclu des PB — fin stricte, texte 100 % exact).
 
 **Borne de fin / durée.**
 Time fini = `modeValue` (durée fixe). Words/Quotes = instant de complétion du dernier
-caractère cible (terminer plus vite ⇒ meilleur WPM). Zen / Time infini = instant du
-`Shift+Enter`, transmis par le client via `endedAtMs` dans `POST /api/runs`.
+caractère cible (terminer plus vite ⇒ meilleur WPM). Zen / Time infini = dernier `t` du
+Keystroke log — jamais une valeur fournie par le client (`endedAtMs` est indicatif
+seulement, voir `POST /api/runs`) : le serveur ne lui fait pas confiance pour la durée.
 
 **Modèle de curseur (saisie libre).**
 Curseur **libre** : le backspace peut revenir dans les mots précédents, **qu'ils contiennent
@@ -215,8 +225,8 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
 **Frontend (`frontend/`).**
 - `core/` domaine pur, testé (clock, types, input `free`/`blocking`-stub, text-gen seedé,
   `stats/scoreboard`) — la **référence** de l'algo.
-- UI Practice (`src/ui/`, `main.ts`, Vite) : machine d'état idle→countdown→running→finished,
-  graphe chart.js. Lancement `npm run dev`.
+- UI Practice (`src/ui/`, `main.ts`, Vite) : machine d'état idle→running→finished (pas de
+  décompte en solo, t=0 = 1re frappe — ADR 0004), graphe chart.js. Lancement `npm run dev`.
 - `src/api.ts` branché sur le backend autoritaire : `submitRun` → `POST /api/runs` avec header
   `Authorization: Bearer <token>` ; `fetchQuote` → `GET /api/quote`. Le recompute local reste
   la **référence** (tests de parité), plus le chemin de prod.
@@ -231,14 +241,16 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
 - Écran **Race** (`ui/race.ts`) : lobby (cartes de présence, owner 👑), décompte 3 s avec
   texte entier, barres live, classement, revanche. Écran **Menu** (`ui/menu.ts`) : hub
   d'arrivée + vue Options (liens légaux). Navigation par boutons avec `destroy()`.
-- Écran **Apprendre** (`ui/learn.ts`, entrée au menu) : socle du cursus (issue #4) —
-  liste des Lessons (verrouillée/disponible/complétée), 3 leçons réelles (posture + F/J,
-  rangée de base gauche/droite) dans `core/learn.ts` avec le **barème statique par
-  tranches** (70/80/90 % d'accuracy, modifiable en un seul endroit) et le générateur de
-  séquences seedé sur touches fixes (testé). L'exercice n'est PAS un Run (chrono à la
-  1re frappe, accuracy locale via la référence `scoreboard.ts`, jamais de POST /api/runs).
-  Progression par Player : `GET/POST /api/learn/progress` (table `learn_progress`,
-  migration `0004`, le serveur garde le MAX).
+- Écran **Apprendre** (`ui/learn.ts`, entrée au menu) : cursus complet (issues #4, #8) —
+  liste des Lessons (verrouillée/disponible/complétée), 13 leçons réelles dans
+  `core/learn.ts` (posture + F/J, rangées de base/haut/bas, majuscules, ponctuation,
+  chiffres, mots complets, fluidité) avec le **barème statique par tranches** (70/80/90 %
+  d'accuracy sur 0/5/10, modifiable en un seul endroit) et le générateur de séquences
+  seedé — sur touches fixes, ou vrais mots de la word-list pour les leçons `words`
+  (testé). L'exercice n'est PAS un Run (chrono à la 1re frappe, accuracy locale via la
+  référence `scoreboard.ts`, jamais de POST /api/runs). Progression par Player :
+  `GET/POST /api/learn/progress` (table `learn_progress`, migration `0004`, le serveur
+  garde le MAX).
 
 **Backend (`backend/`, Rust : Axum + sqlx/SQLite + reqwest).**
 - `domain/types.rs` (miroir de `types.ts`) + `domain/replay.rs` (port de `scoreboard.ts`,

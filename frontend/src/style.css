@@ -27,7 +27,7 @@
   --bg: #12161f; /* fond */
   --panel: #1b2230; /* cartes, pistes de jauge — 1,14:1 (séparation) */
   --text: #e8ecf4; /* texte À VENIR, valeurs — 15,3:1 (AAA) */
-  --sub: #6b7689; /* texte TAPÉ, libellés — 3,95:1 (AA-large) */
+  --sub: #96a0b5; /* texte TAPÉ, libellés — 6,9:1 (AA) */
   --main: #ff7a59; /* curseur, accent, leader — 7,1:1 (AAA) */
   --error: #ff4d6d; /* faute — 5,6:1 (AA) sur --bg */
 
@@ -370,6 +370,12 @@ button.primary:hover {
 }
 /* Race : TOUT le texte visible dès le décompte — pas de fenêtre, hauteur libre. */
 .race .words {
+  max-height: none;
+}
+/* Apprendre : ui/learn.ts ne pilote pas de fenêtre glissante (contrairement à
+   Practice/Replay) — même clip que Practice ferait taper le joueur en aveugle
+   au-delà de 3 lignes sur une Lesson longue (panneau réduit dans l'iframe Discord). */
+.learn .words {
   max-height: none;
 }
 

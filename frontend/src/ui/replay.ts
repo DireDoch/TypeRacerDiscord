@@ -3,15 +3,15 @@
 //
 //  Lecture simple (décision de grilling) : du début à la fin, à vitesse réelle,
 //  sans pause ni navigation. On re-nourrit un FreeInput NEUF avec les frappes du
-//  log à leurs timestamps d'origine ; le rendu réutilise renderWord/windowScrollTop
-//  de Practice — le Replay est donc visuellement identique à la saisie live,
-//  erreurs et corrections incluses. Aucun appel réseau : tout vient du log.
+//  log à leurs timestamps d'origine ; le rendu réutilise ui/typing-zone.ts (issue
+//  #21) — le Replay est donc visuellement identique à la saisie live, erreurs et
+//  corrections incluses. Aucun appel réseau : tout vient du log.
 // =============================================================================
 
 import type { KeystrokeLog } from "../core/types";
 import { FreeInput } from "../core/input/free-input";
-import type { InputController, InputView } from "../core/input/controller";
-import { renderWord, windowScrollTop, escapeText, placeCaret } from "./practice";
+import type { InputController } from "../core/input/controller";
+import { wordsHtml, zenHtml, slideWindow, placeCaret } from "./typing-zone";
 
 export interface ReplayOptions {
   /** Mots cibles du Run (l'array complet au moment du finish — Time infini inclus). */
@@ -90,12 +90,7 @@ export function runReplay(root: HTMLElement, opts: ReplayOptions): () => void {
     const view = controller.view();
     wordsEl.innerHTML = opts.zen ? zenHtml(view, playing) : wordsHtml(opts.targetWords, view, playing);
     // Même fenêtre glissante de 3 lignes que la saisie live (mot actif au milieu).
-    const words = wordsEl.querySelectorAll<HTMLElement>(".word");
-    const lineHeight = parseFloat(getComputedStyle(wordsEl).lineHeight);
-    if (words.length > 0 && Number.isFinite(lineHeight) && lineHeight > 0) {
-      const idx = opts.zen ? words.length - 1 : Math.min(view.wordIndex, words.length - 1);
-      wordsEl.scrollTop = windowScrollTop(words[idx].offsetTop, lineHeight);
-    }
+    slideWindow(wordsEl, opts.zen ? view.lockedWords.length : view.wordIndex);
     placeCaret(wordsEl); // après le défilement : la position dépend du scrollTop.
   }
 
@@ -126,24 +121,4 @@ export function runReplay(root: HTMLElement, opts: ReplayOptions): () => void {
 
   start();
   return stop;
-}
-
-/** Même rendu mot-à-mot que Practice.wordsHtml (correct/incorrect/extra + caret). */
-function wordsHtml(targetWords: string[], view: InputView, playing: boolean): string {
-  return targetWords
-    .map((target, i) => {
-      if (i < view.lockedWords.length) return renderWord(target, view.lockedWords[i], false);
-      if (i === view.wordIndex) return renderWord(target, view.typed, playing);
-      return renderWord(target, "", false);
-    })
-    .join("");
-}
-
-/** Miroir du rendu Zen de Practice : uniquement le texte tapé, tout « correct ». */
-function zenHtml(view: InputView, playing: boolean): string {
-  const caret = playing ? `<span class="caret"></span>` : "";
-  const words = view.lockedWords
-    .map((w) => `<span class="word"><span class="correct">${escapeText(w)}</span></span> `)
-    .join("");
-  return words + `<span class="word"><span class="correct">${escapeText(view.typed)}</span>${caret}</span>`;
 }

@@ -1,0 +1,178 @@
+{
+  "_comment": "Vecteurs de parité TS/Rust pour computeScoreboard/compute_scoreboard (issue #19). Lu par frontend/src/core/stats/scoreboard.test.ts ET backend/src/domain/replay.rs — ajouter un cas ici, ou en changer un chiffre, doit faire échouer les DEUX côtés s'ils divergent. Ne couvre PAS la divergence déjà connue (émoji en Zen, UTF-16 vs codepoints) : voir le test dédié 'divergence connue' dans chaque port.",
+  "cases": [
+    {
+      "name": "time_infini_ou_negatif_derive_du_log",
+      "_comment": "modeValue <= 0 sur Time (0 = infini, ou négatif = jamais validé côté client) : resolveDuration ne renvoie modeValue*1000 QUE si modeValue > 0, sinon dérive du dernier t du log (issue #11), toujours ≥ 0. L'issue #19 documentait une durée négative comme divergente (WPM négatif en TS) ; déjà clos par ce garde-fou — les deux ports s'accordent.",
+      "mode": "time",
+      "modeValue": -30,
+      "targetText": "the cat",
+      "keystrokes": [{ "t": 100, "k": "t" }],
+      "expected": { "wpm": 120, "durationMs": 100 }
+    },
+    {
+      "name": "perfect_the_cat",
+      "mode": "words",
+      "modeValue": 2,
+      "targetText": "the cat",
+      "keystrokes": [
+        { "t": 100, "k": "t" }, { "t": 200, "k": "h" }, { "t": 300, "k": "e" },
+        { "t": 400, "k": " " },
+        { "t": 500, "k": "c" }, { "t": 600, "k": "a" }, { "t": 700, "k": "t" }
+      ],
+      "expected": {
+        "wpm": 120, "raw": 120, "accuracy": 100,
+        "characters": { "correct": 7, "incorrect": 0, "extra": 0, "missed": 0 },
+        "durationMs": 700, "pbEligible": true
+      }
+    },
+    {
+      "name": "faute_interne_cxt",
+      "mode": "words",
+      "modeValue": 1,
+      "targetText": "cat",
+      "keystrokes": [{ "t": 100, "k": "c" }, { "t": 200, "k": "x" }, { "t": 300, "k": "t" }],
+      "expected": {
+        "wpm": 80, "raw": 120, "accuracy": 66.7,
+        "characters": { "correct": 2, "incorrect": 1, "extra": 0, "missed": 0 },
+        "durationMs": 300, "pbEligible": true
+      }
+    },
+    {
+      "name": "extra_hixx",
+      "mode": "words",
+      "modeValue": 1,
+      "targetText": "hi",
+      "keystrokes": [
+        { "t": 100, "k": "h" }, { "t": 200, "k": "i" }, { "t": 300, "k": "x" }, { "t": 400, "k": "x" }
+      ],
+      "expected": {
+        "wpm": 60, "raw": 120, "accuracy": 50,
+        "characters": { "correct": 2, "incorrect": 2, "extra": 2, "missed": 0 },
+        "durationMs": 400, "pbEligible": true
+      }
+    },
+    {
+      "name": "curseur_libre_correction_mot_anterieur",
+      "mode": "words",
+      "modeValue": 2,
+      "targetText": "ab cd",
+      "keystrokes": [
+        { "t": 100, "k": "x" }, { "t": 200, "k": "b" }, { "t": 300, "k": " " },
+        { "t": 400, "k": "", "ctrl": "backspace" },
+        { "t": 500, "k": "", "ctrl": "backspace" },
+        { "t": 600, "k": "", "ctrl": "backspace" },
+        { "t": 700, "k": "a" }, { "t": 800, "k": "b" }, { "t": 900, "k": " " },
+        { "t": 1000, "k": "c" }, { "t": 1100, "k": "d" }
+      ],
+      "expected": {
+        "wpm": 54.5, "accuracy": 87.5,
+        "characters": { "correct": 7, "incorrect": 1, "extra": 0, "missed": 0 },
+        "durationMs": 1100, "pbEligible": true
+      }
+    },
+    {
+      "name": "missed_espace_anticipe",
+      "mode": "words",
+      "modeValue": 2,
+      "targetText": "cat dog",
+      "keystrokes": [
+        { "t": 100, "k": "c" }, { "t": 200, "k": "a" }, { "t": 300, "k": " " },
+        { "t": 400, "k": "d" }, { "t": 500, "k": "o" }, { "t": 600, "k": "g" }
+      ],
+      "expected": {
+        "characters": { "correct": 6, "incorrect": 0, "extra": 0, "missed": 1 },
+        "durationMs": 600, "pbEligible": true
+      }
+    },
+    {
+      "name": "serie_par_seconde_et_burst",
+      "mode": "words",
+      "modeValue": 3,
+      "targetText": "aa bb cc",
+      "keystrokes": [
+        { "t": 100, "k": "a" }, { "t": 200, "k": "a" }, { "t": 300, "k": " " },
+        { "t": 1100, "k": "b" }, { "t": 1200, "k": "b" }, { "t": 1300, "k": " " },
+        { "t": 2100, "k": "c" }, { "t": 2200, "k": "c" }
+      ],
+      "expected": {
+        "durationMs": 2200, "pbEligible": true,
+        "perSecond": [
+          { "t": 1, "wpm": 36, "raw": 36, "errors": 0, "burst": 120 },
+          { "t": 2, "wpm": 36, "raw": 36, "errors": 0, "burst": 120 },
+          { "t": 2.2, "wpm": 43.6, "raw": 43.6, "errors": 0, "burst": 240 }
+        ]
+      }
+    },
+    {
+      "name": "zen_acc_100_exclu_pb",
+      "mode": "zen",
+      "modeValue": 0,
+      "targetText": "",
+      "keystrokes": [
+        { "t": 100, "k": "a" }, { "t": 200, "k": "b" }, { "t": 300, "k": "c" },
+        { "t": 400, "k": " " },
+        { "t": 500, "k": "d" }, { "t": 600, "k": "e" }, { "t": 700, "k": "f" }
+      ],
+      "expected": {
+        "wpm": 120, "accuracy": 100,
+        "characters": { "correct": 7, "incorrect": 0, "extra": 0, "missed": 0 },
+        "durationMs": 700, "pbEligible": false
+      }
+    },
+    {
+      "name": "zen_retour_arriere_etat_visible",
+      "mode": "zen",
+      "modeValue": 0,
+      "targetText": "",
+      "keystrokes": [
+        { "t": 100, "k": "t" }, { "t": 200, "k": "e" }, { "t": 300, "k": "h" },
+        { "t": 400, "k": "", "ctrl": "backspace" },
+        { "t": 500, "k": "", "ctrl": "backspace" },
+        { "t": 600, "k": "h" }, { "t": 700, "k": "e" }
+      ],
+      "expected": {
+        "wpm": 51.4, "raw": 85.7, "accuracy": 100,
+        "characters": { "correct": 5, "incorrect": 0, "extra": 0, "missed": 0 },
+        "durationMs": 700, "pbEligible": false
+      }
+    },
+    {
+      "name": "backspace_word_efface_le_mot_verrouille_entier",
+      "_comment": "Couvre Ctrl+Backspace (issue #19 : non exercé dans aucun des deux ports). 'xyz' verrouillé par erreur sur 'cat', puis Ctrl+Backspace le supprime entièrement avant de retaper juste.",
+      "mode": "words",
+      "modeValue": 2,
+      "targetText": "cat dog",
+      "keystrokes": [
+        { "t": 100, "k": "x" }, { "t": 200, "k": "y" }, { "t": 300, "k": "z" },
+        { "t": 400, "k": " " },
+        { "t": 500, "k": "", "ctrl": "backspace-word" },
+        { "t": 600, "k": "c" }, { "t": 700, "k": "a" }, { "t": 800, "k": "t" },
+        { "t": 900, "k": " " },
+        { "t": 1000, "k": "d" }, { "t": 1100, "k": "o" }, { "t": 1200, "k": "g" }
+      ],
+      "expected": {
+        "wpm": 70, "raw": 110, "accuracy": 72.7,
+        "characters": { "correct": 8, "incorrect": 3, "extra": 0, "missed": 0 },
+        "durationMs": 1200, "pbEligible": true
+      }
+    },
+    {
+      "name": "plafond_du_buffer_extra_ne_grandit_plus_au_dela_du_cap",
+      "_comment": "Couvre max_buffer (issue #19 : non testé nulle part — changer la constante d'un côté ne cassait aucun test). Cible 'hi' (longueur 2) : cap = 2 + max(4,2) = 6. 6 frappes valides entrent, les 2 dernières sont journalisées (comptent en Incorrect) mais n'entrent plus dans le buffer (Extra plafonné à 4 = cap - longueur cible).",
+      "mode": "words",
+      "modeValue": 1,
+      "targetText": "hi",
+      "keystrokes": [
+        { "t": 100, "k": "h" }, { "t": 200, "k": "i" },
+        { "t": 300, "k": "x" }, { "t": 400, "k": "x" }, { "t": 500, "k": "x" }, { "t": 600, "k": "x" },
+        { "t": 700, "k": "x" }, { "t": 800, "k": "x" }
+      ],
+      "expected": {
+        "wpm": 30, "raw": 120, "accuracy": 25,
+        "characters": { "correct": 2, "incorrect": 6, "extra": 4, "missed": 0 },
+        "durationMs": 800, "pbEligible": true
+      }
+    }
+  ]
+}

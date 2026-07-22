@@ -62,6 +62,34 @@ pub struct RunConfig {
     pub numbers: bool,
 }
 
+/// La clé du Config bucket, prête à lier en SQL (issue #17) — SEUL endroit qui consomme
+/// les champs de RunConfig pour la comparabilité PB. `store::previous_pb` et
+/// `store::insert_run` la consomment, ne réénoncent pas les colonnes.
+pub struct BucketKey<'a> {
+    pub mode: &'static str,
+    pub mode_value: i64,
+    pub language: &'a str,
+    pub punctuation: bool,
+    pub numbers: bool,
+}
+
+impl RunConfig {
+    /// Destructuration EXHAUSTIVE (pas de `..`) : ajouter un champ à RunConfig est une
+    /// erreur de compilation ICI tant qu'on n'a pas statué s'il entre dans le bucket
+    /// (Setting) ou pas (**Preference** — CONTEXT.md : n'entre JAMAIS dans le Config
+    /// bucket, reste sur la machine du Player, jamais dans une comparaison de PB).
+    pub fn bucket_key(&self) -> BucketKey<'_> {
+        let RunConfig { mode, mode_value, language, punctuation, numbers } = self;
+        BucketKey {
+            mode: mode.as_str(),
+            mode_value: *mode_value,
+            language: language.as_str(),
+            punctuation: *punctuation,
+            numbers: *numbers,
+        }
+    }
+}
+
 // ----------------------------------------------------------------------------
 //  Keystroke log (matière première du recompute autoritaire)
 // ----------------------------------------------------------------------------
@@ -75,7 +103,7 @@ pub enum ControlKey {
 }
 
 /// Un événement clavier brut : { t, k } pour un caractère, { t, k:"", ctrl } pour un contrôle.
-/// `t` = ms depuis t=0 (fin du décompte).
+/// `t` = ms depuis t=0 — la 1re frappe en solo, `RaceStart` en Race (CONTEXT.md, ADR 0004).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Keystroke {
     pub t: f64,

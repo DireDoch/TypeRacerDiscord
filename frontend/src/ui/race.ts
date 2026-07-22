@@ -15,10 +15,11 @@
 import type { Keystroke } from "../core/types";
 import type { InputView } from "../core/input/controller";
 import { RunClock } from "../core/clock";
+import { Countdown } from "../core/countdown";
 import { FreeInput } from "../core/input/free-input";
 import { RaceSocket, type ServerEvent } from "../core/net";
 import { liveWpm } from "../live-stats";
-import { renderWord, placeCaret } from "./practice";
+import { wordsHtml, placeCaret, escapeText } from "./typing-zone";
 import { getIdentity, proxyBase } from "../discord";
 
 type Phase = "connecting" | "lobby" | "countdown" | "running" | "over";
@@ -45,6 +46,7 @@ export class Race {
   private finished = new Map<string, number>();
   private ranking: string[] = [];
   private countdownN = 3;
+  private countdown: Countdown | null = null;
   private rafId = 0;
 
   /** `onExit` : navigation retour vers le menu (lobby et écran RaceOver). */
@@ -60,6 +62,8 @@ export class Race {
   destroy(): void {
     document.removeEventListener("keydown", this.onKeyDown);
     cancelAnimationFrame(this.rafId);
+    this.countdown?.cancel();
+    this.countdown = null;
     this.socket?.close();
     this.socket = null;
   }
@@ -109,6 +113,8 @@ export class Race {
   // --- Cycle de course --------------------------------------------------------
 
   private startCountdown(): void {
+    // Un seul décompte vivant : un second RaceStart pendant le décompte/la course est ignoré.
+    if (this.phase === "countdown" || this.phase === "running") return;
     this.phase = "countdown";
     this.countdownN = 3;
     this.progress.clear();
@@ -117,20 +123,19 @@ export class Race {
     // lit le début pendant les 3 s) — indispensable après une revanche (état stale).
     this.doneLocal = false;
     this.controller = new FreeInput(this.targetWords);
-    this.render();
-    const tick = (): void => {
-      this.countdownN -= 1;
-      if (this.countdownN <= 0) {
-        this.beginRun();
-        return;
-      }
-      this.render();
-      window.setTimeout(tick, 1000);
-    };
-    window.setTimeout(tick, 1000);
+    this.countdown = new Countdown(
+      3,
+      (n) => {
+        this.countdownN = n;
+        this.render();
+      },
+      () => this.beginRun(),
+    );
+    this.countdown.start();
   }
 
   private beginRun(): void {
+    this.countdown = null;
     this.phase = "running";
     this.doneLocal = false;
     this.log = [];
@@ -199,10 +204,10 @@ export class Race {
         return this.cardsHtml() + this.startBtnHtml() + this.exitBtnHtml();
       case "countdown":
         return `<div class="countdown">${this.countdownN}</div>
-          <div class="words-wrap"><div class="words" id="words">${this.wordsHtml()}</div><div class="caret-block"></div></div>`;
+          <div class="words-wrap"><div class="words" id="words">${this.wordsAreaHtml()}</div><div class="caret-block"></div></div>`;
       case "running":
         return `<div class="live-bar" id="liveBar"></div>
-          <div class="words-wrap"><div class="words" id="words">${this.wordsHtml()}</div><div class="caret-block"></div></div>
+          <div class="words-wrap"><div class="words" id="words">${this.wordsAreaHtml()}</div><div class="caret-block"></div></div>
           <div class="bars" id="bars">${this.barsHtml()}</div>
           <p class="hint">${this.doneLocal ? "Terminé — en attente des autres…" : "Tape le texte ; corrige tes fautes pour finir"}</p>`;
       case "over":
@@ -239,19 +244,12 @@ export class Race {
   private renderWords(): void {
     const el = this.root.querySelector<HTMLElement>("#words");
     if (!el) return;
-    el.innerHTML = this.wordsHtml();
+    el.innerHTML = this.wordsAreaHtml();
     placeCaret(el);
   }
 
-  private wordsHtml(): string {
-    const v = this.controller.view();
-    return this.targetWords
-      .map((target, i) => {
-        if (i < v.lockedWords.length) return renderWord(target, v.lockedWords[i], false);
-        if (i === v.wordIndex) return renderWord(target, v.typed, !this.doneLocal);
-        return renderWord(target, "", false);
-      })
-      .join("");
+  private wordsAreaHtml(): string {
+    return wordsHtml(this.targetWords, this.controller.view(), !this.doneLocal);
   }
 
   private renderBars(): void {
@@ -307,17 +305,4 @@ export function raceComplete(targetWords: string[], view: InputView): boolean {
   // Dernier mot en cours de frappe : précédents exacts + mot courant exact.
   if (view.lockedWords.length === n - 1) return lockedExact && view.typed === targetWords[n - 1];
   return false;
-}
-
-function escapeChar(ch: string): string {
-  if (ch === "<") return "&lt;";
-  if (ch === ">") return "&gt;";
-  if (ch === "&") return "&amp;";
-  return ch;
-}
-
-function escapeText(s: string): string {
-  let out = "";
-  for (const ch of s) out += escapeChar(ch);
-  return out;
 }

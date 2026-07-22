@@ -30,7 +30,6 @@ export interface ScoreInput {
   modeValue: number;
   targetText: string; // "" pour Zen
   keystrokes: Keystroke[];
-  endedAtMs: number;
 }
 
 interface Snapshot {
@@ -53,13 +52,21 @@ const wordCorrect = (typed: string, target: string): number => {
   return n;
 };
 
+// Éligibilité PB par défaut du Mode : Zen (durée variable), Drill (texte personnalisé)
+// et Quotes (longueur non capturée par le Config bucket, ADR 0003) sont incomparables.
+// Time infini est une exception À L'INTÉRIEUR de Time (propriété d'UN Run, pas du Mode).
+const MODE_PB_ELIGIBLE: Record<Mode, boolean> = {
+  time: true,
+  words: true,
+  quotes: false,
+  zen: false,
+  drill: false,
+};
+
 export function computeScoreboard(input: ScoreInput): Scoreboard {
   const durationMs = resolveDuration(input);
-  // Zen / Time infini : durée variable. Drill : texte personnalisé. Tous incomparables → pas de PB.
   const pbEligible =
-    input.mode !== "zen" &&
-    input.mode !== "drill" &&
-    !(input.mode === "time" && input.modeValue === 0);
+    MODE_PB_ELIGIBLE[input.mode] && !(input.mode === "time" && input.modeValue === 0);
 
   const result =
     input.mode === "zen"
@@ -85,9 +92,15 @@ export function computeScoreboard(input: ScoreInput): Scoreboard {
   };
 }
 
+// Borne anti-DoS : endedAtMs ET keystroke.t sont fournis par le client, donc falsifiables.
+// build_per_second alloue O(durée) — sans plafond un Run "aberrant" ferait exploser l'allocation.
+const MAX_DURATION_MS = 30 * 60 * 1000; // 30 min, généreux pour Zen/Drill légitimes
+
 function resolveDuration(input: ScoreInput): number {
   if (input.mode === "time" && input.modeValue > 0) return input.modeValue * 1000;
-  return input.endedAtMs; // words/quotes (complétion), zen & time infini (Shift+Enter)
+  // words/quotes (complétion), zen & time infini (Shift+Enter) : dérivée du log de frappes
+  // (source faisant foi côté serveur), jamais d'un endedAtMs client — et bornée.
+  return Math.max(0, Math.min(lastKeyT(input.keystrokes), MAX_DURATION_MS));
 }
 
 // ----------------------------------------------------------------------------
