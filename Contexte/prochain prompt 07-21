@@ -1,0 +1,24 @@
+Je veux grill la section D (Race multijoueur) de Contexte/FeatureSupp_0.0.1.md
+— le morceau volontairement laissé pour la fin, le plus gros des quatre.
+
+Avant de grill, lis Contexte/FeatureSupp_0.0.1.md (section D) ET CONTEXT.md,
+et regarde ui/race.ts : le lobby, la course, le décompte (3s), les barres
+live et le classement sont déjà livrés (Phase 2). D est en grande partie
+net-new par rapport à ça.
+
+Conflit déjà repéré à trancher en premier : le brief D demande un décompte
+de 7 secondes, mais CONTEXT.md fige aujourd'hui le décompte multijoueur à
+3s ("Un décompte local de 3 s le précède"). Il faudra un ADR si on change
+cette valeur (c'est une décision de mesure, pas juste un cosmétique — voir
+ADR 0004 sur le décompte solo pour le précédent).
+
+Reste du scope net-new : voitures avec avatar Discord + nom en démarrage,
+lobby public/privé avec code de partie, party leader (paramètres + lancement,
+limite 8 joueurs), WPM live par joueur affiché en fin de piste, abandon
+d'une course SANS quitter le lobby (peut rejouer la prochaine), podium en
+fin de partie (top 3 + reste visible), Play of the Game (replay en
+ralenti du duel le plus serré à l'arrivée, réutilise la fonctionnalité
+Replay existante).
+
+Grillons une section à la fois comme d'habitude, en mettant à jour
+CONTEXT.md et en écrivant un ADR à chaque décision qui le mérite.

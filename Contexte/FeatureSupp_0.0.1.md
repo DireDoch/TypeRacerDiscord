@@ -1,3 +1,32 @@
+## État d'avancement (session de grilling + implémentation du 2026-07-21/22)
+
+- **A) Review** — retiré du scope : déjà livré à 100% (Replay `ui/replay.ts` +
+  Analysis `GET /api/runs/:id/analysis` / `GET /api/profile/analysis`).
+- **B) Practice ciblé typos** — fait. Nouveau Mode **Trigram Drill**, distinct
+  de Drill (ADR 0005). Issues #26 (moteur trigramme dans `analysis.rs`) et
+  #27 (Mode + UI), toutes deux mergées sur `main`.
+- **C) Cursus Apprendre 100 leçons** — fait. Extension du cursus existant
+  (ADR 0006), pas un nouveau système. Issues #28 (framework/barème), #29
+  (visuel doigts/clavier statique, leçons 1-2), #30-#33 (contenu des leçons
+  14 à 100), toutes mergées. Cursus complet, 100 leçons.
+- **CI/CD** — fait. Lint ajouté à `.github/workflows/ci.yml` (clippy backend
+  #34, eslint frontend #35), CD explicitement différé (pas de cible de
+  déploiement stable pour l'instant).
+- **D) Race multijoueur** — **pas commencé**, reste le plus gros morceau.
+  `ui/race.ts` gère déjà lobby/course/décompte(3s)/barres live/classement
+  (Phase 2) ; D est en grande partie net-new (voitures/avatars, lobby
+  public/privé + code, party leader, podium, Play of the Game en ralenti).
+  **Conflit déjà repéré** à trancher en premier : le brief D demande un
+  décompte de 7s, CONTEXT.md fige aujourd'hui le décompte multijoueur à 3s
+  — probablement un ADR à écrire selon la décision (précédent : ADR 0004).
+  Prompt de reprise prêt dans `Contexte/prochain prompt 07-21`.
+
+Décisions détaillées : `Docs/adr/0005-trigram-drill-mode-separe.md`,
+`Docs/adr/0006-cursus-apprendre-100-lecons.md`, glossaire à jour dans
+`CONTEXT.md`.
+
+---
+
 Je veux rajouter ces fonctionnalité dans le tout, veuiller discuter avec moi comment je pourrais faire le tout.
 De plus j'aimerais intégrer un CI/CD avec github actions pour faire les différents test sur les feature et connection que je fait dans mon application.
 Voici ce que j'aimerais rajouter pour le mode solo et multijoeur séparement:
