@@ -47,7 +47,7 @@ The final stats (WPM, Raw, Accuracy, character breakdown, per-second series) rec
 _Avoid_: Results, Score.
 
 **Weak spot**:
-A key or key-pair (bigram) where the Player is measurably slower or more error-prone than their own average, with enough occurrences to be significant. Identified by the analysis engine from one Keystroke log (a single Run) or many (a profile across recent Runs) — same definition either way.
+A key, key-pair (bigram), or key-triple (trigram: the character before AND after a fault, not just before) where the Player is measurably slower or more error-prone than their own average, with enough occurrences to be significant. Identified by the analysis engine from one Keystroke log (a single Run) or many (a profile across recent Runs) — same definition either way. Each kind has its own noise threshold (trigrams are rarer by construction, see ADR 0005).
 _Avoid_: Weakness, Problem key, Trouble key.
 
 **Player**:
@@ -71,15 +71,19 @@ The Time Mode with its value set to `0` — the clock is disabled, words stream 
 _Avoid_: No-timer, Disabled time, Endless.
 
 **Drill**:
-A Practice Mode whose text targets the Player's current Weak spots: a short warm-up of targeted key sequences, then real words (from the standard word list) chosen because they contain those Weak spots. Personalized text makes Drills incomparable, so they never produce a PB (same rule as Zen and Time infini).
+A Practice Mode whose text targets the Player's current Weak spots, restricted to `key`/`bigram` kinds: a short warm-up of targeted key sequences, then real words (from the standard word list) chosen because they contain those Weak spots. Personalized text makes Drills incomparable, so they never produce a PB (same rule as Zen and Time infini).
 _Avoid_: Practice mode, Training, Exercise mode.
+
+**Trigram Drill**:
+A separate Practice Mode from Drill (ADR 0005), not a variant of it — same mechanics (warm-up + real words) and analysis engine, but restricted to trigram-kind Weak spots only (the character before AND after a fault). Has its own noise threshold and its own empty state ("profile exists but no trigram is significant yet"), distinct from Drill's ("no profile"). Never produces a PB, same rule as Drill.
+_Avoid_: Practice, Context mode, Drill.
 
 **Quote**:
 The fixed text fetched for a Quotes Run (text + author), via the Rust quote proxy. Settings and length controls do not apply — the Player types the whole Quote. The author name builds a "learn more" link to that author's Wikipedia page. Quote length varies Run to Run but the Config bucket doesn't capture it, so Quotes never produce a PB (same rule as Drill: uncaptured text variation makes Runs incomparable).
 _Avoid_: Citation, Passage.
 
 **Lesson**:
-One step of the Learn curriculum (UI: « Apprendre »): instructional content on touch-typing plus a typed exercise on a fixed key set. Passing the exercise at the accuracy required by the current curriculum stage (a static, editable table of thresholds — early Lessons are lenient, later ones stricter; speed never gates early stages) unlocks the next Lesson. Progress is persisted per Player. Lesson exercises are not Runs: no PB, no history entry.
+One step of the Learn curriculum (UI: « Apprendre »), one of 100 (ADR 0006): instructional content on touch-typing — illustrated with a static hand/keyboard diagram on the earliest Lessons only — plus a typed exercise on a fixed key set. Passing the exercise at the accuracy required by the current curriculum stage (a static, editable table of thresholds — early Lessons are lenient, later ones stricter) unlocks the next Lesson. Accuracy is the only gating criterion, at every stage — speed is never required to unlock a Lesson. Progress is persisted per Player. Lesson exercises are not Runs: no PB, no history entry.
 _Avoid_: Level, Tutorial, Course.
 
 **Room** (Phase 2, not in MVP):
