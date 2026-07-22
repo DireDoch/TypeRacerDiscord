@@ -10,7 +10,7 @@
 // =============================================================================
 
 import type { Keystroke, KeystrokeLog } from "../core/types";
-import { LESSONS, generateLessonText, requiredAccuracy } from "../core/learn";
+import { LESSONS, generateLessonExercise, requiredAccuracy } from "../core/learn";
 import { Rng, randomSeed } from "../core/text-gen/rng";
 import { FreeInput } from "../core/input/free-input";
 import type { InputController } from "../core/input/controller";
@@ -76,7 +76,7 @@ export class Learn {
 
   private startExercise(): void {
     const lesson = LESSONS[this.lessonIndex];
-    this.targetWords = generateLessonText(lesson.keys, lesson.tokens, new Rng(randomSeed()));
+    this.targetWords = generateLessonExercise(lesson, new Rng(randomSeed()));
     this.controller = new FreeInput(this.targetWords);
     this.log = [];
     this.startedAt = null;
@@ -165,7 +165,7 @@ export class Learn {
     return `
       <h2>${this.lessonIndex + 1}. ${lesson.title}</h2>
       ${content}
-      <p class="hint">Exercice — touches : <strong>${lesson.keys.join(" ")}</strong> · accuracy requise : ≥ ${requiredAccuracy(this.lessonIndex)}% · la vitesse ne compte pas.</p>
+      <p class="hint">Exercice — ${lesson.words ? "mots complets" : `touches : <strong>${lesson.keys.join(" ")}</strong>`} · accuracy requise : ≥ ${requiredAccuracy(this.lessonIndex)}% · la vitesse ne compte pas.</p>
       <div class="words-wrap">
         <div class="words" id="words">${this.result ? "" : this.wordsHtml()}</div>
         <div class="caret-block"></div>
