@@ -40,17 +40,18 @@ pub async fn previous_pb(
     player_id: &str,
     config: &RunConfig,
 ) -> Result<Option<f64>, sqlx::Error> {
+    let key = config.bucket_key();
     let row = sqlx::query(
         "SELECT MAX(wpm) AS pb FROM runs
          WHERE player_id = ? AND mode = ? AND mode_value = ?
            AND language = ? AND punctuation = ? AND numbers = ? AND pb_eligible = 1",
     )
     .bind(player_id)
-    .bind(config.mode.as_str())
-    .bind(config.mode_value)
-    .bind(&config.language)
-    .bind(config.punctuation as i64)
-    .bind(config.numbers as i64)
+    .bind(key.mode)
+    .bind(key.mode_value)
+    .bind(key.language)
+    .bind(key.punctuation as i64)
+    .bind(key.numbers as i64)
     .fetch_one(pool)
     .await?;
     row.try_get::<Option<f64>, _>("pb")
@@ -71,6 +72,7 @@ pub async fn insert_run(
     keystroke_log_json: &str,
     target_text: &str,
 ) -> Result<(), sqlx::Error> {
+    let key = config.bucket_key();
     let per_second_json = serde_json::to_string(&sb.per_second).unwrap_or_else(|_| "[]".to_string());
     sqlx::query(
         "INSERT INTO runs
@@ -83,11 +85,11 @@ pub async fn insert_run(
     .bind(player_id)
     .bind(created_at)
     .bind(kind)
-    .bind(config.mode.as_str())
-    .bind(config.mode_value)
-    .bind(&config.language)
-    .bind(config.punctuation as i64)
-    .bind(config.numbers as i64)
+    .bind(key.mode)
+    .bind(key.mode_value)
+    .bind(key.language)
+    .bind(key.punctuation as i64)
+    .bind(key.numbers as i64)
     .bind(sb.wpm)
     .bind(sb.raw)
     .bind(sb.accuracy)
@@ -337,6 +339,19 @@ mod tests {
         assert_eq!(previous_pb(&pool, "p1", &c).await.unwrap(), None);
         // Mais reste dans l'historique.
         assert_eq!(history(&pool, "p1", None, None, 50).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn settings_differents_ne_partagent_pas_de_pb() {
+        // issue #17 : Time 30s English Punctuation et Time 30s English sont deux buckets.
+        let pool = mem_pool().await;
+        let base = cfg(); // punctuation: false
+        let avec_ponctuation = RunConfig { punctuation: true, ..base.clone() };
+        insert_run(&pool, "r1", "p1", 1000, "practice", &base, &sb(80.0, true), "[]", "the cat").await.unwrap();
+        // Un WPM bien plus haut, mais dans un AUTRE bucket : ne doit pas devenir le PB de `base`.
+        insert_run(&pool, "r2", "p1", 2000, "practice", &avec_ponctuation, &sb(999.0, true), "[]", "the cat").await.unwrap();
+        assert_eq!(previous_pb(&pool, "p1", &base).await.unwrap(), Some(80.0));
+        assert_eq!(previous_pb(&pool, "p1", &avec_ponctuation).await.unwrap(), Some(999.0));
     }
 
     #[tokio::test]
