@@ -187,7 +187,7 @@ fn leave_room(rooms: &Rooms, channel_id: &str, player_id: &str) {
         // Abandon total (y compris juste après le départ, sans état "décompte" dédié
         // côté serveur — voir CONTEXT.md) : clôt la course AVANT de retirer une Room
         // désormais vide, sinon elle reste gelée en RaceState::Racing (issue #23).
-        close_race_if_abandoned(room);
+        close_race(room, true);
         if room.players.is_empty() {
             rooms.remove(channel_id); // tx droppé → forwards des sockets se terminent
             return;
@@ -199,25 +199,22 @@ fn leave_room(rooms: &Rooms, channel_id: &str, player_id: &str) {
     }
 }
 
-/// Si une course tourne et qu'aucun partant encore présent n'attend de finir (tous ont
-/// fini OU quitté), la clôt immédiatement. Les partants jamais finis apparaissent au
-/// classement à 0 WPM — PAS de recompute sur un log vide (piège de l'issue #23 :
-/// l'accuracy y vaudrait 100, pas 0), juste une entrée explicite à 0. Aucun Run n'est
-/// persisté pour un abandon : rien à exclure des PB, il n'y a simplement rien à polluer.
-fn close_race_if_abandoned(room: &mut Room) {
-    let (pending, encore_en_course) = match &room.state {
+/// Clôt une course en cours, déclarant abandon (0 WPM, pas de recompute sur un log vide —
+/// l'accuracy y vaudrait 100, pas 0, piège de l'issue #23) tout partant pas encore fini.
+/// Aucun Run n'est persisté pour un abandon : rien à exclure des PB, rien à polluer.
+///
+/// `require_absent` : si vrai, ne clôt QUE si aucun partant en attente n'est encore
+/// connecté — abandon "tout le monde est parti" (#23, appelé depuis `leave_room`). Si
+/// faux, clôt sans condition de présence — watchdog de durée expirée (#24, quelqu'un
+/// peut très bien être encore connecté sans avoir rien envoyé depuis 10 minutes).
+fn close_race(room: &mut Room, require_absent: bool) {
+    let pending: Vec<PlayerId> = match &room.state {
         RaceState::Racing { racers, finishers, .. } => {
-            let pending: Vec<PlayerId> = racers
-                .iter()
-                .filter(|r| !finishers.iter().any(|(p, _)| p == *r))
-                .cloned()
-                .collect();
-            let encore_en_course = pending.iter().any(|r| room.players.contains(r));
-            (pending, encore_en_course)
+            racers.iter().filter(|r| !finishers.iter().any(|(p, _)| p == *r)).cloned().collect()
         }
         RaceState::Lobby => return,
     };
-    if encore_en_course {
+    if require_absent && pending.iter().any(|r| room.players.contains(r)) {
         return; // au moins un partant présent n'a pas fini : la course continue
     }
     if let RaceState::Racing { finishers, .. } = &mut room.state {
@@ -229,6 +226,45 @@ fn close_race_if_abandoned(room: &mut Room) {
         let _ = room.tx.send(ServerEvent::PlayerFinished { player_id: r.clone(), wpm: 0.0 });
     }
     end_race(room);
+}
+
+/// Seuil au-delà duquel une course est jugée anormalement longue (issue #24) : un
+/// client peut disparaître sans jamais envoyer LeaveRoom (perte réseau, crash) — un
+/// watchdog client ne couvrirait pas ce cas, la fermeture doit venir du serveur. Zen et
+/// Time infini n'existent pas en Race : 10 min est un plafond sûr pour le seul Mode
+/// actuel (Words) — à revoir si la Race gagne un Mode à durée libre.
+const RACE_MAX_DURATION_MS: i64 = 10 * 60 * 1000;
+/// Fréquence de la vérification watchdog — pas besoin d'être plus précis que ça pour
+/// un seuil de 10 minutes.
+const WATCHDOG_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Clôt les Rooms dont la course dépasse RACE_MAX_DURATION_MS. Horloge injectée (`now`)
+/// pour rester testable sans attendre 10 minutes en vrai (issue #24).
+fn close_overlong_races(rooms: &Rooms, now: i64) {
+    let mut rooms = rooms.lock().unwrap();
+    for room in rooms.values_mut() {
+        let overlong = match &room.state {
+            RaceState::Racing { start_at_epoch_ms, .. } => now - start_at_epoch_ms > RACE_MAX_DURATION_MS,
+            RaceState::Lobby => false,
+        };
+        if overlong {
+            close_race(room, false);
+        }
+    }
+}
+
+/// Boucle watchdog : vérifie toutes les Rooms à intervalle régulier (issue #24). À
+/// spawn une fois au démarrage (voir main.rs). Chaque tick ne fait que scanner + fermer
+/// les Rooms trop longues — aucun recompute, aucune DB, le Mutex global n'est jamais
+/// tenu au-delà de cette opération O(nombre de Rooms).
+pub fn spawn_watchdog(rooms: Rooms) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(WATCHDOG_CHECK_INTERVAL);
+        loop {
+            interval.tick().await;
+            close_overlong_races(&rooms, now_epoch_ms());
+        }
+    });
 }
 
 /// StartRace : accepté du seul owner, hors course en cours. Fige les partants,
@@ -648,5 +684,49 @@ mod tests {
         join_room(&rooms, "c1", "p2");
         start_race(&rooms, "c1", "p1");
         assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    }
+
+    #[test]
+    fn watchdog_clot_une_course_trop_longue_meme_si_tout_le_monde_est_encore_la() {
+        // issue #24 : contrairement à l'abandon "tout le monde est parti" (#23), le
+        // watchdog ferme même si des joueurs sont TOUJOURS connectés (silencieux depuis
+        // 10 min : perte réseau, crash — pas de LeaveRoom envoyé).
+        let rooms = new_rooms();
+        join_room(&rooms, "c1", "p1");
+        join_room(&rooms, "c1", "p2");
+        start_race(&rooms, "c1", "p1");
+        let start = match &rooms.lock().unwrap().get("c1").unwrap().state {
+            RaceState::Racing { start_at_epoch_ms, .. } => *start_at_epoch_ms,
+            RaceState::Lobby => panic!("pas en course"),
+        };
+        let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
+
+        close_overlong_races(&rooms, start + RACE_MAX_DURATION_MS - 1); // pas encore expiré
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+
+        close_overlong_races(&rooms, start + RACE_MAX_DURATION_MS + 1); // expiré
+        assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+
+        // p1 et p2 (jamais finis, toujours "connectés") apparaissent à 0 WPM.
+        let mut finished_wpm = std::collections::HashMap::new();
+        while let Ok(ev) = rx.try_recv() {
+            if let ServerEvent::PlayerFinished { player_id, wpm } = ev {
+                finished_wpm.insert(player_id, wpm);
+            }
+        }
+        assert_eq!(finished_wpm.get("p1"), Some(&0.0));
+        assert_eq!(finished_wpm.get("p2"), Some(&0.0));
+
+        // Room utilisable de nouveau (revanche).
+        start_race(&rooms, "c1", "p1");
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    }
+
+    #[test]
+    fn watchdog_ignore_les_rooms_en_lobby() {
+        let rooms = new_rooms();
+        join_room(&rooms, "c1", "p1");
+        close_overlong_races(&rooms, now_epoch_ms() + 100 * RACE_MAX_DURATION_MS);
+        assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing()); // toujours Lobby, intact
     }
 }
