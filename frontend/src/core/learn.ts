@@ -101,6 +101,7 @@ export const LESSONS: Lesson[] = [
     ],
     keys: ["f", "j"],
     tokens: 12,
+    diagram: "home-row-fj",
   },
   {
     title: "Rangée de base — main gauche (A S D F)",
@@ -111,6 +112,7 @@ export const LESSONS: Lesson[] = [
     ],
     keys: ["a", "s", "d", "f"],
     tokens: 15,
+    diagram: "home-row-fj",
   },
   {
     title: "Rangée de base — main droite (J K L ;)",

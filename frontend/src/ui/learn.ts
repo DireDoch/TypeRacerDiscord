@@ -18,6 +18,50 @@ import { computeScoreboard } from "../core/stats/scoreboard";
 import { fetchLearnProgress, submitLearnProgress } from "../api";
 import { wordsHtml, placeCaret } from "./typing-zone";
 
+// ----------------------------------------------------------------------------
+//  Visuel doigts/clavier — statique, réservé aux toutes premières Lessons
+//  (ADR 0006 : onboarding, pas un clavier live). SVG inline (thème via les
+//  variables CSS existantes, style.css) plutôt qu'un asset externe.
+// ----------------------------------------------------------------------------
+
+const HOME_ROW_KEYS = ["a", "s", "d", "f", "g", "h", "j", "k", "l", ";"];
+/** Touches repères : bosse physique sous le doigt (F et J), sans lever les yeux. */
+const BUMP_KEYS = new Set(["f", "j"]);
+
+/** Rangée de base, F/J marqués d'une bosse — la référence tactile du cursus. */
+function homeRowFjDiagram(): string {
+  const keyW = 52;
+  const gap = 8;
+  const keyH = 52;
+  const top = 20;
+  const step = keyW + gap;
+  const totalW = HOME_ROW_KEYS.length * step - gap;
+  const keys = HOME_ROW_KEYS.map((k, i) => {
+    const x = i * step;
+    const bump = BUMP_KEYS.has(k)
+      ? `<circle cx="${x + keyW / 2}" cy="${top + keyH - 10}" r="3" fill="var(--main)" />`
+      : "";
+    return `
+      <rect x="${x}" y="${top}" width="${keyW}" height="${keyH}" rx="8" fill="var(--panel)" stroke="var(--sub)" />
+      <text x="${x + keyW / 2}" y="${top + keyH / 2 + 7}" text-anchor="middle" fill="var(--text)"
+            font-family="var(--font-mono)" font-size="20">${k.toUpperCase()}</text>
+      ${bump}`;
+  }).join("");
+  return `
+    <svg viewBox="0 0 ${totalW} ${top + keyH + 30}" role="img" class="hand-diagram"
+         aria-label="Rangée de base du clavier ; les touches F et J portent une bosse repère">
+      ${keys}
+      <text x="${2 * step}" y="${top + keyH + 22}" text-anchor="middle" fill="var(--sub)"
+            font-family="var(--font-ui)" font-size="13">main gauche</text>
+      <text x="${totalW - 2 * step}" y="${top + keyH + 22}" text-anchor="middle" fill="var(--sub)"
+            font-family="var(--font-ui)" font-size="13">main droite</text>
+    </svg>`;
+}
+
+const DIAGRAMS: Record<string, () => string> = {
+  "home-row-fj": homeRowFjDiagram,
+};
+
 export class Learn {
   private view: "list" | "lesson" = "list";
   /** Nombre de leçons complétées : la leçon d'index N est débloquée si N <= completed. */
@@ -162,8 +206,10 @@ export class Learn {
   private lessonHtml(): string {
     const lesson = LESSONS[this.lessonIndex];
     const content = lesson.content.map((p) => `<p class="hint">${p}</p>`).join("");
+    const diagram = lesson.diagram ? (DIAGRAMS[lesson.diagram]?.() ?? "") : "";
     return `
       <h2>${this.lessonIndex + 1}. ${lesson.title}</h2>
+      ${diagram}
       ${content}
       <p class="hint">Exercice — ${lesson.words ? "mots complets" : `touches : <strong>${lesson.keys.join(" ")}</strong>`} · accuracy requise : ≥ ${requiredAccuracy(this.lessonIndex)}% · la vitesse ne compte pas.</p>
       <div class="words-wrap">

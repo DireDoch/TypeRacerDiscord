@@ -491,6 +491,11 @@ button.primary:hover {
 .learn h2 {
   color: var(--main);
 }
+.hand-diagram {
+  width: min(100%, 26rem);
+  align-self: center;
+  margin: 0.2rem 0;
+}
 .learn button {
   background: none;
   border: 1px solid var(--sub);
