@@ -155,7 +155,7 @@ export class Race {
   /** charsDone = mots verrouillés (+ espaces) + préfixe correct du mot courant. */
   private charsDone(): number {
     const v = this.controller.view();
-    let n = v.lockedWords.reduce((a, w) => a + w.length, 0) + v.lockedWords.length;
+    const n = v.lockedWords.reduce((a, w) => a + w.length, 0) + v.lockedWords.length;
     const t = this.targetWords[v.wordIndex] ?? "";
     let i = 0;
     while (i < v.typed.length && i < t.length && v.typed[i] === t[i]) i++;
