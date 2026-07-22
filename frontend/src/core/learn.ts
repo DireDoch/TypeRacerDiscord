@@ -450,4 +450,207 @@ export const LESSONS: Lesson[] = [
     tokens: 30,
     words: true,
   },
+  {
+    title: "Crochets [ ]",
+    content: [
+      "Les crochets (Shift + touche à côté du P pour l'un, Shift + la suivante pour l'autre) encadrent une référence, un index de tableau, une note.",
+      "Comme les parenthèses déjà vues, ils s'ouvrent et se ferment TOUJOURS en paire — l'auriculaire droit fait l'aller-retour entre les deux.",
+      "Exercice concentré sur les crochets, mélangés à quelques lettres.",
+    ],
+    keys: ["[", "]", "a", "s", "d", "f", "j", "k", "l"],
+    tokens: 16,
+  },
+  {
+    title: "Accolades { }",
+    content: [
+      "Les accolades (Shift + crochet) délimitent un bloc — omniprésentes dans le code, utiles aussi pour un ensemble ou une note en aparté.",
+      "Même touche que les crochets, Shift en plus : le doigt ne change pas, seul le geste de la main opposée s'ajoute.",
+      "Exercice concentré sur les accolades, mélangées à quelques lettres.",
+    ],
+    keys: ["{", "}", "a", "s", "d", "f", "j", "k", "l"],
+    tokens: 16,
+  },
+  {
+    title: "Chevrons < >",
+    content: [
+      "Les chevrons (Shift + virgule, Shift + point) comparent (« plus petit que », « plus grand que ») ou encadrent une balise.",
+      "Ils partagent leurs touches avec la virgule et le point déjà vus (leçon 11) — encore une fois, c'est Shift qui change tout.",
+      "Exercice concentré sur les chevrons, mélangés à quelques lettres.",
+    ],
+    keys: ["<", ">", "a", "s", "d", "f", "j", "k", "l"],
+    tokens: 16,
+  },
+  {
+    title: "Plus, égal, tilde ( + = ~ )",
+    content: [
+      "Le signe égal (touche seule, à côté du 0) et le plus (Shift + égal) servent aux calculs et aux affectations ; le tilde (Shift + la touche la plus à gauche) est plus rare, mais revient dans les chemins de fichiers.",
+      "Trois touches proches du 0 et de la ligne du haut — un vrai étirement, comme les chiffres de la leçon 12.",
+      "Exercice concentré sur les trois, mélangés à quelques lettres.",
+    ],
+    keys: ["+", "=", "~", "a", "s", "d", "f", "j", "k", "l"],
+    tokens: 16,
+  },
+  {
+    title: "Pipe et barre oblique inverse ( | \\ )",
+    content: [
+      "La barre verticale (Shift + barre oblique inverse) sépare des options ou des colonnes ; la barre oblique inverse seule échappe un caractère ou navigue un chemin Windows.",
+      "Toutes deux vivent au même endroit, tout en haut à droite du clavier — un repère à mémoriser une bonne fois.",
+      "Exercice concentré sur les deux, mélangés à quelques lettres.",
+    ],
+    keys: ["|", "\\", "j", "k", "l", ";"],
+    tokens: 16,
+  },
+  {
+    title: "Majuscules et ponctuation mélangées",
+    content: [
+      "Une vraie phrase alterne minuscules, une majuscule en tête, et de la ponctuation qui la clôt — pas des blocs séparés comme dans les leçons précédentes.",
+      "L'enchaînement Shift → lettre → reste du mot → point doit devenir un seul geste fluide, pas trois réflexes séparés.",
+      "Exercice qui mélange majuscules, minuscules et ponctuation de base.",
+    ],
+    keys: ["A", "a", "S", "s", "D", "d", "F", "f", "J", "j", "K", "k", "L", "l", ".", ",", "'"],
+    tokens: 20,
+  },
+  {
+    title: "Paire fréquente — LE / DE",
+    content: [
+      "« le » et « de » terminent ou ouvrent une quantité de mots anglais (« table », « little », « de- » en préfixe de « define », « decide »).",
+      "L (annulaire droit) et E (majeur droit) restent à droite ; D (index gauche) impose un vrai changement de main juste après.",
+      "Exercice concentré sur L, E et D.",
+    ],
+    keys: ["l", "e", "d"],
+    tokens: 18,
+  },
+  {
+    title: "Paire fréquente — RO / CO",
+    content: [
+      "« ro » et « co » ouvrent des mots très communs (« room », « from », « code », « come »).",
+      "R (index gauche) et O (annulaire droit) traversent le clavier ; C (majeur gauche) et O restent proches d'un même geste main gauche puis droite.",
+      "Exercice concentré sur R, O et C.",
+    ],
+    keys: ["r", "o", "c"],
+    tokens: 18,
+  },
+  {
+    title: "Paire fréquente — VE / ME",
+    content: [
+      "« ve » et « me » terminent des mots courants (« have », « give », « me », « time »).",
+      "V (index gauche, rangée du bas) est un étirement déjà vu en leçon 7 ; M (index droit, rangée du bas) est son miroir à droite.",
+      "Exercice concentré sur V, E et M.",
+    ],
+    keys: ["v", "e", "m"],
+    tokens: 18,
+  },
+  {
+    title: "Paire fréquente — AS / AR",
+    content: [
+      "« as » et « ar » apparaissent dans des mots très fréquents (« as », «are », « car », « start »).",
+      "A (auriculaire gauche) reste fixe, S (annulaire gauche) et R (index gauche) sont ses deux voisins immédiats sur la rangée de base et celle du haut.",
+      "Exercice concentré sur A, S et R.",
+    ],
+    keys: ["a", "s", "r"],
+    tokens: 18,
+  },
+  {
+    title: "Paire fréquente — ST / NT",
+    content: [
+      "« st » et « nt » terminent une multitude de mots anglais (« first », « last », « want », « front »).",
+      "S (annulaire gauche) et T (index gauche) restent à gauche ; N (index droit) et T retraversent le clavier — deux dynamiques différentes dans une seule leçon.",
+      "Exercice concentré sur S, T et N.",
+    ],
+    keys: ["s", "t", "n"],
+    tokens: 18,
+  },
+  {
+    title: "Terminaison fréquente — ING",
+    content: [
+      "« -ing » ferme presque tous les verbes au participe présent anglais (« typing », « reading », « learning ») — la terminaison la plus fréquente du cursus.",
+      "I, N et G s'enchaînent index droit → index droit → index gauche : deux lettres de la même main, puis un changement.",
+      "Exercice concentré sur I, N et G.",
+    ],
+    keys: ["i", "n", "g"],
+    tokens: 18,
+  },
+  {
+    title: "Terminaison fréquente — TION",
+    content: [
+      "« -tion » ferme une grande famille de noms anglais (« action », « position », « solution ») — quatre lettres qui reviennent toujours ensemble, dans le même ordre.",
+      "T, I, O et N s'enchaînent en restant proches du centre du clavier — peu de déplacement, beaucoup de répétition.",
+      "Exercice concentré sur T, I, O et N.",
+    ],
+    keys: ["t", "i", "o", "n"],
+    tokens: 18,
+  },
+  {
+    title: "Terminaisons fréquentes — ED / LY",
+    content: [
+      "« -ed » marque le passé (« typed », « learned ») ; « -ly » transforme un adjectif en adverbe (« quickly », « slowly »).",
+      "Deux terminaisons courtes, très fréquentes, qui ferment la liste des suffixes de ce cursus — le reste viendra naturellement avec la pratique de mots réels.",
+      "Exercice concentré sur E, D, L et Y.",
+    ],
+    keys: ["e", "d", "l", "y"],
+    tokens: 18,
+  },
+  {
+    title: "Mots — quatrième lot",
+    content: [
+      "Encore des mots réels : après les paires et terminaisons des dernières leçons, ce lot vérifie qu'elles se sont intégrées au flux normal de frappe.",
+      "Ne pense plus \"lettre par lettre\" : laisse le mot entier venir, comme un seul geste.",
+      "Vingt-huit mots de la liste standard.",
+    ],
+    keys: [],
+    tokens: 28,
+    words: true,
+  },
+  {
+    title: "Identifiants — lettres, chiffres et underscore",
+    content: [
+      "Un identifiant de code (« nom_variable_2 »), un mot de passe, un nom de fichier mélangent librement lettres, chiffres et underscore, sans espace entre eux.",
+      "Sans espace pour respirer, le rythme doit venir des doigts, pas d'une pause visuelle entre les types de caractères.",
+      "Exercice qui mélange lettres, chiffres et underscore.",
+    ],
+    keys: ["a", "s", "d", "f", "j", "k", "l", "1", "2", "3", "4", "5", "_"],
+    tokens: 20,
+  },
+  {
+    title: "Guillemet simple et accent grave ( ' ` )",
+    content: [
+      "L'apostrophe/guillemet simple (déjà vue en leçon 11) encadre aussi une citation courte ; l'accent grave (Shift + tilde) délimite du code inline dans un texte technique.",
+      "Deux touches discrètes mais fréquentes dès qu'un texte cite ou code quelque chose.",
+      "Exercice concentré sur les deux, mélangés à quelques lettres.",
+    ],
+    keys: ["'", "`", "a", "s", "d", "f", "j", "k", "l"],
+    tokens: 16,
+  },
+  {
+    title: "Mots longs — premier passage",
+    content: [
+      "Les mots de 8 lettres et plus demandent de tenir le rythme plus longtemps sans relâcher — c'est l'endurance qui est testée, pas une touche en particulier.",
+      "Si tu ralentis en fin de mot long, c'est normal au début : ça se resserre avec la répétition.",
+      "Vingt-quatre mots de la liste standard.",
+    ],
+    keys: [],
+    tokens: 24,
+    words: true,
+  },
+  {
+    title: "Mots longs — deuxième passage",
+    content: [
+      "Même exercice, un peu plus long : l'objectif est de garder la MÊME accuracy du premier au dernier mot, sans chute en fin de série.",
+      "Une accuracy qui chute en fin d'exercice signale la fatigue de concentration — la solution est de ralentir, pas de forcer.",
+      "Vingt-huit mots de la liste standard.",
+    ],
+    keys: [],
+    tokens: 28,
+    words: true,
+  },
+  {
+    title: "Consolidation — symboles étendus",
+    content: [
+      "Revue de tout ce qui a été introduit depuis les crochets : crochets, accolades, chevrons, plus/égal/tilde, pipe/barre oblique inverse, guillemet simple, accent grave — rien de nouveau, juste du rappel.",
+      "Ce sont les symboles les plus rares du cursus : les revoir une dernière fois avant les leçons suivantes, plus centrées sur les mots et les phrases.",
+      "Exercice concentré sur les symboles de ce lot.",
+    ],
+    keys: ["[", "]", "{", "}", "<", ">", "+", "=", "~", "|", "\\", "'", "`"],
+    tokens: 24,
+  },
 ];
