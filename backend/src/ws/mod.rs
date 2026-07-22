@@ -184,6 +184,10 @@ fn leave_room(rooms: &Rooms, channel_id: &str, player_id: &str) {
     let mut rooms = rooms.lock().unwrap();
     if let Some(room) = rooms.get_mut(channel_id) {
         room.players.retain(|p| p != player_id);
+        // Abandon total (y compris juste après le départ, sans état "décompte" dédié
+        // côté serveur — voir CONTEXT.md) : clôt la course AVANT de retirer une Room
+        // désormais vide, sinon elle reste gelée en RaceState::Racing (issue #23).
+        close_race_if_abandoned(room);
         if room.players.is_empty() {
             rooms.remove(channel_id); // tx droppé → forwards des sockets se terminent
             return;
@@ -192,15 +196,39 @@ fn leave_room(rooms: &Rooms, channel_id: &str, player_id: &str) {
             room.owner = room.players[0].clone(); // transfert au suivant dans la pile
         }
         let _ = room.tx.send(room_state(room));
-        // Si le partant était le dernier attendu, la course se termine maintenant.
-        let should_end = match &room.state {
-            RaceState::Racing { racers, finishers, .. } => all_racers_done(racers, &room.players, finishers),
-            RaceState::Lobby => false,
-        };
-        if should_end {
-            end_race(room);
+    }
+}
+
+/// Si une course tourne et qu'aucun partant encore présent n'attend de finir (tous ont
+/// fini OU quitté), la clôt immédiatement. Les partants jamais finis apparaissent au
+/// classement à 0 WPM — PAS de recompute sur un log vide (piège de l'issue #23 :
+/// l'accuracy y vaudrait 100, pas 0), juste une entrée explicite à 0. Aucun Run n'est
+/// persisté pour un abandon : rien à exclure des PB, il n'y a simplement rien à polluer.
+fn close_race_if_abandoned(room: &mut Room) {
+    let (pending, encore_en_course) = match &room.state {
+        RaceState::Racing { racers, finishers, .. } => {
+            let pending: Vec<PlayerId> = racers
+                .iter()
+                .filter(|r| !finishers.iter().any(|(p, _)| p == *r))
+                .cloned()
+                .collect();
+            let encore_en_course = pending.iter().any(|r| room.players.contains(r));
+            (pending, encore_en_course)
+        }
+        RaceState::Lobby => return,
+    };
+    if encore_en_course {
+        return; // au moins un partant présent n'a pas fini : la course continue
+    }
+    if let RaceState::Racing { finishers, .. } = &mut room.state {
+        for r in &pending {
+            finishers.push((r.clone(), 0.0));
         }
     }
+    for r in &pending {
+        let _ = room.tx.send(ServerEvent::PlayerFinished { player_id: r.clone(), wpm: 0.0 });
+    }
+    end_race(room);
 }
 
 /// StartRace : accepté du seul owner, hors course en cours. Fige les partants,
@@ -549,6 +577,75 @@ mod tests {
         }
 
         // L'owner peut relancer une course sur ce texte neuf.
+        start_race(&rooms, "c1", "p1");
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    }
+
+    #[test]
+    fn abandon_total_pendant_le_decompte_clot_immediatement() {
+        // issue #23 : personne n'a encore fini (voire tapé) — "pendant le décompte" côté
+        // serveur, puisqu'il n'y a pas d'état dédié pour ça (voir CONTEXT.md). Un
+        // spectateur qui reste EMPÊCHE la Room d'être retirée par le garde "vide" — sans
+        // le fix, elle resterait gelée en RaceState::Racing pour toujours (le bug décrit).
+        let rooms = new_rooms();
+        join_room(&rooms, "c1", "p1");
+        join_room(&rooms, "c1", "p2");
+        start_race(&rooms, "c1", "p1");
+        join_room(&rooms, "c1", "spectateur"); // rejoint après le départ, ne part jamais
+
+        leave_room(&rooms, "c1", "p1");
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing()); // p2 encore là
+
+        leave_room(&rooms, "c1", "p2"); // dernier PARTANT : clôture immédiate malgré le spectateur
+        assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+
+        // Utilisable de nouveau : l'owner (transféré au spectateur) peut relancer.
+        start_race(&rooms, "c1", "spectateur");
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    }
+
+    #[test]
+    fn abandon_partiel_classement_a_zero_pour_les_partants_jamais_finis() {
+        let rooms = new_rooms();
+        join_room(&rooms, "c1", "p1");
+        join_room(&rooms, "c1", "p2");
+        join_room(&rooms, "c1", "p3");
+        start_race(&rooms, "c1", "p1");
+        let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
+
+        assert_eq!(record_finish(&rooms, "c1", "p1", 80.0), FinishOutcome::Recorded);
+        leave_room(&rooms, "c1", "p2"); // abandonne sans finir
+        leave_room(&rooms, "c1", "p3"); // dernier partant restant : clôture
+
+        let mut finished_wpm = std::collections::HashMap::new();
+        let mut ranking = None;
+        while let Ok(ev) = rx.try_recv() {
+            match ev {
+                ServerEvent::PlayerFinished { player_id, wpm } => {
+                    finished_wpm.insert(player_id, wpm);
+                }
+                ServerEvent::RaceOver { ranking: r } => ranking = Some(r),
+                _ => {}
+            }
+        }
+        // p2 et p3 apparaissent à 0 WPM (pas de recompute sur log vide, valeur explicite).
+        assert_eq!(finished_wpm.get("p2"), Some(&0.0));
+        assert_eq!(finished_wpm.get("p3"), Some(&0.0));
+        assert_eq!(ranking, Some(s(&["p1", "p2", "p3"]))); // p1 (80) devant les abandons (0)
+    }
+
+    #[test]
+    fn abandon_ne_bloque_pas_une_revanche() {
+        let rooms = new_rooms();
+        join_room(&rooms, "c1", "p1");
+        join_room(&rooms, "c1", "p2");
+        start_race(&rooms, "c1", "p1");
+        leave_room(&rooms, "c1", "p1");
+        leave_room(&rooms, "c1", "p2");
+
+        // La Room a été retirée (vide), mais rejoindre en recrée une aussitôt utilisable.
+        join_room(&rooms, "c1", "p1");
+        join_room(&rooms, "c1", "p2");
         start_race(&rooms, "c1", "p1");
         assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
     }
