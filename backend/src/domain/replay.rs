@@ -50,7 +50,8 @@ struct ReplayResult {
 fn mode_pb_eligible(mode: Mode) -> bool {
     match mode {
         Mode::Time | Mode::Words => true,
-        Mode::Quotes | Mode::Zen | Mode::Drill => false,
+        // Trigram Drill : texte personnalisé, même règle que Drill (ADR 0005).
+        Mode::Quotes | Mode::Zen | Mode::Drill | Mode::TrigramDrill => false,
     }
 }
 
@@ -491,6 +492,8 @@ mod tests {
         assert!(!compute_scoreboard(&input(Mode::Time, 0, "the cat", k.clone(), 1000.0)).pb_eligible);
         // Drill : texte personnalisé ⇒ jamais de PB (même règle que Zen / Time infini).
         assert!(!compute_scoreboard(&input(Mode::Drill, 0, "fjf jfj the", k.clone(), 1000.0)).pb_eligible);
+        // Trigram Drill (ADR 0005) : même règle que Drill, texte tout aussi personnalisé.
+        assert!(!compute_scoreboard(&input(Mode::TrigramDrill, 0, "hat cha", k.clone(), 1000.0)).pb_eligible);
         assert!(compute_scoreboard(&input(Mode::Time, 30, "the cat", k, 1000.0)).pb_eligible);
     }
 

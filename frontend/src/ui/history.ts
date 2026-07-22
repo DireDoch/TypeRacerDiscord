@@ -13,7 +13,7 @@ import { runReplay } from "./replay";
 import { analysisHtml } from "./weak-spots";
 import { MODE_LABELS } from "./mode-labels";
 
-const FILTERS: Mode[] = ["time", "words", "quotes", "zen", "drill"];
+const FILTERS: Mode[] = ["time", "words", "quotes", "zen", "drill", "trigram-drill"];
 
 /** Libellé compact du Mode d'un Run : « temps 30s », « temps ∞ », « mots 25 », « citations »… */
 export function modeLabel(config: RunConfig): string {

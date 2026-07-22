@@ -138,8 +138,13 @@ export class Practice {
         return;
       }
       this.loadingText = false;
-    } else if (this.config.mode === "drill") {
-      // Drill : texte personnalisé depuis les Weak spots du profil (GET /api/profile/analysis).
+    } else if (this.isDrillLike()) {
+      // Drill / Trigram Drill : texte personnalisé depuis les Weak spots du profil
+      // (GET /api/profile/analysis), filtrés par kind selon le Mode (ADR 0005) —
+      // Drill = touche/bigramme, Trigram Drill = trigramme exclusivement. Sans ce
+      // filtre, Drill piocherait des trigrammes dès leur apparition (analyze() trie
+      // tous les kinds confondus par sévérité).
+      const wantTrigram = this.config.mode === "trigram-drill";
       this.targetWords = [];
       this.controller = new FreeInput([]);
       this.loadingText = true;
@@ -147,19 +152,15 @@ export class Practice {
       try {
         const profile = await fetchProfileAnalysis();
         if (seq !== this.resetSeq) return;
-        // Drill cible touche/bigramme uniquement — les trigrammes sont réservés à
-        // Trigram Drill (ADR 0005). Sans ce filtre, un profil qui n'a QUE des
-        // trigrammes significatifs ferait piocher Drill dedans par erreur (analyze()
-        // trie tous les kinds confondus par sévérité).
-        const drillSpots = profile.weakSpots.filter((w) => w.kind !== "trigram");
-        if (drillSpots.length === 0) {
+        const spots = profile.weakSpots.filter((w) => (w.kind === "trigram") === wantTrigram);
+        if (spots.length === 0) {
           // Pas (assez) de données : le Mode l'explique et propose de jouer d'abord.
           this.loadingText = false;
           this.drillNoProfile = true;
           this.render();
           return;
         }
-        this.targetWords = generateDrillText(drillSpots, new Rng(this.seed));
+        this.targetWords = generateDrillText(spots, new Rng(this.seed));
       } catch (e) {
         if (seq !== this.resetSeq) return;
         this.loadingText = false;
@@ -180,6 +181,12 @@ export class Practice {
 
     this.controller = new FreeInput(this.targetWords);
     this.render();
+  }
+
+  /** Drill et Trigram Drill (ADR 0005) : même mécanique, texte personnalisé, source
+   *  de Weak spots filtrée différemment (kind bigramme/touche vs trigramme). */
+  private isDrillLike(): boolean {
+    return this.config.mode === "drill" || this.config.mode === "trigram-drill";
   }
 
   /** Modes à durée variable, sans fin naturelle : terminés uniquement sur Shift+Enter. */
@@ -399,7 +406,7 @@ export class Practice {
     } else if (this.config.mode === "words") {
       const done = this.controller.view().wordIndex;
       progress = `<span class="timer">${done}/${this.config.modeValue}</span>`;
-    } else if (this.config.mode === "quotes" || this.config.mode === "drill") {
+    } else if (this.config.mode === "quotes" || this.isDrillLike()) {
       const done = this.controller.view().wordIndex;
       progress = `<span class="timer">${done}/${this.targetWords.length}</span>`;
     }
@@ -408,15 +415,23 @@ export class Practice {
 
   /** Contenu de la zone #words selon l'état (chargement Quote/Drill / erreur / mots). */
   private wordsAreaHtml(): string {
-    const drill = this.config.mode === "drill";
+    const drillLike = this.isDrillLike();
     if (this.loadingText)
-      return `<div class="loading">${drill ? "Analyse de tes dernières courses…" : "Chargement d'une citation…"}</div>`;
-    if (this.drillNoProfile)
-      return `<div class="loading">Pas encore assez de données pour cibler tes faiblesses — joue d'abord quelques courses (time, words…), puis reviens ici.</div>`;
+      return `<div class="loading">${drillLike ? "Analyse de tes dernières courses…" : "Chargement d'une citation…"}</div>`;
+    if (this.drillNoProfile) {
+      // État vide dédié (ADR 0005) : Trigram Drill distingue « profil présent mais
+      // aucun trigramme significatif » de celui de Drill (« pas de profil du tout »),
+      // et renvoie vers Drill comme alternative immédiatement jouable.
+      const msg =
+        this.config.mode === "trigram-drill"
+          ? "Aucun trigramme significatif pour l'instant — essaie plutôt Drill (touches/bigrammes), ou continue à jouer pour en accumuler."
+          : "Pas encore assez de données pour cibler tes faiblesses — joue d'abord quelques courses (time, words…), puis reviens ici.";
+      return `<div class="loading">${msg}</div>`;
+    }
     if (this.loadError) {
       const base = this.loadErrorIsIdentity
         ? IDENTITY_ERROR_MESSAGE
-        : drill
+        : drillLike
           ? "Impossible de charger ton profil."
           : "Impossible de charger la citation.";
       return `<div class="loading">${base} Tab pour réessayer.</div>`;
@@ -436,7 +451,7 @@ export class Practice {
       const regen =
         this.config.mode === "quotes"
           ? "Tab pour une autre citation"
-          : this.config.mode === "drill"
+          : this.isDrillLike()
             ? "Tab pour un autre texte"
             : "Tab pour regénérer";
       return `Clique ou tape pour démarrer · ${regen}`;
@@ -450,10 +465,9 @@ export class Practice {
   // --- Barre de configuration -------------------------------------------------
 
   private configBarHtml(): string {
-    // Quotes (texte imposé), Zen (aucun texte) et Drill (texte personnalisé) :
-    // ni longueur ni Settings applicables.
-    const noText =
-      this.config.mode === "quotes" || this.config.mode === "zen" || this.config.mode === "drill";
+    // Quotes (texte imposé), Zen (aucun texte) et Drill/Trigram Drill (texte
+    // personnalisé) : ni longueur ni Settings applicables.
+    const noText = this.config.mode === "quotes" || this.config.mode === "zen" || this.isDrillLike();
     const values = this.config.mode === "time" ? TIME_VALUES : WORD_VALUES;
     const valueBtns = values
       .map(
@@ -478,6 +492,7 @@ export class Practice {
           ${modeBtn("quotes")}
           ${modeBtn("zen")}
           ${modeBtn("drill")}
+          ${modeBtn("trigram-drill")}
         </div>
         ${valueGroup}
         ${settingsGroup}

@@ -23,6 +23,11 @@ pub enum Mode {
     Quotes,
     Zen,
     Drill,
+    /// Trigram Drill (ADR 0005) : Practice Mode séparé de Drill, ciblé exclusivement
+    /// sur les Weak spots de kind `trigram`. Wire value "trigram-drill" (override,
+    /// `rename_all = "lowercase"` seul donnerait "trigramdrill").
+    #[serde(rename = "trigram-drill")]
+    TrigramDrill,
 }
 
 impl Mode {
@@ -34,6 +39,7 @@ impl Mode {
             Mode::Quotes => "quotes",
             Mode::Zen => "zen",
             Mode::Drill => "drill",
+            Mode::TrigramDrill => "trigram-drill",
         }
     }
 
@@ -45,6 +51,7 @@ impl Mode {
             "quotes" => Some(Mode::Quotes),
             "zen" => Some(Mode::Zen),
             "drill" => Some(Mode::Drill),
+            "trigram-drill" => Some(Mode::TrigramDrill),
             _ => None,
         }
     }
