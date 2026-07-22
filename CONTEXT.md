@@ -75,7 +75,7 @@ A Practice Mode whose text targets the Player's current Weak spots: a short warm
 _Avoid_: Practice mode, Training, Exercise mode.
 
 **Quote**:
-The fixed text fetched for a Quotes Run (text + author), via the Rust quote proxy. Settings and length controls do not apply — the Player types the whole Quote. The author name builds a "learn more" link to that author's Wikipedia page.
+The fixed text fetched for a Quotes Run (text + author), via the Rust quote proxy. Settings and length controls do not apply — the Player types the whole Quote. The author name builds a "learn more" link to that author's Wikipedia page. Quote length varies Run to Run but the Config bucket doesn't capture it, so Quotes never produce a PB (same rule as Drill: uncaptured text variation makes Runs incomparable).
 _Avoid_: Citation, Passage.
 
 **Lesson**:
