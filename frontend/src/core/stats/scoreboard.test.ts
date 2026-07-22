@@ -139,6 +139,16 @@ describe("computeScoreboard — Zen et éligibilité PB", () => {
     expect(computeScoreboard(base({ mode: "time", modeValue: 0, keystrokes: k })).pbEligible).toBe(false);
     expect(computeScoreboard(base({ mode: "time", modeValue: 30, keystrokes: k })).pbEligible).toBe(true);
   });
+
+  it("Quotes exclu des PB (issue #14, ADR 0003) : longueur non capturée par le bucket", () => {
+    const k = log([100, "a"]);
+    expect(computeScoreboard(base({ mode: "quotes", modeValue: 0, keystrokes: k })).pbEligible).toBe(false);
+    // Une Quote courte et une longue ne se disputent donc jamais un PB.
+    const short = computeScoreboard(base({ mode: "quotes", modeValue: 0, targetText: "hi", keystrokes: log([100, "h"], [200, "i"]) }));
+    const long = computeScoreboard(base({ mode: "quotes", modeValue: 0, targetText: "the cat sat", keystrokes: k }));
+    expect(short.pbEligible).toBe(false);
+    expect(long.pbEligible).toBe(false);
+  });
 });
 
 describe("computeScoreboard — durée : le client n'est jamais la source (issue #11)", () => {

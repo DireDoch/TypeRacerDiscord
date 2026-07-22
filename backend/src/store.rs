@@ -340,6 +340,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn quotes_courte_et_longue_ne_se_disputent_jamais_un_pb() {
+        // issue #14 / ADR 0003 : compute_scoreboard renvoie pb_eligible=false pour Quotes ;
+        // les deux Runs restent dans l'historique mais aucun ne devient/bat un PB.
+        let pool = mem_pool().await;
+        let c = RunConfig { mode: Mode::Quotes, mode_value: 0, language: "english".into(), punctuation: false, numbers: false };
+        insert_run(&pool, "r1", "p1", 1000, "practice", &c, &sb(50.0, false), "[]", "hi").await.unwrap();
+        insert_run(&pool, "r2", "p1", 2000, "practice", &c, &sb(200.0, false), "[]", "the cat sat on the mat").await.unwrap();
+        assert_eq!(previous_pb(&pool, "p1", &c).await.unwrap(), None);
+        assert_eq!(history(&pool, "p1", None, None, 50).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
     async fn keystroke_log_persiste_et_kind_dans_historique() {
         let pool = mem_pool().await;
         let c = cfg();

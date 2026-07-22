@@ -44,12 +44,20 @@ struct ReplayResult {
     completions: Vec<Completion>,
 }
 
+// Éligibilité PB par défaut du Mode : Zen (durée variable), Drill (texte personnalisé)
+// et Quotes (longueur non capturée par le Config bucket, ADR 0003) sont incomparables.
+// Time infini est une exception À L'INTÉRIEUR de Time (propriété d'UN Run, pas du Mode).
+fn mode_pb_eligible(mode: Mode) -> bool {
+    match mode {
+        Mode::Time | Mode::Words => true,
+        Mode::Quotes | Mode::Zen | Mode::Drill => false,
+    }
+}
+
 pub fn compute_scoreboard(input: &ScoreInput) -> Scoreboard {
     let duration_ms = resolve_duration(input);
-    // Zen / Time infini : durée variable. Drill : texte personnalisé. Tous incomparables → pas de PB.
-    let pb_eligible = input.mode != Mode::Zen
-        && input.mode != Mode::Drill
-        && !(input.mode == Mode::Time && input.mode_value == 0);
+    let pb_eligible =
+        mode_pb_eligible(input.mode) && !(input.mode == Mode::Time && input.mode_value == 0);
 
     let result = if input.mode == Mode::Zen {
         replay_zen(&input.keystrokes)
@@ -618,6 +626,16 @@ mod tests {
         // Drill : texte personnalisé ⇒ jamais de PB (même règle que Zen / Time infini).
         assert!(!compute_scoreboard(&input(Mode::Drill, 0, "fjf jfj the", k.clone(), 1000.0)).pb_eligible);
         assert!(compute_scoreboard(&input(Mode::Time, 30, "the cat", k, 1000.0)).pb_eligible);
+    }
+
+    #[test]
+    fn quotes_exclu_du_pb_longueur_non_capturee_par_le_bucket() {
+        // issue #14 / ADR 0003 : une Quote courte et une longue partagent le même bucket
+        // (mode_value = 0 pour toutes) ⇒ jamais comparables, jamais de PB.
+        let court = compute_scoreboard(&input(Mode::Quotes, 0, "hi", log(&[(100.0, "h", None), (200.0, "i", None)]), 200.0));
+        let long = compute_scoreboard(&input(Mode::Quotes, 0, "the cat sat", log(&[(100.0, "a", None)]), 100.0));
+        assert!(!court.pb_eligible);
+        assert!(!long.pb_eligible);
     }
 
     #[test]

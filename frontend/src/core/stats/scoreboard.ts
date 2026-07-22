@@ -52,13 +52,21 @@ const wordCorrect = (typed: string, target: string): number => {
   return n;
 };
 
+// Éligibilité PB par défaut du Mode : Zen (durée variable), Drill (texte personnalisé)
+// et Quotes (longueur non capturée par le Config bucket, ADR 0003) sont incomparables.
+// Time infini est une exception À L'INTÉRIEUR de Time (propriété d'UN Run, pas du Mode).
+const MODE_PB_ELIGIBLE: Record<Mode, boolean> = {
+  time: true,
+  words: true,
+  quotes: false,
+  zen: false,
+  drill: false,
+};
+
 export function computeScoreboard(input: ScoreInput): Scoreboard {
   const durationMs = resolveDuration(input);
-  // Zen / Time infini : durée variable. Drill : texte personnalisé. Tous incomparables → pas de PB.
   const pbEligible =
-    input.mode !== "zen" &&
-    input.mode !== "drill" &&
-    !(input.mode === "time" && input.modeValue === 0);
+    MODE_PB_ELIGIBLE[input.mode] && !(input.mode === "time" && input.modeValue === 0);
 
   const result =
     input.mode === "zen"
