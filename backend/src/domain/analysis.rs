@@ -20,6 +20,9 @@ use crate::domain::types::{AnalysisResponse, ControlKey, Keystroke, WeakSpot};
 
 /// Seuils (constantes ajustables — voir l'issue #3).
 const MIN_OCCURRENCES: i64 = 10; // en-dessous : bruit, jamais un Weak spot
+// Trigrammes mécaniquement plus rares qu'un bigramme (il faut les DEUX voisins
+// présents et non cassés) : seuil séparé, plus bas (ADR 0005).
+const MIN_OCCURRENCES_TRIGRAM: i64 = 5;
 const SLOW_FACTOR: f64 = 1.5; // lent = délai moyen ≥ 1,5× SA moyenne globale
 const FAULTY_FACTOR: f64 = 2.0; // fautif = taux d'erreur ≥ 2× SON taux global…
 const FAULTY_FLOOR: f64 = 0.05; // …et jamais sous 5 % (un très bon joueur n'est pas « faible » à 1 %)
@@ -38,6 +41,7 @@ struct KeyStat {
 pub fn analyze(runs: &[(&str, &[Keystroke])]) -> AnalysisResponse {
     let mut keys: HashMap<String, KeyStat> = HashMap::new();
     let mut bigrams: HashMap<String, KeyStat> = HashMap::new();
+    let mut trigrams: HashMap<String, KeyStat> = HashMap::new();
     let mut runs_analyzed = 0i64;
 
     for (target_text, log) in runs {
@@ -45,7 +49,7 @@ pub fn analyze(runs: &[(&str, &[Keystroke])]) -> AnalysisResponse {
             continue;
         }
         runs_analyzed += 1;
-        collect(target_text, log, &mut keys, &mut bigrams);
+        collect(target_text, log, &mut keys, &mut bigrams, &mut trigrams);
     }
 
     // Moyennes globales du joueur (sur les touches — les bigrammes en dérivent).
@@ -60,9 +64,14 @@ pub fn analyze(runs: &[(&str, &[Keystroke])]) -> AnalysisResponse {
     let global_error_rate = if count > 0 { errors as f64 / count as f64 } else { 0.0 };
 
     let mut weak_spots: Vec<WeakSpot> = Vec::new();
-    for (kind, map) in [("key", &keys), ("bigram", &bigrams)] {
+    let kinds: [(&str, &HashMap<String, KeyStat>, i64); 3] = [
+        ("key", &keys, MIN_OCCURRENCES),
+        ("bigram", &bigrams, MIN_OCCURRENCES),
+        ("trigram", &trigrams, MIN_OCCURRENCES_TRIGRAM),
+    ];
+    for (kind, map, min_occurrences) in kinds {
         for (chars, s) in map {
-            if s.count < MIN_OCCURRENCES {
+            if s.count < min_occurrences {
                 continue;
             }
             let mean_delay_ms = if s.delay_count > 0 { s.delay_sum / s.delay_count as f64 } else { 0.0 };
@@ -108,6 +117,7 @@ fn collect(
     log: &[Keystroke],
     keys: &mut HashMap<String, KeyStat>,
     bigrams: &mut HashMap<String, KeyStat>,
+    trigrams: &mut HashMap<String, KeyStat>,
 ) {
     let target: Vec<Vec<char>> = target_text.split(' ').map(|w| w.chars().collect()).collect();
     let mut locked: Vec<String> = Vec::new();
@@ -116,6 +126,11 @@ fn collect(
     // Caractère cible de la frappe imprimable PRÉCÉDENTE, si adjacente (bigramme
     // intra-mot : cassé par espace, backspace ou Extra).
     let mut prev_expected: Option<char> = None;
+    // Trigramme = caractère AVANT le précédent + le précédent + le courant, attribué
+    // aux stats du précédent (le fautif « au milieu », avec un voisin de chaque côté).
+    // Cassé aux mêmes points que le bigramme.
+    let mut prev_prev_expected: Option<char> = None;
+    let mut prev_record: Option<(bool, Option<f64>)> = None;
 
     for k in log {
         let delay = prev_t.map(|p| k.t - p);
@@ -128,6 +143,8 @@ fn collect(
                 }
                 typed.clear();
                 prev_expected = None;
+                prev_prev_expected = None;
+                prev_record = None;
                 continue;
             }
             Some(ControlKey::Backspace) => {
@@ -137,6 +154,8 @@ fn collect(
                     }
                 }
                 prev_expected = None;
+                prev_prev_expected = None;
+                prev_record = None;
                 continue;
             }
             None => {}
@@ -148,10 +167,14 @@ fn collect(
                 // entrée client (voir issue #11) — même garde défensive que replay.rs, sinon
                 // un mot vide s'empile et décale toutes les attributions pour le reste du Run.
                 prev_expected = None;
+                prev_prev_expected = None;
+                prev_record = None;
                 continue;
             }
             locked.push(std::mem::take(&mut typed));
             prev_expected = None;
+            prev_prev_expected = None;
+            prev_record = None;
             continue;
         }
 
@@ -169,6 +192,8 @@ fn collect(
 
         let Some(expected) = expected else {
             prev_expected = None; // Extra : pas de caractère cible
+            prev_prev_expected = None;
+            prev_record = None;
             continue;
         };
 
@@ -178,6 +203,11 @@ fn collect(
         if let Some(pe) = prev_expected {
             bump(bigrams, format!("{pe}{expected}"), is_error, good_delay);
         }
+        if let (Some(x), Some(y), Some((y_err, y_delay))) = (prev_prev_expected, prev_expected, prev_record) {
+            bump(trigrams, format!("{x}{y}{expected}"), y_err, y_delay);
+        }
+        prev_prev_expected = prev_expected;
+        prev_record = Some((is_error, good_delay));
         prev_expected = Some(expected);
     }
 }
@@ -318,5 +348,95 @@ mod tests {
         let res = analyze(&[(text.as_str(), log.as_slice())]);
         assert_eq!(res.global_error_rate, 0.0);
         assert!(res.weak_spots.iter().all(|w| !w.faulty));
+    }
+
+    #[test]
+    fn trigramme_lent_detecte_avec_seuil_plus_bas_que_bigramme_ou_touche() {
+        // 6 répétitions de « tache » (h 4× plus lent) : sous MIN_OCCURRENCES (10) pour
+        // la touche 'h' seule, mais au-dessus de MIN_OCCURRENCES_TRIGRAM (5) pour le
+        // trigramme « che » — démontre le seuil distinct de l'ADR 0005.
+        let text = ["tache"; 6].join(" ");
+        let log = perfect_log(&text, 100.0, "h", 400.0);
+        let res = analyze(&[(text.as_str(), log.as_slice())]);
+
+        assert!(
+            !res.weak_spots.iter().any(|w| w.chars == "h" && w.kind == "key"),
+            "6 occurrences : sous le seuil MIN_OCCURRENCES (10) pour une touche seule"
+        );
+        let che = res
+            .weak_spots
+            .iter()
+            .find(|w| w.chars == "che" && w.kind == "trigram")
+            .expect("trigramme che absent malgré 6 ≥ MIN_OCCURRENCES_TRIGRAM");
+        assert!(che.slow, "che devrait être lent (h en son centre)");
+        assert_eq!(che.occurrences, 6);
+    }
+
+    #[test]
+    fn trigramme_fautif_attribue_au_caractere_du_milieu() {
+        // « chat » × 12, le 'a' (index 2, AVANT h et APRÈS t dans la fenêtre) tapé
+        // faux à chaque fois, jamais corrigé (pas de backspace : la chaîne n'est pas
+        // cassée). Le trigramme attendu est « hat » (h AVANT le 'a' fautif, t APRÈS) —
+        // pas « cha » (h est toujours correct, donc pas de fautif en son centre à lui).
+        let mut log: Vec<Keystroke> = Vec::new();
+        let mut t = 0.0;
+        for i in 0..12 {
+            for (idx, c) in "chat".chars().enumerate() {
+                t += 100.0;
+                let typed = if idx == 2 { 'x' } else { c };
+                log.push(Keystroke { t, k: typed.to_string(), ctrl: None });
+            }
+            if i < 11 {
+                t += 100.0;
+                log.push(Keystroke { t, k: " ".to_string(), ctrl: None });
+            }
+        }
+        let text = ["chat"; 12].join(" ");
+        let res = analyze(&[(text.as_str(), log.as_slice())]);
+
+        let hat = res
+            .weak_spots
+            .iter()
+            .find(|w| w.chars == "hat" && w.kind == "trigram")
+            .expect("trigramme hat absent");
+        assert!(hat.faulty, "hat devrait être fautif (le 'a' en son centre l'est toujours)");
+        assert!(
+            !res.weak_spots.iter().any(|w| w.chars == "cha" && w.kind == "trigram" && w.faulty),
+            "cha ne doit pas être fautif : son centre (h) est toujours tapé correctement"
+        );
+    }
+
+    #[test]
+    fn trigramme_casse_par_espace_backspace_et_extra() {
+        // Chaque mot est trop court (2 lettres) pour former un trigramme intra-mot à
+        // lui seul, ET on backspace en tête de mot avant de retaper : aucun trigramme
+        // ne doit jamais apparaître, quel que soit le nombre de répétitions.
+        let words = ["ab", "cd", "ab", "cd", "ab", "cd", "ab", "cd"];
+        let mut log: Vec<Keystroke> = Vec::new();
+        let mut t = 0.0;
+        for (i, w) in words.iter().enumerate() {
+            for c in w.chars() {
+                t += 100.0;
+                log.push(Keystroke { t, k: c.to_string(), ctrl: None });
+            }
+            if i < words.len() - 1 {
+                t += 100.0;
+                log.push(Keystroke { t, k: " ".to_string(), ctrl: None });
+                // Backspace-mot juste après l'espace, puis retape le même mot : casse
+                // toute chaîne qui aurait pu franchir la frontière du mot suivant.
+                t += 100.0;
+                log.push(Keystroke { t, k: "".to_string(), ctrl: Some(ControlKey::BackspaceWord) });
+                for c in w.chars() {
+                    t += 100.0;
+                    log.push(Keystroke { t, k: c.to_string(), ctrl: None });
+                }
+            }
+        }
+        let text = words.join(" ");
+        let res = analyze(&[(text.as_str(), log.as_slice())]);
+        assert!(
+            !res.weak_spots.iter().any(|w| w.kind == "trigram"),
+            "aucun mot ne fait 3 lettres consécutives non cassées : pas de trigramme possible"
+        );
     }
 }
