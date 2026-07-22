@@ -7,13 +7,26 @@ import { generateLessonExercise, generateLessonText, requiredAccuracy, LESSONS }
 import { Rng } from "./text-gen/rng";
 
 describe("requiredAccuracy (barème statique par tranches)", () => {
-  it("leçons 1–5 indulgentes, tranches suivantes plus strictes", () => {
+  it("leçons 1–5 indulgentes, tranches suivantes de plus en plus strictes (ADR 0006)", () => {
     expect(requiredAccuracy(0)).toBe(70);
     expect(requiredAccuracy(4)).toBe(70);
-    expect(requiredAccuracy(5)).toBe(80);
-    expect(requiredAccuracy(9)).toBe(80);
-    expect(requiredAccuracy(10)).toBe(90);
-    expect(requiredAccuracy(99)).toBe(90);
+    expect(requiredAccuracy(5)).toBe(75);
+    expect(requiredAccuracy(9)).toBe(75);
+    expect(requiredAccuracy(10)).toBe(80);
+    expect(requiredAccuracy(20)).toBe(82);
+    expect(requiredAccuracy(35)).toBe(85);
+    expect(requiredAccuracy(50)).toBe(87);
+    expect(requiredAccuracy(70)).toBe(90);
+    expect(requiredAccuracy(90)).toBe(92);
+    expect(requiredAccuracy(99)).toBe(92);
+  });
+
+  it("aucune tranche ne couvre plus de 20 leçons (granularité, ADR 0006)", () => {
+    const froms = [0, 5, 10, 20, 35, 50, 70, 90];
+    for (let i = 1; i < froms.length; i++) {
+      expect(froms[i] - froms[i - 1]).toBeLessThanOrEqual(20);
+    }
+    expect(100 - froms[froms.length - 1]).toBeLessThanOrEqual(20);
   });
 });
 
