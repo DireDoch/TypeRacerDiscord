@@ -13,7 +13,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::types::Keystroke;
+use crate::domain::types::{Keystroke, PerSecondPoint};
 
 /// Clé d'une Room : soit un `ChannelId`, soit un Code de partie. Les deux formes ne
 /// peuvent pas se confondre — un snowflake fait 18-19 chiffres, un code en fait 5.
@@ -102,6 +102,45 @@ pub struct PlayerEntry {
     pub avatar_hash: Option<String>,
 }
 
+/// L'arrivée d'un partant, telle que le podium l'affiche (ADR 0010).
+///
+/// Le serveur possédait déjà tout ça — il le calculait au Finish, s'en servait pour
+/// classer, puis n'en gardait que le WPM. Il le retient désormais jusqu'à la clôture.
+/// C'est ce qui permet au podium d'afficher le **Gap** (dérivé des `duration_ms`) et de
+/// déplier le graphe d'un joueur **sans aucun aller-retour**.
+///
+/// On ne passe PAS par `GET /api/runs/:id` : cet endpoint est délibérément scopé au
+/// demandeur, et le serveur ne peut pas vérifier après coup « tu étais partant de cette
+/// course » (la composition vit dans la Room, en mémoire, et meurt avec elle). Le
+/// WebSocket n'a pas ce problème : il n'atteint que les sockets de la Room.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RaceResult {
+    pub player_id: PlayerId,
+    pub wpm: f64,
+    pub accuracy: f64,
+    pub duration_ms: f64,
+    /// Abandon (volontaire ou déconnexion) : aucun recompute n'est fait sur son log,
+    /// donc pas de série et pas de graphe à déplier.
+    pub forfeit: bool,
+    pub per_second: Vec<PerSecondPoint>,
+}
+
+impl RaceResult {
+    /// Une arrivée qui n'en est pas une. Valeurs explicites plutôt qu'un recompute sur
+    /// un log vide — l'accuracy y vaudrait 100, pas 0 (piège de l'issue #23).
+    pub fn forfeited(player_id: &str) -> RaceResult {
+        RaceResult {
+            player_id: player_id.to_string(),
+            wpm: 0.0,
+            accuracy: 0.0,
+            duration_ms: 0.0,
+            forfeit: true,
+            per_second: Vec::new(),
+        }
+    }
+}
+
 /// Messages Client → Serveur.
 /// Wire : JSON internally-tagged, ex. `{ "type": "JoinChannel", "channelId": "123" }`.
 #[derive(Debug, Deserialize)]
@@ -157,8 +196,9 @@ pub enum ServerEvent {
     PlayerProgress { player_id: PlayerId, chars_done: u32 },
     /// Scoreboard autoritaire d'un joueur ayant fini (recompute serveur).
     PlayerFinished { player_id: PlayerId, wpm: f64 },
-    /// Classement final.
-    RaceOver { ranking: Vec<PlayerId> },
+    /// Fin de course : les résultats COMPLETS, dans l'ordre du classement (ADR 0010).
+    /// L'ordre du tableau EST le classement — il n'y a pas de champ d'ordre séparé.
+    RaceOver { results: Vec<RaceResult> },
     /// Code de partie inconnu. Envoyé au SEUL socket demandeur (pas de diffusion :
     /// il n'y a aucune Room à qui le diffuser). Le socket reste ouvert — le joueur
     /// corrige son code et retente sans se reconnecter.

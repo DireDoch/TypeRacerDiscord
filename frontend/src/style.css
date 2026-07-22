@@ -528,6 +528,90 @@ button.primary:hover {
   color: var(--main);
 }
 
+/* Podium : trois marches, le 1er au centre et plus haut. Le Gap est l'élément dominant
+   de chaque place — c'est LE chiffre du glossaire, pas le WPM. */
+.podium {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  align-items: end;
+  gap: 0.5rem;
+  width: min(560px, 100%);
+}
+.podium-step {
+  display: grid;
+  justify-items: center;
+  gap: 0.2rem;
+  padding: 0.7rem 0.4rem;
+  background: var(--panel);
+  border: none;
+  border-radius: 0.5rem 0.5rem 0 0;
+  color: var(--text);
+  cursor: pointer;
+  text-align: center;
+}
+.podium-step.place-1 {
+  padding-top: 1.4rem; /* la marche du vainqueur est la plus haute */
+}
+.podium-step.place-3 {
+  padding-top: 0.4rem;
+}
+.podium-medal {
+  font-size: 1.3rem;
+}
+.podium-gap {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--main);
+  font-variant-numeric: tabular-nums;
+}
+.podium-name {
+  font-size: 0.9rem;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.podium-stats {
+  font-size: 0.8rem;
+  color: var(--sub);
+}
+.podium-step.me,
+.podium-row.me {
+  outline: 2px solid var(--main);
+}
+
+/* Les autres restent VISIBLES avec nom et score — ils ne disparaissent pas du résultat. */
+.podium-rest {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  width: min(560px, 100%);
+  margin-top: 0.6rem;
+}
+.podium-row {
+  display: grid;
+  grid-template-columns: 2rem 1.6rem 1fr auto auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--panel);
+  border: none;
+  border-radius: 0.4rem;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.podium-row .podium-gap {
+  font-size: 0.95rem;
+}
+.podium-rank {
+  color: var(--sub);
+  font-variant-numeric: tabular-nums;
+}
+.podium-detail {
+  width: min(560px, 100%);
+}
+
 .ranking {
   list-style: none;
   padding: 0;

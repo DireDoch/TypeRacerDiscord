@@ -171,6 +171,17 @@ reste jouable sans réseau, et l'appelant (hors verrou) déclenche la citation p
 Le repli après échec du proxy n'est pas un état à part : la Room bascule pour de vrai sur
 `Words(30)`, et c'est ce que `RoomState` annonce.
 
+**Fin de course : `RaceOver` porte les résultats, pas l'ordre.**
+Le serveur retient le scoreboard COMPLET de chaque partant jusqu'à la clôture, au lieu de
+n'en garder que le WPM, et diffuse `RaceOver { results }` où **l'ordre du tableau EST le
+classement** (ADR 0010). Le podium en tire le **Gap** et déplie le graphe d'un joueur sans
+aucun aller-retour. On ne passe volontairement PAS par `GET /api/runs/:id` : il est scopé
+au demandeur, et le serveur ne peut pas vérifier après coup « tu étais partant de cette
+course » (la composition vit dans la Room et meurt avec elle). Le WebSocket n'a pas ce
+problème — l'autorisation est la connexion elle-même. `PlayerFinished` reste le signal
+**live** « untel a fini », pour la piste ; le podium ne s'en nourrit plus.
+Tri : abandons derrière tous les finisseurs, puis WPM décroissant.
+
 **Party leader (Race).**
 C'est l'`owner` existant, sans changement : 1er arrivé dans la Room, transféré au suivant
 s'il part. Le brief « le créateur est le party leader » est déjà vrai par construction —
@@ -314,7 +325,10 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
   Code de partie, réglage de la Source de texte pour l'hôte), décompte de
   `RACE_COUNTDOWN_S` = **7 s** (ADR 0007) avec texte entier, **piste** (une ligne par
   joueur : avatar en tête de progression, nom, WPM live à la ligne d'arrivée — les
-  anciennes barres recostumées en CSS, aucun canvas), classement, revanche. Écran **Menu** (`ui/menu.ts`) : hub
+  anciennes barres recostumées en CSS, aucun canvas), revanche.
+- Écran **Podium** (`ui/podium.ts`, ADR 0010) : trois marches + les autres visibles à
+  côté, le **Gap** en gros, clic sur un joueur → son graphe par seconde (`drawChart`
+  réutilisé de `results.ts`) **sans aucune requête**. Tout vient de `RaceOver`. Écran **Menu** (`ui/menu.ts`) : hub
   d'arrivée + vue Options (liens légaux). Navigation par boutons avec `destroy()`.
 - Écran **Apprendre** (`ui/learn.ts`, entrée au menu) : cursus complet (issues #4, #8) —
   liste des Lessons (verrouillée/disponible/complétée), 13 leçons réelles dans

@@ -6,7 +6,22 @@
 //  Wire JSON internally-tagged, ex. { "type": "JoinRoom", "channelId": "123" }.
 // =============================================================================
 
-import type { Keystroke } from "./types";
+import type { Keystroke, PerSecondPoint } from "./types";
+
+/**
+ * L'arrivée d'un partant, telle que le podium l'affiche (ADR 0010). Le serveur possédait
+ * déjà tout ça et n'en gardait que le WPM ; il le transmet désormais d'un bloc, ce qui
+ * permet au podium d'afficher le **Gap** et de déplier un graphe sans aucun aller-retour.
+ */
+export interface RaceResult {
+  playerId: string;
+  wpm: number;
+  accuracy: number;
+  durationMs: number;
+  /** Abandon (ou déconnexion) : pas de série, donc pas de graphe à déplier. */
+  forfeit: boolean;
+  perSecond: PerSecondPoint[];
+}
 
 /**
  * D'où vient le texte d'une Race (ADR 0009). Ce n'est PAS un Mode : la règle de fin
@@ -71,7 +86,8 @@ export type ServerEvent =
   | { type: "RaceStart"; startAtEpochMs: number }
   | { type: "PlayerProgress"; playerId: string; charsDone: number }
   | { type: "PlayerFinished"; playerId: string; wpm: number }
-  | { type: "RaceOver"; ranking: string[] }
+  // L'ORDRE DU TABLEAU EST LE CLASSEMENT — pas de champ d'ordre séparé (ADR 0010).
+  | { type: "RaceOver"; results: RaceResult[] }
   // Échecs de jointure : envoyés au SEUL socket demandeur (aucune Room à qui diffuser).
   | { type: "RoomNotFound" }
   | { type: "RoomFull" };

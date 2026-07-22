@@ -15,7 +15,7 @@ import {
   Tooltip,
   Legend,
 } from "chart.js";
-import type { AnalysisResponse, SubmitRunResponse } from "../core/types";
+import type { AnalysisResponse, PerSecondPoint, SubmitRunResponse } from "../core/types";
 import { AUTHORITATIVE_BACKEND, fetchAnalysis, isIdentityError, IDENTITY_ERROR_MESSAGE } from "../api";
 import { escapeText } from "./typing-zone";
 import { analysisHtml } from "./weak-spots";
@@ -118,10 +118,8 @@ function pbLabel(res: SubmitRunResponse): string {
   return res.previousPbWpm !== null ? `${res.previousPbWpm}` : "—";
 }
 
-function drawChart(
-  canvas: HTMLCanvasElement,
-  perSecond: SubmitRunResponse["scoreboard"]["perSecond"],
-): void {
+/** Exporté pour le podium de Race (ADR 0010) : même graphe, autre source de données. */
+export function drawChart(canvas: HTMLCanvasElement, perSecond: PerSecondPoint[]): void {
   const labels = perSecond.map((p) => p.t);
   new Chart(canvas, {
     type: "line",

@@ -24,9 +24,11 @@ import {
   type ClientEvent,
   type Identity,
   type PlayerEntry,
+  type RaceResult,
   type ServerEvent,
   type TextSource,
 } from "../core/net";
+import { podiumHtml, wirePodium, type PodiumOptions } from "./podium";
 import { liveWpm } from "../live-stats";
 import { wordsHtml, placeCaret, escapeText } from "./typing-zone";
 import { avatarUrl, getIdentity, proxyBase } from "../discord";
@@ -78,9 +80,10 @@ export class Race {
 
   /** charsDone diffusé par joueur (barres, non autoritaire). */
   private progress = new Map<string, number>();
-  /** WPM autoritaire par joueur ayant fini. */
+  /** WPM autoritaire par joueur ayant fini (signal LIVE, pour la piste). */
   private finished = new Map<string, number>();
-  private ranking: string[] = [];
+  /** Résultats complets de la dernière course, DANS L'ORDRE DU CLASSEMENT (ADR 0010). */
+  private results: RaceResult[] = [];
   private countdownN = RACE_COUNTDOWN_S;
   private countdown: Countdown | null = null;
   private rafId = 0;
@@ -163,7 +166,7 @@ export class Race {
         if (this.phase === "running") this.renderBars();
         break;
       case "RaceOver":
-        this.ranking = e.ranking;
+        this.results = e.results;
         this.phase = "over";
         cancelAnimationFrame(this.rafId);
         this.render();
@@ -258,6 +261,7 @@ export class Race {
       .querySelector<HTMLButtonElement>("#exitRace")
       ?.addEventListener("click", () => this.onExit?.());
     this.wireSourceButtons();
+    if (this.phase === "over") wirePodium(this.root, this.podiumOptions());
     // Décompte et début de course passent par render() : le bloc doit être placé
     // là aussi, sinon le 1er caractère (inversé sous lui) reste invisible.
     const wordsEl = this.root.querySelector<HTMLElement>("#words");
@@ -308,8 +312,11 @@ export class Race {
           <p class="hint">${this.doneLocal ? "Terminé — en attente des autres…" : "Tape le texte ; corrige tes fautes pour finir"}</p>`;
       case "over":
         // Revanche : le serveur a déjà re-diffusé un RoomState avec un NOUVEAU texte ;
-        // le même bouton StartRace relance (owner seulement).
-        return this.rankingHtml() + this.startBtnHtml() + this.exitBtnHtml();
+        // le même bouton StartRace relance (owner seulement). Le podium est donc posé
+        // par-dessus un lobby DÉJÀ prêt — aucune séquence serveur, aucun minuteur.
+        return (
+          podiumHtml(this.podiumOptions()) + this.startBtnHtml() + this.exitBtnHtml()
+        );
     }
   }
 
@@ -416,18 +423,8 @@ export class Race {
       .join("");
   }
 
-  private rankingHtml(): string {
-    const rows = this.ranking
-      .map((id, i) => {
-        const wpm = this.finished.get(id);
-        const name = this.players.find((p) => p.playerId === id)?.displayName ?? id;
-        const label = id === this.me ? `${name} (toi)` : name;
-        return `<li class="${id === this.me ? "me" : ""}">${i + 1}. ${escapeText(label)}${
-          wpm !== undefined ? ` — ${wpm} wpm` : ""
-        }</li>`;
-      })
-      .join("");
-    return `<ol class="ranking">${rows}</ol>`;
+  private podiumOptions(): PodiumOptions {
+    return { results: this.results, players: this.players, me: this.me };
   }
 }
 
