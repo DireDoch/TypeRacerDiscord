@@ -23,19 +23,32 @@ export interface Lesson {
   tokens: number;
   /** true : l'exercice tire de VRAIS mots de la word-list (leçons mots/fluidité). */
   words?: boolean;
+  /**
+   * Référence d'illustration statique (positionnement mains/clavier), réservée
+   * aux toutes premières Lessons (ADR 0006). Non consommé avant #29 — inutilisé
+   * si absent, aucun effet sur les Lessons existantes.
+   */
+  diagram?: string;
 }
 
 // ----------------------------------------------------------------------------
 //  Barème de déblocage — TABLEAU STATIQUE, modifiable ICI SEUL (décision grilling).
 //  Une tranche s'applique à partir de la leçon `from` (index 0-based) : les
-//  premières leçons sont indulgentes, la vitesse n'est JAMAIS exigée en début
-//  de cursus (l'accuracy seule débloque).
+//  premières leçons sont indulgentes, la vitesse n'est JAMAIS exigée à AUCUNE
+//  tranche (ADR 0006) — l'accuracy seule débloque, du début à la fin des 100
+//  Lessons. Granularité resserrée (aucune tranche > ~20 leçons) pour une
+//  progression cohérente sur tout le cursus, pas seulement les 13 premières.
 // ----------------------------------------------------------------------------
 
 const STAGES: { from: number; minAccuracy: number }[] = [
-  { from: 0, minAccuracy: 70 }, // leçons 1–5 (découverte) : ≥ 70 %
-  { from: 5, minAccuracy: 80 }, // leçons 6–10 (consolidation) : ≥ 80 %
-  { from: 10, minAccuracy: 90 }, // leçons 11+ (maîtrise) : ≥ 90 %
+  { from: 0, minAccuracy: 70 }, // leçons 1–5 (découverte)
+  { from: 5, minAccuracy: 75 }, // leçons 6–10
+  { from: 10, minAccuracy: 80 }, // leçons 11–20
+  { from: 20, minAccuracy: 82 }, // leçons 21–35
+  { from: 35, minAccuracy: 85 }, // leçons 36–50
+  { from: 50, minAccuracy: 87 }, // leçons 51–70
+  { from: 70, minAccuracy: 90 }, // leçons 71–90
+  { from: 90, minAccuracy: 92 }, // leçons 91–100
 ];
 
 /** Accuracy (%) requise pour compléter la leçon d'index `lesson` (0-based). */
