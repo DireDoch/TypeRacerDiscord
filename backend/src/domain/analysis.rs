@@ -224,7 +224,7 @@ mod tests {
     #[test]
     fn touche_lente_detectee() {
         // 12 mots « tache » : le h est 4× plus lent que le reste.
-        let text = vec!["tache"; 12].join(" ");
+        let text = ["tache"; 12].join(" ");
         let log = perfect_log(&text, 100.0, "h", 400.0);
         let res = analyze(&[(text.as_str(), log.as_slice())]);
 
@@ -256,7 +256,7 @@ mod tests {
                 push(" ", None, &mut t);
             }
         }
-        let text = vec!["the"; 12].join(" ");
+        let text = ["the"; 12].join(" ");
         let res = analyze(&[(text.as_str(), log.as_slice())]);
 
         let e = res.weak_spots.iter().find(|w| w.chars == "e" && w.kind == "key").expect("e absent");
@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn trop_rare_ignore_et_agregation_multi_runs() {
         // 6 occurrences par run : sous le minimum sur 1 run, détecté sur 2 runs.
-        let text = vec!["tache"; 6].join(" ");
+        let text = ["tache"; 6].join(" ");
         let log = perfect_log(&text, 100.0, "h", 400.0);
         let un_seul = analyze(&[(text.as_str(), log.as_slice())]);
         assert!(un_seul.weak_spots.iter().all(|w| w.chars != "h"), "6 occurrences : bruit");
@@ -313,7 +313,7 @@ mod tests {
         // "élan" : 4 codepoints, 5 octets UTF-8 (é = 2 octets). Une saisie parfaite,
         // répétée, ne doit produire aucune erreur ni Weak spot — un indexage en octets
         // décalerait 'l'/'a'/'n' après le 'é' multi-octets.
-        let text = vec!["élan"; 12].join(" ");
+        let text = ["élan"; 12].join(" ");
         let log = perfect_log(&text, 100.0, "", 0.0);
         let res = analyze(&[(text.as_str(), log.as_slice())]);
         assert_eq!(res.global_error_rate, 0.0);

@@ -35,4 +35,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: backend
+      - run: rustup component add clippy
+      - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test
