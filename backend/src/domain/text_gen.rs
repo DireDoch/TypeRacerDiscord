@@ -141,8 +141,8 @@ fn apply_punctuation(tokens: &[String], rng: &mut Rng) -> Vec<String> {
             len = remaining;
         }
         let end = i + len;
-        for j in i..end {
-            let mut tok = tokens[j].clone();
+        for (j, raw) in tokens.iter().enumerate().take(end).skip(i) {
+            let mut tok = raw.clone();
             let is_first = j == i;
             let is_last = j == end - 1;
 

@@ -61,6 +61,9 @@ pub async fn previous_pb(
 /// persisté depuis la migration 0002, le texte cible verbatim depuis la 0003
 /// (ADR 0001) — matière première du Replay et de l'analyse. `kind` : "practice"
 /// ou "race".
+// ponytail: 9 arguments plutôt qu'un struct — un seul appelant de prod (main.rs),
+// le reste ce sont des tests positionnels ; regrouper si un 10e argument arrive.
+#[allow(clippy::too_many_arguments)]
 pub async fn insert_run(
     pool: &SqlitePool,
     run_id: &str,

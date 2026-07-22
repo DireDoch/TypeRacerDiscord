@@ -151,7 +151,7 @@ async fn submit_run(
         .await
         .map_err(internal)?;
     let is_personal_best =
-        scoreboard.pb_eligible && previous.map_or(true, |p| scoreboard.wpm > p);
+        scoreboard.pb_eligible && previous.is_none_or(|p| scoreboard.wpm > p);
 
     let run_id = format!("r_{}", now_nanos());
     store::insert_run(
