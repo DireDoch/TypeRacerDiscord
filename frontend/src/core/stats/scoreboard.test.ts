@@ -33,6 +33,11 @@ describe("computeScoreboard — Zen et éligibilité PB", () => {
     expect(short.pbEligible).toBe(false);
     expect(long.pbEligible).toBe(false);
   });
+
+  it("Trigram Drill exclu des PB (ADR 0005) : même règle que Drill, texte personnalisé", () => {
+    const k = log([100, "a"]);
+    expect(computeScoreboard(base({ mode: "trigram-drill", modeValue: 0, keystrokes: k })).pbEligible).toBe(false);
+  });
 });
 
 describe("computeScoreboard — durée : le client n'est jamais la source (issue #11)", () => {

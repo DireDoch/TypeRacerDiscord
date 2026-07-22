@@ -20,7 +20,7 @@
 // ----------------------------------------------------------------------------
 
 /** Le Mode décide quel texte est présenté et quand le Run se termine. Exactement un par Run. */
-export type Mode = "time" | "words" | "quotes" | "zen" | "drill";
+export type Mode = "time" | "words" | "quotes" | "zen" | "drill" | "trigram-drill";
 
 /** Un Setting est un modificateur de texte cumulable appliqué par-dessus un Mode. */
 export type Setting = "punctuation" | "numbers";
@@ -40,7 +40,7 @@ export interface RunConfig {
    *   - words : nombre de mots (10 | 25 | 50 | 100, ou custom).
    *   - quotes: 0 (ignoré — la longueur vient de la Quote).
    *   - zen   : 0 (ignoré — pas de texte cible).
-   *   - drill : 0 (ignoré — la longueur vient du texte personnalisé).
+   *   - drill / trigram-drill : 0 (ignoré — la longueur vient du texte personnalisé).
    */
   modeValue: number;
   language: Language;

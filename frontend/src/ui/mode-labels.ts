@@ -14,4 +14,5 @@ export const MODE_LABELS: Record<RunConfig["mode"], string> = {
   quotes: "citations",
   zen: "zen",
   drill: "entraînement",
+  "trigram-drill": "triplets",
 };

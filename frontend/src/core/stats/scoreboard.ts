@@ -61,6 +61,8 @@ const MODE_PB_ELIGIBLE: Record<Mode, boolean> = {
   quotes: false,
   zen: false,
   drill: false,
+  // Trigram Drill (ADR 0005) : texte personnalisé, même règle que Drill.
+  "trigram-drill": false,
 };
 
 export function computeScoreboard(input: ScoreInput): Scoreboard {
