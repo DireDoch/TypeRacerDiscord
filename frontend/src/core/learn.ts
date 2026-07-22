@@ -653,4 +653,207 @@ export const LESSONS: Lesson[] = [
     keys: ["[", "]", "{", "}", "<", ">", "+", "=", "~", "|", "\\", "'", "`"],
     tokens: 24,
   },
+  {
+    title: "Dates (chiffres et slash ou tiret)",
+    content: [
+      "Une date s'écrit en chiffres séparés par un slash ou un tiret (« 21/07/2026 », « 2026-07-21 ») — un motif qui revient dans presque tous les formulaires.",
+      "Le retour sur F/J entre deux groupes de chiffres reste la clé : le slash ou le tiret est l'occasion de ce retour, pas un obstacle.",
+      "Exercice qui mélange chiffres, slash et tiret.",
+    ],
+    keys: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "/", "-"],
+    tokens: 20,
+  },
+  {
+    title: "Montants (chiffres, point et dollar)",
+    content: [
+      "Un prix s'écrit avec un point décimal et un symbole monétaire (« 19.99$ », « $19.99 selon la convention) — chiffres et symboles s'enchaînent sans espace.",
+      "Le point ici n'est pas la ponctuation de fin de phrase déjà vue (leçon 11) : c'est un SÉPARATEUR, au milieu d'un nombre.",
+      "Exercice qui mélange chiffres, point et symbole dollar.",
+    ],
+    keys: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", ".", "$"],
+    tokens: 20,
+  },
+  {
+    title: "Pourcentages et unités",
+    content: [
+      "« 50% », « 10km », « 3kg » : un nombre collé à une unité ou un symbole, sans espace — encore un motif très fréquent dans un texte réel.",
+      "Après le chiffre, l'unité s'enchaîne directement : pas de pause, pas de retour aux repères entre les deux.",
+      "Exercice qui mélange chiffres, pourcentage et quelques lettres d'unités.",
+    ],
+    keys: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "%", "k", "m", "g"],
+    tokens: 20,
+  },
+  {
+    title: "Heures (chiffres et deux-points)",
+    content: [
+      "Une heure s'écrit avec un deux-points entre les groupes de chiffres (« 14:30 ») — le deux-points déjà vu (leçon 30), ici en contexte numérique plutôt que grammatical.",
+      "Le rythme est court et répétitif : deux chiffres, deux-points, deux chiffres — un excellent exercice de régularité.",
+      "Exercice qui mélange chiffres et deux-points.",
+    ],
+    keys: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", ":"],
+    tokens: 20,
+  },
+  {
+    title: "Transitions rapides — chiffres vers rangée de base",
+    content: [
+      "Jusqu'ici, chaque exercice chiffres+lettres laissait le temps de revenir sur F/J. Ici, le rythme accélère : les allers-retours s'enchaînent plus vite, sans ralentir le tempo.",
+      "Si tu perds tes repères, ralentis plutôt que de continuer à l'aveugle — la précision prime toujours sur la vitesse (ADR du cursus).",
+      "Exercice qui mélange chiffres et rangée de base, à un tempo plus soutenu (plus de jetons, même règle de précision).",
+    ],
+    keys: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "a", "s", "d", "f", "j", "k", "l"],
+    tokens: 24,
+  },
+  {
+    title: "Transitions rapides — chiffres et symboles combinés",
+    content: [
+      "Dernier cran : chiffres, symboles Shift (leçon 28) et lettres, tous mélangés — la combinaison la plus proche d'un vrai mot de passe ou d'une référence produit.",
+      "Rien de nouveau dans les touches elles-mêmes : c'est leur enchaînement rapide, sans thème prévisible, qui est le vrai exercice.",
+      "Exercice qui mélange chiffres, symboles et lettres.",
+    ],
+    keys: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "!", "@", "#", "$", "%", "a", "s", "d", "f"],
+    tokens: 24,
+  },
+  {
+    title: "Mots composés (trait d'union)",
+    content: [
+      "« well-known », « up-to-date », « long-term » : deux mots ou plus reliés par un tiret, sans espace autour — un mot composé se tape comme un seul bloc.",
+      "Le tiret casse rarement le rythme s'il est anticipé : il se frappe comme n'importe quelle autre touche de la rangée du haut.",
+      "Exercice qui mélange lettres et tiret.",
+    ],
+    keys: ["a", "s", "d", "f", "j", "k", "l", "-"],
+    tokens: 20,
+  },
+  {
+    title: "Abréviations courantes (point)",
+    content: [
+      "« etc. », « e.g. », « i.e. », « Mr. », « Dr. » : des abréviations ponctuées d'un ou plusieurs points, parfois collés à une majuscule.",
+      "Chaque point se frappe comme en fin de phrase (leçon 11), simplement plus rapproché — sans les espaces qui l'accompagnent d'habitude.",
+      "Exercice qui mélange majuscules, minuscules et points rapprochés.",
+    ],
+    keys: ["e", "g", "i", "M", "r", "D", "."],
+    tokens: 20,
+  },
+  {
+    title: "Acronymes (majuscules enchaînées)",
+    content: [
+      "« USA », « HTML », « CSS » : plusieurs majuscules de suite, sans minuscule entre elles — Shift reste ENFONCÉ le temps du sigle plutôt que relâché à chaque lettre.",
+      "Pour 2-3 lettres, pas besoin de Caps Lock : un seul Shift maintenu suffit, et c'est plus rapide à relâcher ensuite.",
+      "Exercice concentré sur des majuscules enchaînées.",
+    ],
+    keys: ["U", "S", "A", "H", "T", "M", "L", "C"],
+    tokens: 18,
+  },
+  {
+    title: "Codes et références (chiffres et majuscules)",
+    content: [
+      "Un code postal, une référence produit, un numéro de série mélangent souvent majuscules et chiffres, sans logique de mot (« A1B 2C3 », « REF-2026 »).",
+      "Sans mot reconnaissable pour t'aider, seule la mémoire des touches individuelles fonctionne ici — c'est voulu, c'est le cas le plus exigeant du cursus.",
+      "Exercice qui mélange chiffres et majuscules.",
+    ],
+    keys: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "A", "B", "C", "D", "E", "F"],
+    tokens: 20,
+  },
+  {
+    title: "Mots — cinquième lot",
+    content: [
+      "Retour aux mots réels après une série de leçons plus techniques (dates, montants, codes) — l'occasion de vérifier que le rythme naturel n'a pas été perdu.",
+      "Un mot ordinaire doit se sentir plus facile qu'un code ou une référence : si ce n'est pas le cas, ralentis et laisse le rythme revenir.",
+      "Vingt-six mots de la liste standard.",
+    ],
+    keys: [],
+    tokens: 26,
+    words: true,
+  },
+  {
+    title: "Paire fréquente — OW / AI",
+    content: [
+      "« ow » et « ai » apparaissent dans des mots courants (« how », « now », « main », « rain »).",
+      "O (annulaire droit) et W (annulaire gauche) sont un vrai croisement ; A et I restent chacun sur leur rangée, aux extrémités opposées.",
+      "Exercice concentré sur O, W, A et I.",
+    ],
+    keys: ["o", "w", "a", "i"],
+    tokens: 18,
+  },
+  {
+    title: "Paire fréquente — UR / LD",
+    content: [
+      "« ur » et « ld » terminent des mots fréquents (« sure », « your », « old », « world »).",
+      "U et R sont voisins sur la rangée du haut à droite ; L et D traversent le clavier, un vrai changement de main.",
+      "Exercice concentré sur U, R, L et D.",
+    ],
+    keys: ["u", "r", "l", "d"],
+    tokens: 18,
+  },
+  {
+    title: "Terminaisons fréquentes — ABLE / MENT",
+    content: [
+      "« -able » (« readable », « comfortable ») et « -ment » (« moment », « comment ») ferment des mots plus longs que les terminaisons courtes déjà vues.",
+      "Cinq lettres qui reviennent ensemble, dans le même ordre — comme « -tion » (leçon 47), un motif à mémoriser en bloc.",
+      "Exercice concentré sur A, B, L, E, M, N et T.",
+    ],
+    keys: ["a", "b", "l", "e", "m", "n", "t"],
+    tokens: 20,
+  },
+  {
+    title: "Terminaisons fréquentes — NESS / FUL",
+    content: [
+      "« -ness » (« happiness », « darkness ») et « -ful » (« useful », « careful ») transforment un adjectif en nom ou renforcent son sens.",
+      "N, E, S sont déjà des touches très pratiquées à ce stade du cursus ; F et U le sont moins ensemble — c'est ce qui est ciblé ici.",
+      "Exercice concentré sur N, E, S, F, U et L.",
+    ],
+    keys: ["n", "e", "s", "f", "u", "l"],
+    tokens: 20,
+  },
+  {
+    title: "Mots composés (apostrophe)",
+    content: [
+      "« don't », « can't », « it's », « we're » : les contractions anglaises collent une apostrophe au milieu du mot, sans espace.",
+      "L'apostrophe (auriculaire droit, leçon 11) s'insère ICI comme une lettre de plus dans le mot, pas comme une ponctuation de fin.",
+      "Exercice qui mélange lettres et apostrophe.",
+    ],
+    keys: ["d", "o", "n", "c", "a", "t", "i", "s", "w", "e", "r", "'"],
+    tokens: 20,
+  },
+  {
+    title: "Chiffres romains (I V X L C D M)",
+    content: [
+      "Les chiffres romains servent encore aux numéros de chapitre, aux siècles, à certaines énumérations (« Chapitre IV », « XXe siècle »).",
+      "Toujours en MAJUSCULES, toujours les mêmes sept lettres — un cas particulier facile à automatiser une fois repéré.",
+      "Exercice concentré sur I, V, X, L, C, D et M en majuscules.",
+    ],
+    keys: ["I", "V", "X", "L", "C", "D", "M"],
+    tokens: 18,
+  },
+  {
+    title: "Mots — sixième lot",
+    content: [
+      "Un nouveau lot de mots réels, pour la dernière fois avant la consolidation qui clôt ce lot de leçons.",
+      "L'objectif à ce stade n'est plus de découvrir de nouvelles touches, mais de stabiliser l'accuracy sur tout ce qui a été vu.",
+      "Trente mots de la liste standard.",
+    ],
+    keys: [],
+    tokens: 30,
+    words: true,
+  },
+  {
+    title: "Mots — septième lot",
+    content: [
+      "Encore un lot de mots réels, le plus long jusqu'ici — l'endurance construite depuis la leçon 13 se mesure sur la durée, pas sur un seul exercice.",
+      "Si l'accuracy tient du premier au dernier mot, la leçon suivante (consolidation) devrait se sentir facile en comparaison.",
+      "Trente-deux mots de la liste standard.",
+    ],
+    keys: [],
+    tokens: 32,
+    words: true,
+  },
+  {
+    title: "Consolidation — chiffres et symboles combinés",
+    content: [
+      "Revue de tout ce qui a été introduit depuis les dates : dates, montants, heures, pourcentages/unités, acronymes, codes — rien de nouveau, juste du rappel à un tempo réaliste.",
+      "C'est cette combinaison-là — chiffres et symboles mêlés aux lettres — qui revient le plus souvent dans un vrai usage quotidien du clavier.",
+      "Exercice qui mélange chiffres et symboles de ce lot.",
+    ],
+    keys: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "/", "-", ".", "$", "%", ":"],
+    tokens: 26,
+  },
 ];
