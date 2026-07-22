@@ -591,7 +591,7 @@ fn record_finish(rooms: &Rooms, key: &str, result: RaceResult) -> FinishOutcome 
 
     let eligible = match &room.state {
         RaceState::Racing { racers, finishers, .. } => {
-            racers.iter().any(|p| *p == player_id)
+            racers.contains(&player_id)
                 && !finishers.iter().any(|f| f.player_id == player_id)
         }
         RaceState::Lobby => false,
