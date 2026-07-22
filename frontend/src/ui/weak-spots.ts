@@ -32,6 +32,6 @@ function weakSpotHtml(w: WeakSpot): string {
   ]
     .filter(Boolean)
     .join(" · ");
-  const kind = w.kind === "bigram" ? "paire" : "touche";
+  const kind = w.kind === "trigram" ? "triplet" : w.kind === "bigram" ? "paire" : "touche";
   return `<span class="chars">${escapeText(w.chars)}</span> <span class="detail">${kind} · ${w.occurrences}× · ${tags}</span>`;
 }

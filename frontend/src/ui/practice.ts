@@ -147,14 +147,19 @@ export class Practice {
       try {
         const profile = await fetchProfileAnalysis();
         if (seq !== this.resetSeq) return;
-        if (profile.weakSpots.length === 0) {
+        // Drill cible touche/bigramme uniquement — les trigrammes sont réservés à
+        // Trigram Drill (ADR 0005). Sans ce filtre, un profil qui n'a QUE des
+        // trigrammes significatifs ferait piocher Drill dedans par erreur (analyze()
+        // trie tous les kinds confondus par sévérité).
+        const drillSpots = profile.weakSpots.filter((w) => w.kind !== "trigram");
+        if (drillSpots.length === 0) {
           // Pas (assez) de données : le Mode l'explique et propose de jouer d'abord.
           this.loadingText = false;
           this.drillNoProfile = true;
           this.render();
           return;
         }
-        this.targetWords = generateDrillText(profile.weakSpots, new Rng(this.seed));
+        this.targetWords = generateDrillText(drillSpots, new Rng(this.seed));
       } catch (e) {
         if (seq !== this.resetSeq) return;
         this.loadingText = false;

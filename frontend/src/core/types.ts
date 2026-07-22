@@ -221,11 +221,11 @@ export interface HistoryResponse {
   entries: HistoryEntry[];
 }
 
-/** Un Weak spot : touche ou bigramme plus lent/fautif que la moyenne DU JOUEUR. */
+/** Un Weak spot : touche, bigramme ou trigramme plus lent/fautif que la moyenne DU JOUEUR. */
 export interface WeakSpot {
-  /** Caractère(s) cible(s) : 1 char pour une touche, 2 pour un bigramme. */
+  /** Caractère(s) cible(s) : 1 char pour une touche, 2 pour un bigramme, 3 pour un trigramme. */
   chars: string;
-  kind: "key" | "bigram";
+  kind: "key" | "bigram" | "trigram";
   occurrences: number;
   meanDelayMs: number;
   /** 0..1 (fautes / frappes sur cette cible). */
