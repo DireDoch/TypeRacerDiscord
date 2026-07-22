@@ -1,5 +1,5 @@
 // =============================================================================
-//  countdown.ts — décompte de 3 s, ANNULABLE (issue #12).
+//  countdown.ts — décompte ANNULABLE, durée au choix de l'appelant (issue #12).
 //
 //  Une seule chaîne de setTimeout vivante à la fois : chaque tick ne programme le
 //  suivant qu'après avoir vérifié `cancel()`. Utilisé par Race (Practice n'en a plus

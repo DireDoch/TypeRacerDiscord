@@ -19,7 +19,7 @@ mod discord;
 mod domain;
 mod quote;
 mod store;
-mod ws; // frontière Phase 2 (esquisse, non câblée — voir Docs/PHASE2.md)
+mod ws;
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -61,7 +61,9 @@ async fn main() {
     let identity = Arc::new(Identity::new(DiscordConfig::from_env()));
     let quotes = Arc::new(QuoteClient::from_env());
     let rooms = ws::new_rooms();
-    ws::spawn_watchdog(rooms.clone()); // clôt les courses anormalement longues (issue #24)
+    // Clôt les courses anormalement longues (issue #24) ; `quotes` sert à regénérer le
+    // texte de la Room close depuis sa Source (ADR 0009).
+    ws::spawn_watchdog(rooms.clone(), quotes.clone());
     let state = AppState { pool, identity, quotes, rooms };
 
     // Build statique de Vite (origine unique). Surcoûtable via STATIC_DIR.
@@ -196,7 +198,13 @@ async fn ws_handler(
     // un Finish géant se recompute sous le verrou global des Rooms.
     ws.max_message_size(256 * 1024)
         .on_upgrade(move |socket| {
-            ws::handle_socket(socket, state.rooms.clone(), player_id, state.pool.clone())
+            ws::handle_socket(
+                socket,
+                state.rooms.clone(),
+                player_id,
+                state.pool.clone(),
+                state.quotes.clone(),
+            )
         })
 }
 

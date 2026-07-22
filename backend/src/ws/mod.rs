@@ -2,9 +2,15 @@
 //  ws/mod.rs — état partagé des Rooms + boucle socket (Phase 2).
 //
 //  Câblé au routeur Axum via `/ws` (voir main.rs).
-//   - Présence : JoinRoom enregistre le joueur, LeaveRoom / déconnexion le retire.
-//     Chaque changement re-DIFFUSE RoomState (présence + owner) à tous les sockets
-//     du salon via un broadcast::Sender par Room.
+//   - Une Room est indexée par une CLÉ, sous deux formes (ADR 0008) : le salon vocal
+//     (`channel_id`, créée à la volée — la clé vient du SDK, elle est authentique) ou
+//     un Code de partie (créée seulement sur `CreateRoom`, jamais à la volée : un code
+//     vient d'un clavier, une faute de frappe enfermerait le joueur seul dans une Room
+//     fantôme). Une seule HashMap, aucune table de correspondance.
+//   - Présence : JoinChannel/CreateRoom/JoinCode enregistrent le joueur, LeaveRoom /
+//     déconnexion le retire. Chaque changement re-DIFFUSE RoomState (présence + owner
+//     + code) à tous les sockets de la Room via un broadcast::Sender par Room.
+//     Plafond de MAX_PLAYERS présents ; au-delà, RoomFull.
 //   - Owner = premier joueur à rejoindre ; passe au suivant s'il part. Seul l'owner
 //     peut lancer : StartRace → RaceStart{start_at_epoch_ms} diffusé à tous (t=0).
 //     Les PARTANTS sont figés au RaceStart : arrivées/départs en cours de course ne
@@ -30,12 +36,29 @@ use tokio::sync::broadcast;
 use crate::domain::replay::{compute_scoreboard, ScoreInput};
 use crate::domain::text_gen::{generate_text, GenSettings};
 use crate::domain::types::{Keystroke, Mode, RunConfig};
-use protocol::{ChannelId, ClientEvent, PlayerId, ServerEvent};
+use crate::quote::QuoteClient;
+use protocol::{
+    ClientEvent, Identity, PlayerEntry, PlayerId, RoomKey, ServerEvent, TextSource,
+};
 
-/// Nombre de mots pré-générés pour le texte cible d'une Room (défaut Words).
-const ROOM_WORD_COUNT: usize = 30;
+/// Longueur d'un texte `Words` en Race — les trois seules valeurs acceptées (ADR 0009).
+/// Un `count` arbitraire venu du client imposerait une course de longueur quelconque aux
+/// sept autres : c'est une frontière de confiance, pas une commodité d'affichage.
+const WORDS_LENGTHS: [u32; 3] = [15, 30, 50];
+/// Longueur par défaut et de repli (échec du proxy de citations).
+const ROOM_WORD_COUNT: u32 = 30;
 /// Profondeur du canal de diffusion par Room (messages en vol tolérés).
 const BROADCAST_CAP: usize = 64;
+/// Plafond de présents dans une Room. Porte sur `players`, donc un spectateur arrivé
+/// en cours de course occupe une place comme un autre.
+const MAX_PLAYERS: usize = 8;
+/// Alphabet des Codes de partie : ni `0`/`O`, ni `1`/`I`/`L` — un code se dicte à
+/// l'oral, l'ambiguïté visuelle y coûte cher. 31 caractères.
+const CODE_ALPHABET: &[u8] = b"23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+/// Longueur d'un Code de partie. 5 → ~28 M de combinaisons, et surtout AUCUN
+/// recouvrement possible avec un snowflake Discord (18-19 chiffres) : les deux formes
+/// de clé cohabitent dans la même map sans désambiguïsation.
+const CODE_LEN: usize = 5;
 
 /// État de course d'une Room (issue #18) — remplace trois champs mutés indépendamment
 /// (`start_at_epoch_ms: Option`, `racers: Vec`, `finishers: Vec` : 8 combinaisons
@@ -55,21 +78,41 @@ impl RaceState {
     }
 }
 
-/// Une Room : une Race en cours, scopée à un salon vocal Discord.
+/// Une Room : une Race en cours, identifiée par une clé (salon vocal ou Code de partie).
 pub struct Room {
-    pub channel_id: ChannelId,
+    pub key: RoomKey,
+    /// Le Code de partie, si la Room en a un. `None` = Room de salon vocal. C'est aussi
+    /// ce qui dit comment la Room a été créée, sans champ « kind » séparé.
+    pub code: Option<String>,
+    /// Présence ET ordre d'arrivée (l'owner se transfère à `players[0]`). Reste une liste
+    /// d'ID : toute la logique de course raisonne là-dessus.
     pub players: Vec<PlayerId>,
+    /// Display identity par présent — une projection d'affichage, à côté de `players`
+    /// plutôt que dedans, pour que la logique de course n'ait pas à la connaître. Tenue
+    /// à jour aux DEUX seuls endroits où la présence bouge : `add_player` et `leave_room`.
+    pub identities: HashMap<PlayerId, Identity>,
     /// Owner = qui peut lancer la course (1er arrivé, transféré s'il part).
     pub owner: PlayerId,
     pub seed: u64,
     pub target_text: String,
+    /// Source EFFECTIVE du `target_text` courant — pas celle qui a été demandée. Un repli
+    /// après échec du proxy de citations bascule réellement ce champ (ADR 0009).
+    pub text_source: TextSource,
     pub state: RaceState,
     /// Diffusion des ServerEvent vers tous les sockets du salon.
     pub tx: broadcast::Sender<ServerEvent>,
 }
 
 /// État global partagé des Rooms. Injecté dans l'AppState Axum.
-pub type Rooms = Arc<Mutex<HashMap<ChannelId, Room>>>;
+pub type Rooms = Arc<Mutex<HashMap<RoomKey, Room>>>;
+
+/// Pourquoi une jointure a échoué. `NotFound` n'est possible que par Code de partie :
+/// une Room de salon est créée à la volée, elle ne peut pas manquer.
+#[derive(Debug, PartialEq, Eq)]
+pub enum JoinError {
+    NotFound,
+    Full,
+}
 
 pub fn new_rooms() -> Rooms {
     Arc::new(Mutex::new(HashMap::new()))
@@ -77,12 +120,18 @@ pub fn new_rooms() -> Rooms {
 
 /// Boucle d'une connexion WebSocket. `player_id` est résolu côté serveur (jamais
 /// via le corps) AVANT l'upgrade, comme pour les endpoints HTTP.
-pub async fn handle_socket(socket: WebSocket, rooms: Rooms, player_id: PlayerId, pool: SqlitePool) {
-    // 1. Le premier message utile DOIT être JoinRoom : il fixe le salon et donne
-    //    l'abonnement à la diffusion. Toute autre trame avant est ignorée.
-    let (channel_id, socket, mut rx) = match await_join(socket, &rooms, &player_id).await {
+pub async fn handle_socket(
+    socket: WebSocket,
+    rooms: Rooms,
+    player_id: PlayerId,
+    pool: SqlitePool,
+    quotes: Arc<QuoteClient>,
+) {
+    // 1. Le premier message utile DOIT être une jointure : elle fixe la clé de Room et
+    //    donne l'abonnement à la diffusion. Toute autre trame avant est ignorée.
+    let (key, socket, mut rx) = match await_join(socket, &rooms, &player_id).await {
         Some(v) => v,
-        None => return, // socket fermé avant tout JoinRoom
+        None => return, // socket fermé avant toute jointure réussie
     };
 
     // 2. Diffusion → ce socket, en tâche dédiée (l'émetteur du socket lui appartient).
@@ -110,93 +159,309 @@ pub async fn handle_socket(socket: WebSocket, rooms: Rooms, player_id: PlayerId,
             _ => continue,
         };
         match serde_json::from_str::<ClientEvent>(&text) {
-            Ok(ClientEvent::StartRace) => start_race(&rooms, &channel_id, &player_id),
+            Ok(ClientEvent::SetTextSource { source }) => {
+                if set_text_source(&rooms, &key, &player_id, source) {
+                    spawn_refresh_text(rooms.clone(), key.clone(), quotes.clone());
+                }
+            }
+            Ok(ClientEvent::StartRace) => start_race(&rooms, &key, &player_id),
             Ok(ClientEvent::Progress { chars_done }) => {
-                relay_progress(&rooms, &channel_id, &player_id, chars_done)
+                relay_progress(&rooms, &key, &player_id, chars_done)
             }
             Ok(ClientEvent::Finish { keystrokes, ended_at_ms }) => {
-                finish_race(&rooms, &channel_id, &player_id, keystrokes, ended_at_ms, &pool)
+                if finish_race(&rooms, &key, &player_id, keystrokes, ended_at_ms, &pool) {
+                    // Course close : la revanche part sur un texte de la bonne Source.
+                    spawn_refresh_text(rooms.clone(), key.clone(), quotes.clone());
+                }
             }
             Ok(ClientEvent::LeaveRoom) => break,
-            // JoinRoom en double : ignoré.
+            // Jointure en double : ignorée.
             Ok(_) | Err(_) => {}
         }
     }
 
     // 4. Déconnexion : retire la présence (re-diffuse RoomState) et coupe le forward.
     forward.abort();
-    leave_room(&rooms, &channel_id, &player_id);
+    if leave_room(&rooms, &key, &player_id) {
+        spawn_refresh_text(rooms.clone(), key.clone(), quotes.clone());
+    }
 }
 
-/// Lit les messages jusqu'au premier JoinRoom, enregistre le joueur et renvoie
-/// (socket, (channel_id, receiver de diffusion)). `None` si le socket ferme avant.
+/// Lit les messages jusqu'à une jointure RÉUSSIE, enregistre le joueur et renvoie
+/// (clé de Room, socket, receiver de diffusion). `None` si le socket ferme avant.
+///
+/// Un échec (`RoomNotFound`, `RoomFull`) répond sur le socket et **continue la boucle** :
+/// le joueur corrige son code et retente sans se reconnecter. C'est aussi pourquoi ces
+/// deux événements ne sont pas diffusés — il n'y a aucune Room à qui les diffuser.
 async fn await_join(
     mut socket: WebSocket,
     rooms: &Rooms,
     player_id: &str,
-) -> Option<(ChannelId, WebSocket, broadcast::Receiver<ServerEvent>)> {
+) -> Option<(RoomKey, WebSocket, broadcast::Receiver<ServerEvent>)> {
     while let Some(Ok(msg)) = socket.recv().await {
         let text = match msg {
             Message::Text(t) => t,
             Message::Close(_) => return None,
             _ => continue,
         };
-        if let Ok(ClientEvent::JoinRoom { channel_id }) = serde_json::from_str::<ClientEvent>(&text)
-        {
-            let rx = join_room(rooms, &channel_id, player_id);
-            return Some((channel_id, socket, rx));
+        let attempt = match serde_json::from_str::<ClientEvent>(&text) {
+            Ok(ClientEvent::JoinChannel { channel_id, identity }) => {
+                join_channel(rooms, &channel_id, player_id, identity).map(|rx| (channel_id, rx))
+            }
+            Ok(ClientEvent::CreateRoom { identity }) => {
+                Ok(create_room(rooms, player_id, identity))
+            }
+            Ok(ClientEvent::JoinCode { code, identity }) => {
+                join_code(rooms, &code, player_id, identity).map(|rx| (code, rx))
+            }
+            _ => continue, // toute autre trame avant une jointure : ignorée
+        };
+        match attempt {
+            Ok((key, rx)) => return Some((key, socket, rx)),
+            Err(e) => {
+                let ev = match e {
+                    JoinError::NotFound => ServerEvent::RoomNotFound,
+                    JoinError::Full => ServerEvent::RoomFull,
+                };
+                let json = serde_json::to_string(&ev).expect("ServerEvent sérialisable");
+                if socket.send(Message::Text(json)).await.is_err() {
+                    return None;
+                }
+            }
         }
     }
     None
 }
 
-/// Ajoute le joueur (crée la Room avec seed+texte serveur si absente), s'abonne à
-/// la diffusion, puis re-diffuse RoomState à tous. Le lock std n'est jamais tenu à
-/// travers un await (broadcast::send/subscribe sont synchrones).
-fn join_room(rooms: &Rooms, channel_id: &str, player_id: &str) -> broadcast::Receiver<ServerEvent> {
+/// Room du salon vocal : CRÉÉE à la volée si absente. La clé vient du SDK Discord, elle
+/// est authentique — il n'y a pas de faute de frappe possible à protéger.
+fn join_channel(
+    rooms: &Rooms,
+    channel_id: &str,
+    player_id: &str,
+    identity: Identity,
+) -> Result<broadcast::Receiver<ServerEvent>, JoinError> {
     let mut rooms = rooms.lock().unwrap();
-    let room = rooms.entry(channel_id.to_string()).or_insert_with(|| {
-        let seed = fresh_seed();
-        let target_text =
-            generate_text(&GenSettings { punctuation: false, numbers: false }, ROOM_WORD_COUNT, seed)
-                .join(" ");
-        let (tx, _) = broadcast::channel(BROADCAST_CAP);
-        Room {
-            channel_id: channel_id.to_string(),
-            players: Vec::new(),
-            owner: player_id.to_string(), // 1er arrivé = owner
-            seed: seed as u64,
-            target_text,
-            state: RaceState::Lobby,
-            tx,
-        }
-    });
-    // S'abonner AVANT de diffuser → ce socket reçoit aussi le RoomState.
-    let rx = room.tx.subscribe();
-    if !room.players.iter().any(|p| p == player_id) {
-        room.players.push(player_id.to_string());
-    }
-    let _ = room.tx.send(room_state(room));
-    rx
+    let room = rooms
+        .entry(channel_id.to_string())
+        .or_insert_with(|| new_room(channel_id.to_string(), None, player_id));
+    add_player(room, player_id, identity)
 }
 
-fn leave_room(rooms: &Rooms, channel_id: &str, player_id: &str) {
+/// Room à Code de partie : le serveur tire le code, crée la Room et y met son créateur —
+/// qui devient donc l'owner par la règle habituelle du 1er arrivé.
+fn create_room(
+    rooms: &Rooms,
+    player_id: &str,
+    identity: Identity,
+) -> (RoomKey, broadcast::Receiver<ServerEvent>) {
     let mut rooms = rooms.lock().unwrap();
-    if let Some(room) = rooms.get_mut(channel_id) {
+    let code = generate_code(&rooms);
+    let room = rooms
+        .entry(code.clone())
+        .or_insert_with(|| new_room(code.clone(), Some(code.clone()), player_id));
+    let rx = add_player(room, player_id, identity).expect("Room neuve : jamais pleine");
+    (code, rx)
+}
+
+/// Room à Code de partie : NE CRÉE JAMAIS. Un code inconnu répond `NotFound` plutôt que
+/// d'enfermer le joueur seul dans une Room fantôme (ADR 0008).
+fn join_code(
+    rooms: &Rooms,
+    code: &str,
+    player_id: &str,
+    identity: Identity,
+) -> Result<broadcast::Receiver<ServerEvent>, JoinError> {
+    let mut rooms = rooms.lock().unwrap();
+    let room = rooms.get_mut(code).ok_or(JoinError::NotFound)?;
+    add_player(room, player_id, identity)
+}
+
+/// Room neuve : seed + texte cible générés par le SERVEUR (vérité terrain).
+///
+/// Le texte de départ est TOUJOURS des mots, même si la Source par défaut est `Quote` :
+/// une Room doit avoir un texte valide dès l'instant où elle existe, et aller chercher
+/// une citation demande un aller-retour réseau qu'on ne peut pas faire sous le verrou.
+/// La citation remplace ce texte dès qu'elle arrive (`spawn_refresh_text`).
+fn new_room(key: RoomKey, code: Option<String>, owner: &str) -> Room {
+    let (seed, target_text) = words_text(ROOM_WORD_COUNT);
+    let (tx, _) = broadcast::channel(BROADCAST_CAP);
+    Room {
+        key,
+        code,
+        players: Vec::new(),
+        identities: HashMap::new(),
+        owner: owner.to_string(), // 1er arrivé = owner
+        seed,
+        target_text,
+        text_source: TextSource::default(),
+        state: RaceState::Lobby,
+        tx,
+    }
+}
+
+/// Texte généré : renvoie (seed, texte). Le serveur possède les deux (vérité terrain).
+fn words_text(count: u32) -> (u64, String) {
+    let seed = fresh_seed();
+    let text =
+        generate_text(&GenSettings { punctuation: false, numbers: false }, count as usize, seed)
+            .join(" ");
+    (seed as u64, text)
+}
+
+/// Regénère le texte cible d'une Room depuis sa Source, puis re-diffuse `RoomState`.
+///
+/// Toujours dans une tâche détachée, parce que `Quote` exige un appel réseau et que le
+/// `Mutex` std des Rooms n'est JAMAIS tenu à travers un `await`. D'où la forme en trois
+/// temps : lire la Source sous verrou, relâcher, aller chercher le texte, reposer le
+/// résultat sous verrou. Le lobby affiche l'ancien texte pendant l'aller-retour puis le
+/// nouveau — c'est exactement ce que `RoomState` sait déjà exprimer.
+///
+/// Un échec du proxy de citations (clé absente → 502, réseau, quota) **ne bloque pas le
+/// lobby** : la Room bascule pour de vrai sur `Words(ROOM_WORD_COUNT)`, ce qui est aussi
+/// la façon dont le repli est signalé aux joueurs.
+fn spawn_refresh_text(rooms: Rooms, key: RoomKey, quotes: Arc<QuoteClient>) {
+    tokio::spawn(async move {
+        // Lecture dans une fonction À PART, pas dans un bloc : le `MutexGuard` ne peut
+        // alors PAS traverser le `await` qui suit, ni par accident ni par refactoring.
+        let Some(source) = pending_source(&rooms, &key) else { return };
+
+        let (seed, text, effective) = match source {
+            TextSource::Words { count } => {
+                let (seed, text) = words_text(count);
+                (seed, text, source)
+            }
+            TextSource::Quote => match quotes.fetch().await {
+                Ok(q) => (fresh_seed() as u64, normalize_quote(&q.text), TextSource::Quote),
+                Err(_) => {
+                    let (seed, text) = words_text(ROOM_WORD_COUNT);
+                    (seed, text, TextSource::Words { count: ROOM_WORD_COUNT })
+                }
+            },
+        };
+
+        let mut guard = rooms.lock().unwrap();
+        let Some(room) = guard.get_mut(&key) else { return }; // Room disparue entre-temps
+        if room.state.is_racing() {
+            return; // course lancée pendant l'aller-retour : le texte en vol est périmé
+        }
+        room.seed = seed;
+        room.target_text = text;
+        room.text_source = effective;
+        let _ = room.tx.send(room_state(room));
+    });
+}
+
+/// Source d'une Room qui attend un texte, ou `None` s'il n'y a rien à regénérer : Room
+/// disparue, ou course déjà lancée (on ne change pas le texte sous les doigts des joueurs).
+fn pending_source(rooms: &Rooms, key: &str) -> Option<TextSource> {
+    let guard = rooms.lock().unwrap();
+    let room = guard.get(key)?;
+    (!room.state.is_racing()).then_some(room.text_source)
+}
+
+/// Ramène une citation à la forme que le reste du moteur attend : des mots séparés par
+/// UN espace. Une citation arrive avec des retours à la ligne et des espaces doubles,
+/// or `target_text.split(' ')` compte les mots et le client découpe pareil.
+fn normalize_quote(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// SetTextSource : accepté du seul owner, hors course, et seulement pour une longueur
+/// autorisée. Renvoie `true` si le texte doit être regénéré.
+fn set_text_source(rooms: &Rooms, key: &str, player_id: &str, source: TextSource) -> bool {
+    if let TextSource::Words { count } = source {
+        if !WORDS_LENGTHS.contains(&count) {
+            return false; // longueur arbitraire : refusée (elle s'impose aux 7 autres)
+        }
+    }
+    let mut rooms = rooms.lock().unwrap();
+    let Some(room) = rooms.get_mut(key) else { return false };
+    if room.owner != player_id || room.state.is_racing() {
+        return false; // non-owner, ou course en cours : ignoré
+    }
+    room.text_source = source;
+    true
+}
+
+/// Inscrit la présence, s'abonne à la diffusion, puis re-diffuse RoomState à tous. Le
+/// lock std n'est jamais tenu à travers un await (broadcast::send/subscribe sont
+/// synchrones). Rejoindre deux fois est idempotent et ne consomme pas de place.
+fn add_player(
+    room: &mut Room,
+    player_id: &str,
+    identity: Identity,
+) -> Result<broadcast::Receiver<ServerEvent>, JoinError> {
+    let already_in = room.players.iter().any(|p| p == player_id);
+    if !already_in && room.players.len() >= MAX_PLAYERS {
+        return Err(JoinError::Full);
+    }
+    // S'abonner AVANT de diffuser → ce socket reçoit aussi le RoomState.
+    let rx = room.tx.subscribe();
+    if !already_in {
+        room.players.push(player_id.to_string());
+    }
+    // Toujours réécrite, même sur une reconnexion : le joueur a pu changer de pseudo.
+    room.identities.insert(player_id.to_string(), identity.sanitized());
+    let _ = room.tx.send(room_state(room));
+    Ok(rx)
+}
+
+/// Tire un Code de partie libre.
+///
+/// Dérivé de l'horloge nanoseconde, comme `fresh_seed` — cinq caractères ne justifient
+/// pas d'ajouter la crate `rand`. Le sel change à chaque tentative pour que deux appels
+/// dans la même nanoseconde ne bouclent pas sur le même code.
+///
+/// ponytail: boucle non bornée. Elle ne peut tourner indéfiniment que si les ~28 M de
+/// codes sont TOUS pris, soit ~225 M de joueurs connectés. Si ça arrive : allonger
+/// CODE_LEN.
+fn generate_code(rooms: &HashMap<RoomKey, Room>) -> String {
+    let base = CODE_ALPHABET.len() as u128;
+    for salt in 0u128.. {
+        // Mélange multiplicatif : sans lui, deux appels rapprochés partageraient tous
+        // leurs caractères de poids fort (les nanos ne bougent que dans les poids faibles).
+        let mut n = now_epoch_nanos().wrapping_mul(6364136223846793005).wrapping_add(salt);
+        let code: String = (0..CODE_LEN)
+            .map(|_| {
+                let c = CODE_ALPHABET[(n % base) as usize] as char;
+                n /= base;
+                c
+            })
+            .collect();
+        if !rooms.contains_key(&code) {
+            return code;
+        }
+    }
+    unreachable!("0u128.. ne se termine pas")
+}
+
+/// Renvoie `true` si le départ a CLOS une course encore vivante — l'appelant regénère
+/// alors le texte depuis la Source (hors verrou), comme après une fin normale.
+fn leave_room(rooms: &Rooms, key: &str, player_id: &str) -> bool {
+    let mut rooms = rooms.lock().unwrap();
+    if let Some(room) = rooms.get_mut(key) {
         room.players.retain(|p| p != player_id);
+        room.identities.remove(player_id); // jamais persistée, oubliée en partant
         // Abandon total (y compris juste après le départ, sans état "décompte" dédié
         // côté serveur — voir CONTEXT.md) : clôt la course AVANT de retirer une Room
         // désormais vide, sinon elle reste gelée en RaceState::Racing (issue #23).
+        let was_racing = room.state.is_racing();
         close_race(room, true);
+        let closed = was_racing && !room.state.is_racing();
         if room.players.is_empty() {
-            rooms.remove(channel_id); // tx droppé → forwards des sockets se terminent
-            return;
+            // tx droppé → forwards des sockets se terminent. Un Code de partie meurt
+            // ici avec sa Room : jamais persisté, jamais réservé (ADR 0008).
+            rooms.remove(key);
+            return false; // Room disparue : rien à regénérer
         }
         if room.owner == player_id {
             room.owner = room.players[0].clone(); // transfert au suivant dans la pile
         }
         let _ = room.tx.send(room_state(room));
+        return closed;
     }
+    false
 }
 
 /// Clôt une course en cours, déclarant abandon (0 WPM, pas de recompute sur un log vide —
@@ -239,9 +504,11 @@ const RACE_MAX_DURATION_MS: i64 = 10 * 60 * 1000;
 const WATCHDOG_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Clôt les Rooms dont la course dépasse RACE_MAX_DURATION_MS. Horloge injectée (`now`)
-/// pour rester testable sans attendre 10 minutes en vrai (issue #24).
-fn close_overlong_races(rooms: &Rooms, now: i64) {
+/// pour rester testable sans attendre 10 minutes en vrai (issue #24). Renvoie les clés
+/// des Rooms closes, pour que l'appelant y regénère le texte hors verrou.
+fn close_overlong_races(rooms: &Rooms, now: i64) -> Vec<RoomKey> {
     let mut rooms = rooms.lock().unwrap();
+    let mut closed = Vec::new();
     for room in rooms.values_mut() {
         let overlong = match &room.state {
             RaceState::Racing { start_at_epoch_ms, .. } => now - start_at_epoch_ms > RACE_MAX_DURATION_MS,
@@ -249,29 +516,33 @@ fn close_overlong_races(rooms: &Rooms, now: i64) {
         };
         if overlong {
             close_race(room, false);
+            closed.push(room.key.clone());
         }
     }
+    closed
 }
 
 /// Boucle watchdog : vérifie toutes les Rooms à intervalle régulier (issue #24). À
 /// spawn une fois au démarrage (voir main.rs). Chaque tick ne fait que scanner + fermer
 /// les Rooms trop longues — aucun recompute, aucune DB, le Mutex global n'est jamais
 /// tenu au-delà de cette opération O(nombre de Rooms).
-pub fn spawn_watchdog(rooms: Rooms) {
+pub fn spawn_watchdog(rooms: Rooms, quotes: Arc<QuoteClient>) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(WATCHDOG_CHECK_INTERVAL);
         loop {
             interval.tick().await;
-            close_overlong_races(&rooms, now_epoch_ms());
+            for key in close_overlong_races(&rooms, now_epoch_ms()) {
+                spawn_refresh_text(rooms.clone(), key, quotes.clone());
+            }
         }
     });
 }
 
 /// StartRace : accepté du seul owner, hors course en cours. Fige les partants,
 /// fixe t=0 (horloge murale serveur) et le diffuse.
-fn start_race(rooms: &Rooms, channel_id: &str, player_id: &str) {
+fn start_race(rooms: &Rooms, key: &str, player_id: &str) {
     let mut rooms = rooms.lock().unwrap();
-    if let Some(room) = rooms.get_mut(channel_id) {
+    if let Some(room) = rooms.get_mut(key) {
         if room.owner != player_id || room.state.is_racing() {
             return; // non-owner ou course déjà lancée : ignoré
         }
@@ -286,9 +557,9 @@ fn start_race(rooms: &Rooms, channel_id: &str, player_id: &str) {
 }
 
 /// Relaie la progression d'un joueur aux autres (rendu des barres). Non autoritaire.
-fn relay_progress(rooms: &Rooms, channel_id: &str, player_id: &str, chars_done: u32) {
+fn relay_progress(rooms: &Rooms, key: &str, player_id: &str, chars_done: u32) {
     let rooms = rooms.lock().unwrap();
-    if let Some(room) = rooms.get(channel_id) {
+    if let Some(room) = rooms.get(key) {
         let _ = room.tx.send(ServerEvent::PlayerProgress {
             player_id: player_id.to_string(),
             chars_done,
@@ -310,9 +581,9 @@ enum FinishOutcome {
 /// diffuse PlayerFinished, et clôt la course si c'était la dernière arrivée attendue.
 /// Machine d'état PURE : aucun socket, aucune DB — un seul paramètre (`pool`, dans
 /// `finish_race`) séparait ça d'une couverture complète (issue #18).
-fn record_finish(rooms: &Rooms, channel_id: &str, player_id: &str, wpm: f64) -> FinishOutcome {
+fn record_finish(rooms: &Rooms, key: &str, player_id: &str, wpm: f64) -> FinishOutcome {
     let mut rooms = rooms.lock().unwrap();
-    let Some(room) = rooms.get_mut(channel_id) else { return FinishOutcome::Rejected };
+    let Some(room) = rooms.get_mut(key) else { return FinishOutcome::Rejected };
 
     let eligible = match &room.state {
         RaceState::Racing { racers, finishers, .. } => {
@@ -344,19 +615,21 @@ fn record_finish(rooms: &Rooms, channel_id: &str, player_id: &str, wpm: f64) -> 
 /// (`record_finish`). Le Run est aussi persisté dans `runs` (kind "race") — historique
 /// seulement, jamais PB : la fin stricte (texte 100 % exact) le rend incomparable aux
 /// buckets Practice.
+/// Renvoie `true` si cette arrivée a CLOS la course (dernier partant attendu) — l'appelant
+/// regénère alors le texte depuis la Source, hors verrou.
 fn finish_race(
     rooms: &Rooms,
-    channel_id: &str,
+    key: &str,
     player_id: &str,
     keystrokes: Vec<Keystroke>,
     _ended_at_ms: f64, // wire uniquement : la durée vient du log, jamais du client (issue #11)
     pool: &SqlitePool,
-) {
+) -> bool {
     // Vérif préliminaire, bref verrou : évite le recompute (coûteux) pour un partant déjà
     // rejeté d'office. `record_finish` refait l'authoritative check plus bas, verrou séparé.
     let target_text = {
         let rooms = rooms.lock().unwrap();
-        let Some(room) = rooms.get(channel_id) else { return };
+        let Some(room) = rooms.get(key) else { return false };
         let eligible = match &room.state {
             RaceState::Racing { racers, finishers, .. } => {
                 racers.iter().any(|p| p == player_id) && !finishers.iter().any(|(p, _)| p == player_id)
@@ -364,7 +637,7 @@ fn finish_race(
             RaceState::Lobby => false,
         };
         if !eligible {
-            return;
+            return false;
         }
         room.target_text.clone()
     };
@@ -383,8 +656,9 @@ fn finish_race(
     });
 
     // Verrou séparé, bref : enregistrement authoritative (l'état a pu changer entretemps).
-    if record_finish(rooms, channel_id, player_id, sb.wpm) == FinishOutcome::Rejected {
-        return;
+    let outcome = record_finish(rooms, key, player_id, sb.wpm);
+    if outcome == FinishOutcome::Rejected {
+        return false;
     }
 
     // Persistance hors verrou (spawn) : l'échec ne casse pas la course, il se logue.
@@ -408,6 +682,8 @@ fn finish_race(
             eprintln!("persistance du Run de Race ({pid}) : {e}");
         }
     });
+
+    outcome == FinishOutcome::RaceOver
 }
 
 /// Course finie quand chaque partant ENCORE PRÉSENT a fini. Les partants sont figés
@@ -436,19 +712,45 @@ fn end_race(room: &mut Room) {
     let _ = room.tx.send(ServerEvent::RaceOver { ranking });
 
     room.state = RaceState::Lobby;
-    room.seed = fresh_seed() as u64;
-    room.target_text =
-        generate_text(&GenSettings { punctuation: false, numbers: false }, ROOM_WORD_COUNT, room.seed as u32)
-            .join(" ");
+    // Texte neuf IMMÉDIAT, et toujours des mots : la Room doit rester jouable sans
+    // aller-retour réseau (l'owner peut relancer dès l'écran RaceOver). Si la Source est
+    // Quote, `spawn_refresh_text` remplace ce texte dès que la citation arrive — c'est
+    // l'appelant qui le déclenche, une fois le verrou relâché.
+    let count = match room.text_source {
+        TextSource::Words { count } => count,
+        TextSource::Quote => ROOM_WORD_COUNT,
+    };
+    let (seed, text) = words_text(count);
+    room.seed = seed;
+    room.target_text = text;
     let _ = room.tx.send(room_state(room));
 }
 
+/// Projette la présence en entrées dessinables. Un présent sans identité connue retombe
+/// sur son snowflake : jamais joli, mais jamais vide non plus.
 fn room_state(room: &Room) -> ServerEvent {
+    let players = room
+        .players
+        .iter()
+        .map(|id| {
+            let ident = room.identities.get(id);
+            PlayerEntry {
+                player_id: id.clone(),
+                display_name: ident
+                    .map(|i| i.display_name.clone())
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| id.clone()),
+                avatar_hash: ident.and_then(|i| i.avatar_hash.clone()),
+            }
+        })
+        .collect();
     ServerEvent::RoomState {
-        players: room.players.clone(),
+        players,
         owner: room.owner.clone(),
         seed: room.seed,
         target_text: room.target_text.clone(),
+        code: room.code.clone(),
+        text_source: room.text_source,
     }
 }
 
@@ -481,6 +783,22 @@ mod tests {
 
     fn s(v: &[&str]) -> Vec<String> {
         v.iter().map(|x| x.to_string()).collect()
+    }
+
+    /// Identité de test : le nom affiché reprend l'ID, ça suffit à ce que la projection
+    /// soit exercée sans polluer les assertions de présence.
+    fn ident(player_id: &str) -> Identity {
+        Identity { display_name: player_id.to_string(), avatar_hash: None }
+    }
+
+    /// Jointure par salon vocal — le cas par défaut de la quasi-totalité des tests.
+    fn join(rooms: &Rooms, channel_id: &str, player_id: &str) {
+        join_channel(rooms, channel_id, player_id, ident(player_id))
+            .expect("salon : jointure toujours possible");
+    }
+
+    fn players_of(rooms: &Rooms, key: &str) -> Vec<PlayerId> {
+        rooms.lock().unwrap().get(key).unwrap().players.clone()
     }
 
     fn racers_of(rooms: &Rooms, channel_id: &str) -> Vec<PlayerId> {
@@ -522,8 +840,8 @@ mod tests {
     #[test]
     fn owner_premier_arrive_et_transfert_au_depart() {
         let rooms = new_rooms();
-        join_room(&rooms, "c1", "p1");
-        join_room(&rooms, "c1", "p2");
+        join(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p2");
         assert_eq!(rooms.lock().unwrap().get("c1").unwrap().owner, "p1");
 
         leave_room(&rooms, "c1", "p1");
@@ -533,8 +851,8 @@ mod tests {
     #[test]
     fn start_race_reserve_a_lowner_et_refuse_pendant_une_course() {
         let rooms = new_rooms();
-        join_room(&rooms, "c1", "p1"); // owner
-        join_room(&rooms, "c1", "p2");
+        join(&rooms, "c1", "p1"); // owner
+        join(&rooms, "c1", "p2");
 
         start_race(&rooms, "c1", "p2"); // pas l'owner : ignoré
         assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
@@ -554,11 +872,11 @@ mod tests {
     #[test]
     fn gel_des_partants() {
         let rooms = new_rooms();
-        join_room(&rooms, "c1", "p1");
-        join_room(&rooms, "c1", "p2");
+        join(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p2");
         start_race(&rooms, "c1", "p1");
 
-        join_room(&rooms, "c1", "p3"); // rejoint APRÈS le départ
+        join(&rooms, "c1", "p3"); // rejoint APRÈS le départ
         assert_eq!(racers_of(&rooms, "c1"), s(&["p1", "p2"])); // p3 absent : pas un partant
         assert_eq!(rooms.lock().unwrap().get("c1").unwrap().players, s(&["p1", "p2", "p3"])); // mais présent
     }
@@ -566,10 +884,10 @@ mod tests {
     #[test]
     fn rejet_des_arrivees_en_double_et_des_non_partants() {
         let rooms = new_rooms();
-        join_room(&rooms, "c1", "p1");
-        join_room(&rooms, "c1", "p2");
+        join(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p2");
         start_race(&rooms, "c1", "p1");
-        join_room(&rooms, "c1", "spectateur"); // rejoint après le départ : pas un partant
+        join(&rooms, "c1", "spectateur"); // rejoint après le départ : pas un partant
 
         assert_eq!(record_finish(&rooms, "c1", "spectateur", 999.0), FinishOutcome::Rejected);
         assert_eq!(record_finish(&rooms, "c1", "p1", 80.0), FinishOutcome::Recorded);
@@ -579,8 +897,8 @@ mod tests {
     #[test]
     fn classement_par_wpm_decroissant() {
         let rooms = new_rooms();
-        join_room(&rooms, "c1", "p1");
-        join_room(&rooms, "c1", "p2");
+        join(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p2");
         start_race(&rooms, "c1", "p1");
         let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
 
@@ -599,7 +917,7 @@ mod tests {
     #[test]
     fn revanche_sur_texte_neuf() {
         let rooms = new_rooms();
-        join_room(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p1");
         let texte_avant = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
 
         start_race(&rooms, "c1", "p1");
@@ -624,10 +942,10 @@ mod tests {
         // spectateur qui reste EMPÊCHE la Room d'être retirée par le garde "vide" — sans
         // le fix, elle resterait gelée en RaceState::Racing pour toujours (le bug décrit).
         let rooms = new_rooms();
-        join_room(&rooms, "c1", "p1");
-        join_room(&rooms, "c1", "p2");
+        join(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p2");
         start_race(&rooms, "c1", "p1");
-        join_room(&rooms, "c1", "spectateur"); // rejoint après le départ, ne part jamais
+        join(&rooms, "c1", "spectateur"); // rejoint après le départ, ne part jamais
 
         leave_room(&rooms, "c1", "p1");
         assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing()); // p2 encore là
@@ -643,9 +961,9 @@ mod tests {
     #[test]
     fn abandon_partiel_classement_a_zero_pour_les_partants_jamais_finis() {
         let rooms = new_rooms();
-        join_room(&rooms, "c1", "p1");
-        join_room(&rooms, "c1", "p2");
-        join_room(&rooms, "c1", "p3");
+        join(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p2");
+        join(&rooms, "c1", "p3");
         start_race(&rooms, "c1", "p1");
         let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
 
@@ -673,15 +991,15 @@ mod tests {
     #[test]
     fn abandon_ne_bloque_pas_une_revanche() {
         let rooms = new_rooms();
-        join_room(&rooms, "c1", "p1");
-        join_room(&rooms, "c1", "p2");
+        join(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p2");
         start_race(&rooms, "c1", "p1");
         leave_room(&rooms, "c1", "p1");
         leave_room(&rooms, "c1", "p2");
 
         // La Room a été retirée (vide), mais rejoindre en recrée une aussitôt utilisable.
-        join_room(&rooms, "c1", "p1");
-        join_room(&rooms, "c1", "p2");
+        join(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p2");
         start_race(&rooms, "c1", "p1");
         assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
     }
@@ -692,8 +1010,8 @@ mod tests {
         // watchdog ferme même si des joueurs sont TOUJOURS connectés (silencieux depuis
         // 10 min : perte réseau, crash — pas de LeaveRoom envoyé).
         let rooms = new_rooms();
-        join_room(&rooms, "c1", "p1");
-        join_room(&rooms, "c1", "p2");
+        join(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p2");
         start_race(&rooms, "c1", "p1");
         let start = match &rooms.lock().unwrap().get("c1").unwrap().state {
             RaceState::Racing { start_at_epoch_ms, .. } => *start_at_epoch_ms,
@@ -722,10 +1040,242 @@ mod tests {
         assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
     }
 
+    // --- Display identity (piste, podium) -----------------------------------------
+
+    fn entries(rooms: &Rooms, key: &str) -> Vec<PlayerEntry> {
+        let guard = rooms.lock().unwrap();
+        match room_state(guard.get(key).unwrap()) {
+            ServerEvent::RoomState { players, .. } => players,
+            _ => panic!("room_state renvoie un RoomState"),
+        }
+    }
+
+    #[test]
+    fn la_display_identity_voyage_jusqu_a_la_piste() {
+        let rooms = new_rooms();
+        join_channel(
+            &rooms,
+            "c1",
+            "111",
+            Identity { display_name: "Alice".into(), avatar_hash: Some("abc123".into()) },
+        )
+        .unwrap();
+        let e = entries(&rooms, "c1");
+        assert_eq!(e[0].player_id, "111"); // le snowflake reste la vérité durable
+        assert_eq!(e[0].display_name, "Alice");
+        assert_eq!(e[0].avatar_hash.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn un_present_sans_nom_retombe_sur_son_snowflake() {
+        // Jamais joli, mais jamais une carte vide non plus.
+        let rooms = new_rooms();
+        join_channel(&rooms, "c1", "111", Identity { display_name: "".into(), avatar_hash: None })
+            .unwrap();
+        assert_eq!(entries(&rooms, "c1")[0].display_name, "111");
+    }
+
+    #[test]
+    fn une_identite_est_oubliee_en_partant() {
+        // Le glossaire l'exige : annoncée à l'arrivée, affichée, puis oubliée.
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p2");
+        leave_room(&rooms, "c1", "p2");
+        assert!(!rooms.lock().unwrap().get("c1").unwrap().identities.contains_key("p2"));
+    }
+
+    #[test]
+    fn un_nom_demesure_ou_un_hash_fantaisiste_ne_degradent_pas_l_ecran_des_autres() {
+        // Le rendu client échappe déjà le HTML : le sujet ici, c'est la mise en page des
+        // SEPT autres joueurs, et un hash qui désignerait un chemin arbitraire du CDN.
+        let s = Identity {
+            display_name: format!("A\u{0}li\nce{}", "x".repeat(500)),
+            avatar_hash: Some("../../evil".into()),
+        }
+        .sanitized();
+        assert!(s.display_name.chars().count() <= 32);
+        assert!(!s.display_name.contains('\n') && !s.display_name.contains('\u{0}'));
+        assert_eq!(s.avatar_hash, None); // jeté : l'avatar par défaut est un repli valable
+    }
+
+    #[test]
+    fn un_avatar_anime_garde_son_prefixe() {
+        let s = Identity { display_name: "Bob".into(), avatar_hash: Some("a_1234abcd".into()) }
+            .sanitized();
+        assert_eq!(s.avatar_hash.as_deref(), Some("a_1234abcd"));
+    }
+
+    // --- Source de texte (ADR 0009) -----------------------------------------------
+
+    fn source_of(rooms: &Rooms, key: &str) -> TextSource {
+        rooms.lock().unwrap().get(key).unwrap().text_source
+    }
+
+    fn word_count_of(rooms: &Rooms, key: &str) -> usize {
+        rooms.lock().unwrap().get(key).unwrap().target_text.split(' ').count()
+    }
+
+    #[test]
+    fn une_room_neuve_demande_une_quote_mais_a_deja_un_texte() {
+        // La Source par défaut est Quote, or aller chercher une citation demande un
+        // aller-retour réseau impossible sous le verrou : la Room naît donc avec des mots.
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        assert_eq!(source_of(&rooms, "c1"), TextSource::Quote);
+        assert_eq!(word_count_of(&rooms, "c1"), ROOM_WORD_COUNT as usize);
+    }
+
+    #[test]
+    fn seul_l_owner_regle_la_source() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1"); // owner
+        join(&rooms, "c1", "p2");
+
+        assert!(!set_text_source(&rooms, "c1", "p2", TextSource::Words { count: 15 }));
+        assert_eq!(source_of(&rooms, "c1"), TextSource::Quote); // inchangé
+
+        assert!(set_text_source(&rooms, "c1", "p1", TextSource::Words { count: 15 }));
+        assert_eq!(source_of(&rooms, "c1"), TextSource::Words { count: 15 });
+    }
+
+    #[test]
+    fn la_source_ne_change_pas_pendant_une_course() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        start_race(&rooms, "c1", "p1");
+        assert!(!set_text_source(&rooms, "c1", "p1", TextSource::Words { count: 50 }));
+        assert_eq!(source_of(&rooms, "c1"), TextSource::Quote);
+    }
+
+    #[test]
+    fn une_longueur_arbitraire_est_refusee() {
+        // Frontière de confiance : le count vient du client et s'impose aux 7 autres.
+        // Une course de 100 000 mots ne doit pas être demandable.
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        for count in [1, 31, 100_000] {
+            assert!(!set_text_source(&rooms, "c1", "p1", TextSource::Words { count }));
+        }
+        for count in WORDS_LENGTHS {
+            assert!(set_text_source(&rooms, "c1", "p1", TextSource::Words { count }));
+        }
+    }
+
+    #[test]
+    fn la_revanche_respecte_la_longueur_choisie() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        set_text_source(&rooms, "c1", "p1", TextSource::Words { count: 15 });
+
+        start_race(&rooms, "c1", "p1");
+        assert_eq!(record_finish(&rooms, "c1", "p1", 60.0), FinishOutcome::RaceOver);
+        // end_race regénère immédiatement : le texte de la revanche fait bien 15 mots.
+        assert_eq!(word_count_of(&rooms, "c1"), 15);
+    }
+
+    #[test]
+    fn une_citation_est_ramenee_a_des_mots_separes_par_un_espace() {
+        // Une citation arrive avec des retours à la ligne et des espaces doubles, or
+        // target_text.split(' ') compte les mots et le client découpe pareil.
+        assert_eq!(normalize_quote("  Be\n\nyourself;   everyone else\tis taken. "), "Be yourself; everyone else is taken.");
+        assert_eq!(normalize_quote("mot").split(' ').count(), 1);
+    }
+
+    // --- Clé de Room : salon vocal ou Code de partie (ADR 0008) --------------------
+
+    #[test]
+    fn un_code_de_partie_est_lisible_a_l_oral() {
+        let rooms = new_rooms();
+        let (code, _rx) = create_room(&rooms, "p1", ident("p1"));
+        assert_eq!(code.len(), CODE_LEN);
+        // Aucun caractère visuellement ambigu : c'est un code qu'on dicte.
+        assert!(code.chars().all(|c| CODE_ALPHABET.contains(&(c as u8))));
+        assert!(!code.contains(&['0', 'O', '1', 'I', 'L'][..]));
+        // Et jamais confondable avec un snowflake Discord (18-19 chiffres).
+        assert!(code.len() < 18);
+    }
+
+    #[test]
+    fn create_room_met_son_createur_dedans_comme_owner() {
+        let rooms = new_rooms();
+        let (code, _rx) = create_room(&rooms, "p1", ident("p1"));
+        let guard = rooms.lock().unwrap();
+        let room = guard.get(&code).unwrap();
+        assert_eq!(room.players, s(&["p1"])); // le créateur est le 1er arrivé…
+        assert_eq!(room.owner, "p1"); // …donc l'owner, par la règle habituelle
+        assert_eq!(room.code, Some(code.clone())); // le lobby peut afficher le code
+    }
+
+    #[test]
+    fn un_code_inconnu_ne_cree_rien() {
+        // Le cœur de l'ADR 0008 : sans ça, une faute de frappe enfermerait le joueur
+        // seul dans une Room fantôme où il attendrait sans jamais comprendre.
+        let rooms = new_rooms();
+        assert_eq!(join_code(&rooms, "ZZZZZ", "p1", ident("p1")).err(), Some(JoinError::NotFound));
+        assert!(rooms.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn deux_codes_tires_de_suite_ne_collisionnent_pas() {
+        // Les nanos ne bougent que dans les poids faibles : sans le mélange
+        // multiplicatif + sel, deux créations rapprochées tomberaient sur le même code.
+        let rooms = new_rooms();
+        let (a, _ra) = create_room(&rooms, "p1", ident("p1"));
+        let (b, _rb) = create_room(&rooms, "p2", ident("p2"));
+        assert_ne!(a, b);
+        assert_eq!(rooms.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn un_code_meurt_avec_sa_room() {
+        let rooms = new_rooms();
+        let (code, _rx) = create_room(&rooms, "p1", ident("p1"));
+        leave_room(&rooms, &code, "p1"); // dernier présent : Room retirée
+        assert!(rooms.lock().unwrap().is_empty());
+        // Le code n'est ni persisté ni réservé : le rejoindre échoue comme n'importe quel inconnu.
+        assert_eq!(join_code(&rooms, &code, "p2", ident("p2")).err(), Some(JoinError::NotFound));
+    }
+
+    #[test]
+    fn salon_et_code_cohabitent_dans_la_meme_map() {
+        let rooms = new_rooms();
+        join(&rooms, "123456789012345678", "p1"); // snowflake : créé à la volée
+        let (code, _rx) = create_room(&rooms, "p2", ident("p2"));
+        assert_eq!(rooms.lock().unwrap().len(), 2);
+        // La Room de salon n'a pas de code, celle du code en a un.
+        assert!(rooms.lock().unwrap().get("123456789012345678").unwrap().code.is_none());
+        assert!(rooms.lock().unwrap().get(&code).unwrap().code.is_some());
+    }
+
+    #[test]
+    fn le_neuvieme_joueur_est_refuse() {
+        let rooms = new_rooms();
+        for i in 0..MAX_PLAYERS {
+            join(&rooms, "c1", &format!("p{i}"));
+        }
+        assert_eq!(players_of(&rooms, "c1").len(), MAX_PLAYERS);
+
+        assert_eq!(join_channel(&rooms, "c1", "p8", ident("p8")).err(), Some(JoinError::Full));
+        assert_eq!(players_of(&rooms, "c1").len(), MAX_PLAYERS); // les 8 premiers intacts
+        assert!(!players_of(&rooms, "c1").contains(&"p8".to_string()));
+    }
+
+    #[test]
+    fn rejoindre_deux_fois_ne_consomme_pas_de_place() {
+        // Une reconnexion ne doit pas remplir la Room avec le même joueur.
+        let rooms = new_rooms();
+        for i in 0..MAX_PLAYERS {
+            join(&rooms, "c1", &format!("p{i}"));
+        }
+        join(&rooms, "c1", "p0"); // déjà là : accepté, sans nouvelle place
+        assert_eq!(players_of(&rooms, "c1").len(), MAX_PLAYERS);
+    }
+
     #[test]
     fn watchdog_ignore_les_rooms_en_lobby() {
         let rooms = new_rooms();
-        join_room(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p1");
         close_overlong_races(&rooms, now_epoch_ms() + 100 * RACE_MAX_DURATION_MS);
         assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing()); // toujours Lobby, intact
     }

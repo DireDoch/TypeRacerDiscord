@@ -12,17 +12,34 @@
 - **CI/CD** — fait. Lint ajouté à `.github/workflows/ci.yml` (clippy backend
   #34, eslint frontend #35), CD explicitement différé (pas de cible de
   déploiement stable pour l'instant).
-- **D) Race multijoueur** — **pas commencé**, reste le plus gros morceau.
-  `ui/race.ts` gère déjà lobby/course/décompte(3s)/barres live/classement
-  (Phase 2) ; D est en grande partie net-new (voitures/avatars, lobby
-  public/privé + code, party leader, podium, Play of the Game en ralenti).
-  **Conflit déjà repéré** à trancher en premier : le brief D demande un
-  décompte de 7s, CONTEXT.md fige aujourd'hui le décompte multijoueur à 3s
-  — probablement un ADR à écrire selon la décision (précédent : ADR 0004).
-  Prompt de reprise prêt dans `Contexte/prochain prompt 07-21`.
+- **D) Race multijoueur** — **conçu, pas implémenté**. Session de grilling du
+  2026-07-22 : toutes les décisions sont prises, ADR 0007→0011 écrits,
+  CONTEXT.md à jour. Reste à découper en issues et à coder.
+  - Décompte **7 s** (ADR 0007) — réglage produit, pas une unité de mesure :
+    contrairement à ADR 0004, t=0 ne bouge pas et la Race n'est jamais
+    PB-eligible, donc **aucun backfill**.
+  - Room identifiée par une **clé** = `channelId` OU **Code de partie** de 5
+    caractères (ADR 0008). Création à la volée pour le salon, explicite pour un
+    code (`CreateRoom` / `RoomNotFound`). Tout code est déjà cross-serveur ;
+    l'annuaire public/privé est **différé** (rien à lister sans joueurs).
+  - Le leader règle une **Source de texte**, pas un Mode (ADR 0009) :
+    `Quote` (défaut) ou `Mots` en Court 15 / Normal 30 / Long 50. Scoring
+    inchangé (`Mode::Words`), pas de Punctuation/Numbers imposés aux autres.
+  - **Abandon** = arrivée à 0 WPM avec `forfeit: true`, sans recompute ni
+    persistance : débloque `all_racers_done` et garde le joueur au lobby. Même
+    chemin de code que la déconnexion (glossaire).
+  - **Piste** = les barres actuelles recostumées (avatar en tête du `bar-fill`,
+    WPM live à la ligne d'arrivée). Identité annoncée par le client, avatar
+    transporté en **hash** jamais en URL. WPM live des autres **dérivé** de
+    `charsDone` → zéro champ ajouté au protocole.
+  - **Podium** : `RaceOver` porte les résultats complets (ADR 0010), le **Gap**
+    en tête — enfin implémenté. Clic sur un joueur = son graphe, sans
+    aller-retour. `GET /api/runs/:id` reste scopé au demandeur.
+  - **Play of the Game** (ADR 0011) : duel le plus serré choisi en Rust, sauté
+    si > 2 s d'écart, deux logs sur **une horloge commune**, ralenti à 0.25×
+    (une multiplication dans `feedUntil`). Podium et PotG sont purement client.
 
-Décisions détaillées : `Docs/adr/0005-trigram-drill-mode-separe.md`,
-`Docs/adr/0006-cursus-apprendre-100-lecons.md`, glossaire à jour dans
+Décisions détaillées : `Docs/adr/0005` à `0011`, glossaire à jour dans
 `CONTEXT.md`.
 
 ---

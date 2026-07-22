@@ -11,7 +11,7 @@
 import "./style.css";
 import { Menu } from "./ui/menu";
 import { Practice } from "./ui/practice";
-import { Race } from "./ui/race";
+import { Race, type RaceIntent } from "./ui/race";
 import { History } from "./ui/history";
 import { Learn } from "./ui/learn";
 import { getAuthToken } from "./discord";
@@ -70,13 +70,15 @@ function showPractice(): void {
   p.mount();
 }
 
-function showRace(): void {
+function showRace(intent: RaceIntent = { kind: "channel" }): void {
   screen?.destroy();
-  const r = new Race(root, showMenu);
+  const r = new Race(root, showMenu, intent);
   screen = r;
   void r.mount();
 }
 
+// `?race` = raccourci dev (deux onglets au navigateur) : toujours la Room du salon,
+// c'est le seul chemin qui ne demande rien à saisir.
 if (new URLSearchParams(location.search).has("race")) {
   showRace();
 } else {

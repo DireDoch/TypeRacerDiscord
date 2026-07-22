@@ -379,6 +379,44 @@ button.primary:hover {
   max-height: none;
 }
 
+/* Code de partie : fait pour être LU À VOIX HAUTE, d'où la chasse fixe et l'espacement
+   — on dicte cinq caractères, pas un mot. */
+.race-code {
+  color: var(--sub);
+  font-size: 0.9rem;
+}
+.race-code strong {
+  font-family: var(--font-mono, monospace);
+  font-size: 1.4rem;
+  letter-spacing: 0.25em;
+  color: var(--main);
+  user-select: all; /* un clic sélectionne le code entier, pour le coller dans un chat */
+}
+
+/* Saisie du Code de partie au menu : même chasse que l'affichage, pour que le joueur
+   voie qu'il tape la même chose que ce qu'on lui a dicté. */
+#raceCode {
+  font-family: var(--font-mono, monospace);
+  font-size: 1.1rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  width: 8em;
+  padding: 0.5rem 0.6rem;
+  border-radius: 0.4rem;
+  border: 1px solid var(--sub);
+  background: var(--panel);
+  color: var(--text);
+}
+
+/* Réglages du lobby (Source de texte) : une seule ligne, l'hôte y clique, les autres
+   la lisent. */
+.race-settings {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
 /* Cartes de présence empilées. */
 .cards {
   display: flex;
@@ -414,27 +452,80 @@ button.primary:hover {
   background: var(--panel);
 }
 
-/* Barres de progression (une par joueur). */
+/* Piste de course : une ligne par joueur. Ce sont les anciennes barres de progression,
+   recostumées — la piste EST la barre, la voiture EST la tête du remplissage. Aucun
+   canvas, aucun sprite : la même donnée (charsDone) dessine la même chose, en mieux. */
 .bars {
   display: flex;
   flex-direction: column;
+  gap: 0.55rem;
+}
+.bar {
+  display: grid;
+  /* nom | piste | wpm à la ligne d'arrivée */
+  grid-template-columns: minmax(4rem, 7rem) 1fr minmax(4.5rem, auto);
+  align-items: center;
   gap: 0.6rem;
 }
 .bar-label {
-  font-size: 0.8rem;
+  font-size: 0.85rem;
   color: var(--sub);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bar.me .bar-label {
+  color: var(--text);
 }
 .bar-track {
   background: var(--panel);
   border-radius: 0.3rem;
-  height: 0.7rem;
-  overflow: hidden;
-  margin-top: 0.2rem;
+  height: 1.6rem;
+  position: relative;
+  /* Ligne d'arrivée : le bord droit de la piste, pas un élément de plus. */
+  border-right: 3px solid var(--main);
 }
 .bar-fill {
-  background: var(--main);
+  background: color-mix(in srgb, var(--main) 22%, transparent);
   height: 100%;
+  border-radius: 0.3rem 0 0 0.3rem;
   transition: width 0.15s ease-out;
+  /* La voiture est la TÊTE du remplissage : elle suit la largeur, gratuitement. */
+  position: relative;
+}
+.car {
+  position: absolute;
+  right: -0.8rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--main);
+  color: var(--bg);
+  display: grid;
+  place-items: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+/* L'initiale est DERRIÈRE l'avatar : si l'image ne charge pas (CSP de l'iframe,
+   compte sans avatar), elle reste visible d'elle-même. Aucun JS de repli. */
+.car img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.bar-wpm {
+  font-size: 0.85rem;
+  color: var(--sub);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.bar.done .bar-wpm {
+  color: var(--main);
 }
 
 .ranking {

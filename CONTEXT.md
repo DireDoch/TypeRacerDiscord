@@ -16,12 +16,20 @@ _Avoid_: Solo, Training, Free mode.
 A competitive Run inside a Room with **blocking input** (TypeRacer-style): an error must be corrected before advancing. Planned for Phase 2. The blocking input controller is built and testable in solo during the MVP, then rebound exclusively to Race later.
 _Avoid_: Match, Duel, Course.
 
+**Abandon (forfeit)**:
+Giving up the current Race **without leaving the Room** — the Player's car stops, they are ranked last and labelled « abandon » (never « 0 wpm »), and they stay in the lobby to play the next Race. Recorded as an arrival at 0 WPM carrying an explicit `forfeit` flag, so it unblocks the finish for everyone else instead of making them wait out the watchdog. No Run is ever persisted for an Abandon: nothing to exclude from PBs, nothing to pollute the history. A Player who simply **disconnects** produces the exact same record — one code path for both.
+_Avoid_: Quit, Leave, Give up, DNF.
+
 **Gap (écart)**:
-How far a Player finished behind the winner of a Race, in seconds. It is the headline of the finish — the number that gets said out loud — while absolute WPM is secondary.
+How far a Player finished behind the winner of a Race, in seconds. It is the headline of the finish — the number that gets said out loud — while absolute WPM is secondary. Derived on the client from the durations carried by `RaceOver` (ADR 0010); the winner's own Gap is zero. Ranking by Gap and ranking by WPM are always the same order in a Race — everyone types the same text and only finishes at 100 % exact, so correct characters are identical across finishers.
 _Avoid_: Delta, Difference, Lag.
 
 **Mode**:
-The rule that decides what text is presented and when a Run ends — one of `Time`, `Words`, `Quotes`, `Zen`. Exactly one Mode per Run.
+The rule that decides what text is presented and when a Run ends — one of `Time`, `Words`, `Quotes`, `Zen`. Exactly one Mode per Run. **Solo only**: a Race has no Mode (its end rule is always "the whole text, exactly"), it has a Source de texte instead — ADR 0009.
+
+**Source de texte (Race)**:
+Where a Race's text comes from — `Quote` (default, via the existing quote proxy) or `Mots` (generated, length `Court 15` / `Normal 30` / `Long 50`). Chosen by the party leader in the lobby, out of race only. It decides the text, never the measure: the Authoritative scoreboard recomputes every Race as `Words` over the server's text regardless. Length is a `Mots`-only control — a Quote's length belongs to the quote.
+_Avoid_: Mode, Race mode, Game mode.
 
 **Setting**:
 An independent, cumulable text modifier applied on top of a Mode — currently `Punctuation` and `Numbers`. Zero or more per Run.
@@ -38,6 +46,10 @@ _Avoid_: Input history, Replay.
 **Replay**:
 The playback of a finished Run, re-rendered from its Keystroke log against the persisted target text — the Player watches their own typing happen again in real time (errors included). Launched from the results screen or from any Run in the history. Simple playback: start to finish at real speed, no pause or seeking.
 _Avoid_: Review, Playback, Ghost.
+
+**Play of the Game**:
+The post-Race highlight: the two Players whose finishes were **closest together** — wherever they landed in the ranking — replayed side by side in slow motion over their last seconds. Chosen by the server (ADR 0011), and **omitted entirely** when no pair finished within 2 s: a race with no photo finish has no Play of the Game. It reuses the Replay machinery but is not a Replay: two Keystroke logs instead of one, a window instead of the whole Run, and a **single shared clock** for both — that shared clock is what makes it a duel rather than two unrelated playbacks.
+_Avoid_: Highlight, PotG, Replay, Duel.
 
 **Live stats**:
 Stats computed on the client during a Run for immediate UI feedback (the moving WPM counter, the graph filling in). Not authoritative.
@@ -86,9 +98,13 @@ _Avoid_: Citation, Passage.
 One step of the Learn curriculum (UI: « Apprendre »), one of 100 (ADR 0006): instructional content on touch-typing — illustrated with a static hand/keyboard diagram on the earliest Lessons only — plus a typed exercise on a fixed key set. Passing the exercise at the accuracy required by the current curriculum stage (a static, editable table of thresholds — early Lessons are lenient, later ones stricter) unlocks the next Lesson. Accuracy is the only gating criterion, at every stage — speed is never required to unlock a Lesson. Progress is persisted per Player. Lesson exercises are not Runs: no PB, no history entry.
 _Avoid_: Level, Tutorial, Course.
 
-**Room** (Phase 2, not in MVP):
-A multiplayer session scoped to one Discord voice channel (`channelId`). Holds the set of Players racing the same text together.
-_Avoid_: Lobby, Session, Channel.
+**Room**:
+A multiplayer session holding the set of Players racing the same text together. Identified by a **key** that is either a Discord voice channel (`channelId`) or a Code de partie — one map, two forms (ADR 0008). A Room keyed by `channelId` is created on the fly (the key comes from the SDK, it cannot be mistyped); a Room keyed by a code is only ever created explicitly. An empty Room is discarded and its code dies with it.
+_Avoid_: Lobby, Session, Channel, Game.
+
+**Code de partie (Race code)**:
+The 5-character key of a Room created explicitly rather than derived from a voice channel — short enough to be read out loud, drawn from an alphabet with no visual ambiguity (no `0/O`, no `1/I/L`). It is what lets Players from **different** Discord servers race together, since the backend checks no guild membership. Never persisted, never reserved: it exists as long as the Room does.
+_Avoid_: Lobby ID, Room ID, Invite code, Game code.
 
 ### Stats
 
@@ -131,13 +147,61 @@ ce que mesure le temps de réaction aussi :
 - **Solo** (Practice, Apprendre) : t=0 = la **1re frappe** du Player. Pas de décompte, pas
   de délai imposé ; le temps de réaction n'est **pas** mesuré (il n'y a personne d'autre à
   attendre). Décision explicite — voir `Docs/adr/0004-solo-sans-decompte.md`.
-- **Multijoueur** (Race) : t=0 = `RaceStart`, l'événement serveur qui synchronise tous les
-  Players. Un décompte local de 3 s le précède (texte visible en entier pendant l'attente,
-  jamais masqué) ; le temps de réaction (RaceStart → 1re frappe) **est** compté — il reflète
-  la réactivité du Player face à un signal partagé, pas un artefact de mesure.
+- **Multijoueur** (Race) : t=0 = la **fin du décompte** (« GO »), déclenché par `RaceStart`,
+  l'événement serveur qui synchronise tous les Players. Le décompte local dure **7 s**
+  (texte visible en entier pendant l'attente, jamais masqué — 7 s = le temps de voir la
+  grille de départ et de lire le premier mot) ; le temps de réaction (GO → 1re frappe)
+  **est** compté — il reflète la réactivité du Player face à un signal partagé, pas un
+  artefact de mesure. La **durée** du décompte est un réglage produit ajustable sans ADR
+  ni invalidation (ADR 0007) : elle ne change pas ce qui est mesuré, et la Race n'est
+  jamais PB-eligible. Ne pas confondre avec ADR 0004 (solo), qui déplaçait t=0 lui-même.
 
 Solo et Race ne mesurent donc pas la même chose et ne sont **jamais comparés entre eux**
 pour un PB (Race est déjà exclu des PB — fin stricte, texte 100 % exact).
+
+**Texte d'une Race : généré d'abord, citation ensuite.**
+Une Room naît TOUJOURS avec un texte de mots, même quand sa Source est `Quote` (le
+défaut) : aller chercher une citation demande un aller-retour réseau, et le `Mutex` std
+des Rooms n'est jamais tenu à travers un `await`. `spawn_refresh_text` fait donc les
+choses en trois temps — lire la Source sous verrou, relâcher, chercher le texte, reposer
+le résultat sous verrou — et re-diffuse `RoomState`. Le lobby voit l'ancien texte puis le
+nouveau ; une course lancée entre-temps annule la pose (le texte en vol est périmé). Même
+raison à la fin d'une course : `end_race` regénère des MOTS immédiatement pour que la Room
+reste jouable sans réseau, et l'appelant (hors verrou) déclenche la citation par-dessus.
+Le repli après échec du proxy n'est pas un état à part : la Room bascule pour de vrai sur
+`Words(30)`, et c'est ce que `RoomState` annonce.
+
+**Party leader (Race).**
+C'est l'`owner` existant, sans changement : 1er arrivé dans la Room, transféré au suivant
+s'il part. Le brief « le créateur est le party leader » est déjà vrai par construction —
+le créateur d'une Room à code EST forcément son 1er arrivé. Il gagne seulement le droit de
+régler la Source de texte (ADR 0009), toujours hors course. **Limite de 8 joueurs** :
+gardée dans `join_room`, qui répond `RoomFull` — le plafond porte sur `players`, donc un
+spectateur arrivé en cours de course occupe une place comme un autre.
+
+**Display identity en Race (piste, podium).**
+La Display identity est **annoncée par le client** dans l'événement de jointure et
+re-diffusée par `RoomState` — le serveur ne la résout pas via `/users/@me`, sinon
+l'override de pseudo (qui appartient au device) serait écrasé. Elle n'est jamais vérifiée
+ni persistée, et elle est **oubliée au départ** du joueur, comme le veut le glossaire. On
+transporte `{ playerId, displayName, avatarHash }` : **jamais une URL d'avatar**, chaque
+client reconstruit `cdn.discordapp.com/avatars/{id}/{hash}.png` lui-même (`discord.ts:
+avatarUrl`). Un `avatarUrl` fourni par un client serait une URL arbitraire chargée dans le
+navigateur des 7 autres ; avec un hash, la forme est fixe. Le serveur `sanitize` quand
+même à l'entrée — non contre l'injection (le rendu échappe déjà), mais parce qu'un nom
+démesuré ou un hash hors `[0-9a-f_]` dégraderait l'écran **des autres**.
+Côté `Room`, les identités vivent dans une map à CÔTÉ de `players` (qui reste une liste
+d'ID) : la logique de course n'a pas à connaître l'affichage, et la map ne bouge qu'aux
+deux endroits où la présence bouge. La pastille d'avatar rend l'**initiale derrière
+l'image** — un avatar absent ou bloqué se dégrade tout seul, sans `onerror`.
+
+**WPM live des autres joueurs (piste).**
+Dérivé, pas transporté : `charsDone` (déjà diffusé par `Progress`) compte les caractères
+**corrects**, donc chaque client calcule `(charsDone / 5) / minutes` pour tout le monde.
+Aucun champ ajouté au protocole. Plafond assumé : les t=0 diffèrent d'une fraction de
+seconde d'un client à l'autre (le décompte est local), soit ~2 % d'écart sur une course de
+30 s — acceptable pour un compteur d'ambiance, jamais pour un score (le WPM de record
+reste celui du recompute autoritaire au Finish).
 
 **Borne de fin / durée.**
 Time fini = `modeValue` (durée fixe). Words/Quotes = instant de complétion du dernier
@@ -207,7 +271,11 @@ Discord retire le préfixe AVANT d'appliquer les URL Mappings → backend et dev
 L'URL de l'iframe est figée par le URL Mapping → toute navigation se fait PAR BOUTONS.
 `main.ts` orchestre Menu (hub : Solo / Multijoueur / Options / Quitter) ↔ Practice ↔
 Race, chaque écran expose `destroy()` (écouteur clavier global, rAF, socket) pour éviter
-les écouteurs fantômes. `?race` reste le raccourci dev (deux onglets au navigateur).
+les écouteurs fantômes. La vue **Multijoueur du Menu** porte les trois portes d'entrée
+d'une Room (salon / créer / rejoindre par code) ET le champ de saisie du code — c'est
+délibéré : un code refusé ramène le joueur là où il peut le corriger, plutôt que dans un
+écran de Race qui devrait re-héberger le même champ. `?race` reste le raccourci dev (deux
+onglets au navigateur) et vise toujours la Room du salon, le seul chemin sans saisie.
 « Quitter » ferme l'Activity via `sdk.close` (masqué hors Discord).
 
 **Affichage du texte.**
@@ -215,7 +283,7 @@ Solo : fenêtre glissante de 3 lignes (Monkeytype) — clip CSS sur `.words` + d
 programmatique par lignes entières (`slideWindow` → `scrollTop`), le mot actif reste sur
 la ligne du MILIEU (`windowScrollTop`, pure : ligne n → n-1 lignes masquées). On mesure
 l'`offsetTop` réel après rendu → robuste au wrap, au backspace multi-mots et au flux du
-Time infini. Race : AUCUNE fenêtre — texte entier visible dès le décompte de 3 s.
+Time infini. Race : AUCUNE fenêtre — texte entier visible dès le décompte.
 
 **Debug in-iframe.**
 La console est invisible dans Discord : `main.ts` affiche un bandeau d'erreurs fixe
@@ -242,8 +310,11 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
   `VITE_DISCORD_CLIENT_ID` absent) : token de test (`dev-player-1`) accepté tel quel par le
   backend dev comme `player_id`. Handshake amorcé tôt dans `main.ts` (non bloquant, mémoïsé).
 
-- Écran **Race** (`ui/race.ts`) : lobby (cartes de présence, owner 👑), décompte 3 s avec
-  texte entier, barres live, classement, revanche. Écran **Menu** (`ui/menu.ts`) : hub
+- Écran **Race** (`ui/race.ts`) : lobby (cartes de présence avec avatar + nom, owner 👑,
+  Code de partie, réglage de la Source de texte pour l'hôte), décompte de
+  `RACE_COUNTDOWN_S` = **7 s** (ADR 0007) avec texte entier, **piste** (une ligne par
+  joueur : avatar en tête de progression, nom, WPM live à la ligne d'arrivée — les
+  anciennes barres recostumées en CSS, aucun canvas), classement, revanche. Écran **Menu** (`ui/menu.ts`) : hub
   d'arrivée + vue Options (liens légaux). Navigation par boutons avec `destroy()`.
 - Écran **Apprendre** (`ui/learn.ts`, entrée au menu) : cursus complet (issues #4, #8) —
   liste des Lessons (verrouillée/disponible/complétée), 13 leçons réelles dans
@@ -273,7 +344,10 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
 - Origine unique : le build Vite (`STATIC_DIR`, défaut `../frontend/dist`) est servi en
   `fallback_service` (ServeDir → `index.html` pour le routage SPA). `dotenvy` charge
   `backend/.env` (sans écraser l'env du shell). Port configurable via `PORT` (défaut 8080).
-- `ws/` : Phase 2 **livrée** — Rooms par salon vocal, owner, partants figés au RaceStart
+- `ws/` : Phase 2 **livrée** — Rooms indexées par **clé** (salon vocal *ou* Code de partie,
+  ADR 0008 : `JoinChannel` crée à la volée, `CreateRoom` tire un code de 5 caractères,
+  `JoinCode` ne crée jamais et répond `RoomNotFound`), plafond de 8 présents (`RoomFull`),
+  owner, partants figés au RaceStart
   (`all_racers_done`), recompute autoritaire au Finish, revanche sur texte neuf. Messages
   bornés à 256 Ko ; `GET /api/quote` authentifié (sinon quota API-Ninjas drainable).
 
