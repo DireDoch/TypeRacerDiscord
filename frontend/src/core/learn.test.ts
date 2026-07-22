@@ -47,8 +47,8 @@ describe("generateLessonText", () => {
 });
 
 describe("LESSONS (cursus complet)", () => {
-  it("55 leçons après le lot 36-55 (#31) — pas de trou avant la suite (#32-#33)", () => {
-    expect(LESSONS.length).toBe(55);
+  it("75 leçons après le lot 56-75 (#32) — pas de trou avant la suite (#33)", () => {
+    expect(LESSONS.length).toBe(75);
   });
 
   it("chaque leçon : titre, contenu, jeu de touches ou mots, exercice", () => {
