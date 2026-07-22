@@ -15,8 +15,10 @@ import {
   Tooltip,
   Legend,
 } from "chart.js";
-import type { AnalysisResponse, SubmitRunResponse, WeakSpot } from "../core/types";
+import type { AnalysisResponse, SubmitRunResponse } from "../core/types";
 import { AUTHORITATIVE_BACKEND, fetchAnalysis, isIdentityError, IDENTITY_ERROR_MESSAGE } from "../api";
+import { escapeText } from "./typing-zone";
+import { analysisHtml } from "./weak-spots";
 
 Chart.register(
   LineController,
@@ -45,9 +47,9 @@ export function renderResults(
   const c = sb.characters;
 
   const attribution = quote
-    ? `<p class="quote-author">— ${escapeHtml(quote.author)}${
+    ? `<p class="quote-author">— ${escapeText(quote.author)}${
         quote.wikipediaUrl
-          ? ` · <a href="${escapeHtml(quote.wikipediaUrl)}" target="_blank" rel="noopener noreferrer">en savoir plus</a>`
+          ? ` · <a href="${escapeText(quote.wikipediaUrl)}" target="_blank" rel="noopener noreferrer">en savoir plus</a>`
           : ""
       }</p>`
     : "";
@@ -108,40 +110,6 @@ async function analyze(root: HTMLElement, runId: string): Promise<void> {
   }
   if (!root.querySelector("#analysis")) return; // écran quitté pendant le fetch
   el.innerHTML = analysisHtml(a, "sur cette course");
-}
-
-/** Rendu partagé (résultats et profil « Mes faiblesses ») d'une AnalysisResponse. */
-export function analysisHtml(a: AnalysisResponse, scope: string): string {
-  if (a.weakSpots.length === 0) {
-    return `<p class="hint">Aucun Weak spot significatif ${scope} — rien ne sort de ta moyenne (ou pas assez d'occurrences pour trancher).</p>`;
-  }
-  const items = a.weakSpots
-    .slice(0, 10)
-    .map((w) => `<li>${weakSpotHtml(w)}</li>`)
-    .join("");
-  return `
-    <p class="hint">Tes points faibles ${scope} (vs ta moyenne : ${a.globalMeanDelayMs} ms/frappe, ${(a.globalErrorRate * 100).toFixed(1)} % d'erreurs) :</p>
-    <ul class="weak-spots">${items}</ul>
-  `;
-}
-
-function weakSpotHtml(w: WeakSpot): string {
-  const tags = [
-    w.slow ? `lent · ${w.meanDelayMs} ms` : "",
-    w.faulty ? `${(w.errorRate * 100).toFixed(0)} % d'erreurs` : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  const kind = w.kind === "bigram" ? "paire" : "touche";
-  return `<span class="chars">${escapeHtml(w.chars)}</span> <span class="detail">${kind} · ${w.occurrences}× · ${tags}</span>`;
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 function pbLabel(res: SubmitRunResponse): string {

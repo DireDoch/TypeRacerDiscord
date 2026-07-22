@@ -19,7 +19,7 @@ import { Countdown } from "../core/countdown";
 import { FreeInput } from "../core/input/free-input";
 import { RaceSocket, type ServerEvent } from "../core/net";
 import { liveWpm } from "../live-stats";
-import { renderWord, placeCaret } from "./practice";
+import { wordsHtml, placeCaret, escapeText } from "./typing-zone";
 import { getIdentity, proxyBase } from "../discord";
 
 type Phase = "connecting" | "lobby" | "countdown" | "running" | "over";
@@ -204,10 +204,10 @@ export class Race {
         return this.cardsHtml() + this.startBtnHtml() + this.exitBtnHtml();
       case "countdown":
         return `<div class="countdown">${this.countdownN}</div>
-          <div class="words-wrap"><div class="words" id="words">${this.wordsHtml()}</div><div class="caret-block"></div></div>`;
+          <div class="words-wrap"><div class="words" id="words">${this.wordsAreaHtml()}</div><div class="caret-block"></div></div>`;
       case "running":
         return `<div class="live-bar" id="liveBar"></div>
-          <div class="words-wrap"><div class="words" id="words">${this.wordsHtml()}</div><div class="caret-block"></div></div>
+          <div class="words-wrap"><div class="words" id="words">${this.wordsAreaHtml()}</div><div class="caret-block"></div></div>
           <div class="bars" id="bars">${this.barsHtml()}</div>
           <p class="hint">${this.doneLocal ? "Terminé — en attente des autres…" : "Tape le texte ; corrige tes fautes pour finir"}</p>`;
       case "over":
@@ -244,19 +244,12 @@ export class Race {
   private renderWords(): void {
     const el = this.root.querySelector<HTMLElement>("#words");
     if (!el) return;
-    el.innerHTML = this.wordsHtml();
+    el.innerHTML = this.wordsAreaHtml();
     placeCaret(el);
   }
 
-  private wordsHtml(): string {
-    const v = this.controller.view();
-    return this.targetWords
-      .map((target, i) => {
-        if (i < v.lockedWords.length) return renderWord(target, v.lockedWords[i], false);
-        if (i === v.wordIndex) return renderWord(target, v.typed, !this.doneLocal);
-        return renderWord(target, "", false);
-      })
-      .join("");
+  private wordsAreaHtml(): string {
+    return wordsHtml(this.targetWords, this.controller.view(), !this.doneLocal);
   }
 
   private renderBars(): void {
@@ -312,17 +305,4 @@ export function raceComplete(targetWords: string[], view: InputView): boolean {
   // Dernier mot en cours de frappe : précédents exacts + mot courant exact.
   if (view.lockedWords.length === n - 1) return lockedExact && view.typed === targetWords[n - 1];
   return false;
-}
-
-function escapeChar(ch: string): string {
-  if (ch === "<") return "&lt;";
-  if (ch === ">") return "&gt;";
-  if (ch === "&") return "&amp;";
-  return ch;
-}
-
-function escapeText(s: string): string {
-  let out = "";
-  for (const ch of s) out += escapeChar(ch);
-  return out;
 }

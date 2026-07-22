@@ -10,8 +10,8 @@
 import type { HistoryEntry, Mode, RunConfig } from "../core/types";
 import { fetchHistory, fetchProfileAnalysis, fetchRun, isIdentityError, IDENTITY_ERROR_MESSAGE } from "../api";
 import { runReplay } from "./replay";
-import { analysisHtml } from "./results";
-import { MODE_LABELS } from "./practice";
+import { analysisHtml } from "./weak-spots";
+import { MODE_LABELS } from "./mode-labels";
 
 const FILTERS: Mode[] = ["time", "words", "quotes", "zen", "drill"];
 

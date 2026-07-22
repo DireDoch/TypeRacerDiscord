@@ -16,7 +16,7 @@ import { FreeInput } from "../core/input/free-input";
 import type { InputController } from "../core/input/controller";
 import { computeScoreboard } from "../core/stats/scoreboard";
 import { fetchLearnProgress, submitLearnProgress } from "../api";
-import { renderWord, placeCaret } from "./practice";
+import { wordsHtml, placeCaret } from "./typing-zone";
 
 export class Learn {
   private view: "list" | "lesson" = "list";
@@ -167,7 +167,7 @@ export class Learn {
       ${content}
       <p class="hint">Exercice — ${lesson.words ? "mots complets" : `touches : <strong>${lesson.keys.join(" ")}</strong>`} · accuracy requise : ≥ ${requiredAccuracy(this.lessonIndex)}% · la vitesse ne compte pas.</p>
       <div class="words-wrap">
-        <div class="words" id="words">${this.result ? "" : this.wordsHtml()}</div>
+        <div class="words" id="words">${this.result ? "" : this.wordsAreaHtml()}</div>
         <div class="caret-block"></div>
       </div>
       ${this.result ? this.resultHtml() : `<p class="hint">Tape pour commencer · Tab pour un autre exercice</p>`}
@@ -185,22 +185,15 @@ export class Learn {
     return `<p><strong>${r.accuracy}%</strong> d'accuracy — leçon complétée ! 🎉 ${next}</p>`;
   }
 
-  private wordsHtml(): string {
-    const view = this.controller.view();
-    const running = this.startedAt !== null;
-    return this.targetWords
-      .map((target, i) => {
-        if (i < view.lockedWords.length) return renderWord(target, view.lockedWords[i], false);
-        if (i === view.wordIndex) return renderWord(target, view.typed, running || i === 0);
-        return renderWord(target, "", false);
-      })
-      .join("");
+  private wordsAreaHtml(): string {
+    // Le curseur reste visible dès l'idle (avant la 1re frappe) : ça invite à démarrer.
+    return wordsHtml(this.targetWords, this.controller.view(), true);
   }
 
   private renderWords(): void {
     const el = this.root.querySelector<HTMLElement>("#words");
     if (!el) return;
-    el.innerHTML = this.wordsHtml();
+    el.innerHTML = this.wordsAreaHtml();
     placeCaret(el);
   }
 
