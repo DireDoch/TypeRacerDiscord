@@ -103,7 +103,7 @@ pub enum ControlKey {
 }
 
 /// Un événement clavier brut : { t, k } pour un caractère, { t, k:"", ctrl } pour un contrôle.
-/// `t` = ms depuis t=0 (fin du décompte).
+/// `t` = ms depuis t=0 — la 1re frappe en solo, `RaceStart` en Race (CONTEXT.md, ADR 0004).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Keystroke {
     pub t: f64,

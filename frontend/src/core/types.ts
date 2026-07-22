@@ -6,7 +6,8 @@
 //  Toute modification ici doit être répercutée à l'identique côté Rust.
 //
 //  Règles de calcul figées (issues du grilling) :
-//   - t=0  = fin du compte à rebours (PAS la 1re frappe). Horloge monotone.
+//   - t=0  = 1re frappe en solo, `RaceStart` en multijoueur (pas de décompte en solo —
+//            ADR 0004). Horloge monotone.
 //   - WPM  = chars corrects à l'ÉTAT FINAL ÷ 5 ÷ minutes (style Monkeytype).
 //   - ACC  = frappes correctes ÷ total frappes, PAR FRAPPE. Backspace neutre.
 //            Extra (au-delà du mot) = frappe incorrecte.
@@ -58,7 +59,7 @@ export type ControlKey = "backspace" | "backspace-word";
  * Un événement clavier brut. Format minimal (option A du grilling).
  *  - frappe de caractère : { t, k: "a" }     (espace inclus, k = " ")
  *  - contrôle            : { t, k: "", ctrl: "backspace" }
- * `t` est en millisecondes depuis t=0 (fin du compte à rebours).
+ * `t` est en millisecondes depuis t=0 (1re frappe en solo, `RaceStart` en Race).
  */
 export interface Keystroke {
   t: number;
@@ -77,8 +78,7 @@ export type KeystrokeLog = Keystroke[];
 
 export type RunPhase =
   | "idle" // écran de config, rien de démarré
-  | "countdown" // compte à rebours de 3 s avant t=0
-  | "running" // le joueur tape ; le log se remplit
+  | "running" // le joueur tape (dès la 1re frappe, pas de décompte en solo — ADR 0004) ; le log se remplit
   | "finished"; // terminé ; on attend / affiche le scoreboard autoritaire
 
 export interface RunState {

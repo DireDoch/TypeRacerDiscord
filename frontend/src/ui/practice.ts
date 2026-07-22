@@ -1,17 +1,16 @@
 // =============================================================================
 //  ui/practice.ts — écran de Practice (saisie libre, solo, MVP).
 //
-//  Machine d'état : idle → countdown(3s) → running → finished.
+//  Machine d'état : idle → running → finished.
 //  Câble le core/ pur : generateWithRng (texte seedé), RunClock (t=0 monotone),
 //  FreeInput (curseur libre, log brut). À la fin : api.submitRun → résultats.
 //
-//  t=0 = fin du décompte (PAS la 1re frappe). Le temps de réaction est compté, comme
-//  figé dans CONTEXT.md. Seul countdown→running appelle clock.start().
+//  t=0 = la 1re frappe (PAS de décompte en solo — ADR 0004, CONTEXT.md « Origine du
+//  temps »). Le temps de réaction n'est pas mesuré : personne d'autre n'attend.
 // =============================================================================
 
 import type { RunConfig, RunPhase, KeystrokeLog, Keystroke } from "../core/types";
 import { RunClock } from "../core/clock";
-import { Countdown } from "../core/countdown";
 import { FreeInput } from "../core/input/free-input";
 import type { InputController } from "../core/input/controller";
 import { generateWithRng, initialWordCount } from "../core/text-gen";
@@ -71,8 +70,6 @@ export class Practice {
   private rafId = 0;
   /** Arrêt du Replay en cours (rAF) si on quitte l'écran par reset()/destroy(). */
   private stopReplay: (() => void) | null = null;
-  /** Décompte en cours, annulé sur destroy() : sinon écran fantôme + clock.start() en double. */
-  private countdown: Countdown | null = null;
 
   // Mode Quotes : la Quote vient de GET /api/quote (pas de génération seedée).
   private quoteId?: string;
@@ -108,17 +105,12 @@ export class Practice {
     cancelAnimationFrame(this.rafId);
     this.stopReplay?.();
     this.stopReplay = null;
-    this.countdown?.cancel();
-    this.countdown = null;
     this.resetSeq++;
   }
 
   // --- Cycle de vie d'un Run --------------------------------------------------
 
   private async reset(): Promise<void> {
-    // Demande produit : aucun reset pendant le décompte (une seule chaîne vivante,
-    // pas de clock.start() en double — issue #12). Le décompte va à son terme.
-    if (this.phase === "countdown") return;
     const seq = ++this.resetSeq;
     cancelAnimationFrame(this.rafId);
     this.stopReplay?.();
@@ -214,28 +206,31 @@ export class Practice {
     this.renderWords();
   }
 
-  private startCountdown(): void {
-    if (this.phase !== "idle") return;
-    // Rien à taper encore : texte en chargement/erreur (Quote, profil Drill), ou Mode à
-    // texte cible sans mots (dont Drill sans profil). Zen n'a jamais de cible mais
-    // démarre quand même (le joueur tape librement).
-    if (this.loadingText) return;
-    if (this.targetWords.length === 0 && this.config.mode !== "zen") return;
-    this.phase = "countdown";
-    this.countdown = new Countdown(
-      3,
-      (n) => this.renderCountdown(n),
-      () => this.beginRun(),
-    );
-    this.countdown.start();
+  /** true si une frappe peut démarrer le Run (texte prêt, ou Zen qui n'en a pas besoin). */
+  private canStart(): boolean {
+    if (this.phase !== "idle" || this.loadingText) return false;
+    return this.targetWords.length > 0 || this.config.mode === "zen";
   }
 
-  private beginRun(): void {
-    this.countdown = null;
+  /** 1re frappe : t=0 ici (pas de décompte en solo — ADR 0004), et elle compte déjà. */
+  private beginRun(e: KeyboardEvent): void {
     this.phase = "running";
     this.clock.start(); // t=0
     this.render();
     this.loop();
+    this.handleTypingKey(e);
+  }
+
+  private handleTypingKey(e: KeyboardEvent): void {
+    const k: Keystroke | null = this.controller.handleKey(e.key, e.ctrlKey, this.clock.elapsed());
+    if (k) this.log.push(k);
+    if (!this.isEndless() && this.controller.isComplete()) {
+      void this.finish();
+      return;
+    }
+    this.retopIfNeeded(); // Time infini : réalimente si le curseur approche du bout.
+    this.renderWords();
+    this.updateLiveBar(this.clock.elapsed());
   }
 
   /** Boucle d'affichage : compteur live + fin de Run en mode Time. */
@@ -309,16 +304,17 @@ export class Practice {
       return;
     }
 
+    const isTypingKey = e.key === "Backspace" || e.key === " " || e.key.length === 1;
+
     if (this.phase === "idle") {
-      // Première interaction clavier → lance le décompte (sauf modificateurs seuls).
-      if (e.key.length === 1 || e.key === "Enter") {
-        e.preventDefault();
-        this.startCountdown();
-      }
+      // 1re frappe → démarre le Run directement (pas de décompte en solo — ADR 0004).
+      if (!this.canStart() || !isTypingKey) return;
+      e.preventDefault();
+      this.beginRun(e);
       return;
     }
 
-    if (this.phase !== "running") return; // countdown : on ignore les frappes
+    if (this.phase !== "running") return;
 
     // Shift+Enter termine Zen / Time infini (pas de fin naturelle).
     if (e.key === "Enter" && e.shiftKey) {
@@ -327,19 +323,9 @@ export class Practice {
       return;
     }
 
-    if (e.key === "Backspace" || e.key === " " || e.key.length === 1) {
+    if (isTypingKey) {
       e.preventDefault();
-      const k: Keystroke | null = this.controller.handleKey(e.key, e.ctrlKey, this.clock.elapsed());
-      if (k) this.log.push(k);
-
-      // Endless (Zen / Time infini) : jamais de fin naturelle → seul Shift+Enter termine.
-      if (!this.isEndless() && this.controller.isComplete()) {
-        void this.finish();
-        return;
-      }
-      this.retopIfNeeded(); // Time infini : réalimente si le curseur approche du bout.
-      this.renderWords();
-      this.updateLiveBar(this.clock.elapsed());
+      this.handleTypingKey(e);
     }
   }
 
@@ -359,7 +345,9 @@ export class Practice {
     `;
     this.wireConfigBar();
     const wordsEl = this.root.querySelector<HTMLElement>("#words")!;
-    wordsEl.addEventListener("click", () => this.startCountdown());
+    // Le clic ne démarre plus rien lui-même (t=0 = 1re frappe, ADR 0004) : il ne fait
+    // que donner le focus, la frappe qui suit démarre le Run.
+    wordsEl.addEventListener("click", () => wordsEl.focus());
     // Le passage en `running` repasse par render() : sans ceci le bloc resterait
     // caché et le 1er caractère (qui s'inverse sous lui) serait invisible.
     placeCaret(wordsEl);
@@ -391,11 +379,6 @@ export class Practice {
     const lineHeight = parseFloat(getComputedStyle(container).lineHeight);
     if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
     container.scrollTop = windowScrollTop(active.offsetTop, lineHeight);
-  }
-
-  private renderCountdown(n: number): void {
-    const el = this.root.querySelector<HTMLElement>("#words");
-    if (el) el.innerHTML = `<div class="countdown">${n}</div>`;
   }
 
   /** POST /api/runs raté : le Run (this.log) reste en mémoire, "réessayer" relance finish(). */

@@ -2,8 +2,8 @@
 //  countdown.ts — décompte de 3 s, ANNULABLE (issue #12).
 //
 //  Une seule chaîne de setTimeout vivante à la fois : chaque tick ne programme le
-//  suivant qu'après avoir vérifié `cancel()`. Partagé par Practice et Race — un
-//  seul exemplaire de la logique, plus de jumeau divergent.
+//  suivant qu'après avoir vérifié `cancel()`. Utilisé par Race (Practice n'en a plus
+//  besoin depuis l'ADR 0004 : le solo démarre sur la 1re frappe, sans décompte).
 // =============================================================================
 
 export class Countdown {
