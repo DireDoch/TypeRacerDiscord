@@ -141,6 +141,22 @@ impl RaceResult {
     }
 }
 
+/// Le duel le plus serré d'une Race, rejoué au ralenti après la course (ADR 0011).
+///
+/// Le SERVEUR choisit la paire (fonction `duel`, purement en Rust) et ne transporte que
+/// **ses deux logs**, jamais les huit : le client ne rejoue pas le choix, il reçoit le
+/// résultat. Les temps d'arrivée ne voyagent pas non plus — le client les dérive du
+/// dernier `t` de chaque log (on ne finit qu'à texte 100 % exact, la dernière frappe EST
+/// l'arrivée). `None` côté `RaceOver` = pas de duel, le bouton est absent du podium.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayOfTheGame {
+    pub a: PlayerId,
+    pub log_a: Vec<Keystroke>,
+    pub b: PlayerId,
+    pub log_b: Vec<Keystroke>,
+}
+
 /// Messages Client → Serveur.
 /// Wire : JSON internally-tagged, ex. `{ "type": "JoinChannel", "channelId": "123" }`.
 #[derive(Debug, Deserialize)]
@@ -206,7 +222,9 @@ pub enum ServerEvent {
     PlayerFinished { player_id: PlayerId, wpm: f64, forfeit: bool },
     /// Fin de course : les résultats COMPLETS, dans l'ordre du classement (ADR 0010).
     /// L'ordre du tableau EST le classement — il n'y a pas de champ d'ordre séparé.
-    RaceOver { results: Vec<RaceResult> },
+    /// `play_of_the_game` porte les deux logs du duel le plus serré (ADR 0011), ou
+    /// `None` s'il n'y a pas eu de duel (< 2 finisseurs, ou meilleur écart > 2 s).
+    RaceOver { results: Vec<RaceResult>, play_of_the_game: Option<PlayOfTheGame> },
     /// Code de partie inconnu. Envoyé au SEUL socket demandeur (pas de diffusion :
     /// il n'y a aucune Room à qui le diffuser). Le socket reste ouvert — le joueur
     /// corrige son code et retente sans se reconnecter.

@@ -24,6 +24,19 @@ export interface RaceResult {
 }
 
 /**
+ * Le duel le plus serré d'une Race, rejoué au ralenti (ADR 0011). Le SERVEUR choisit la
+ * paire (logique purement Rust) et n'envoie que ses **deux** logs, jamais les huit — le
+ * client ne rejoue pas le choix, il reçoit le résultat. Les temps d'arrivée ne voyagent
+ * pas : le client les dérive du dernier `t` de chaque log (l'arrivée EST la dernière frappe).
+ */
+export interface PlayOfTheGame {
+  a: string;
+  logA: Keystroke[];
+  b: string;
+  logB: Keystroke[];
+}
+
+/**
  * D'où vient le texte d'une Race (ADR 0009). Ce n'est PAS un Mode : la règle de fin
  * d'une Race est toujours « le texte entier, exactement », quelle que soit la Source.
  * Le recompute autoritaire reste `Words` dans les deux cas.
@@ -91,7 +104,9 @@ export type ServerEvent =
   // `forfeit` : abandon — la piste affiche « abandon » plutôt que « 0 wpm ».
   | { type: "PlayerFinished"; playerId: string; wpm: number; forfeit: boolean }
   // L'ORDRE DU TABLEAU EST LE CLASSEMENT — pas de champ d'ordre séparé (ADR 0010).
-  | { type: "RaceOver"; results: RaceResult[] }
+  // `playOfTheGame` porte les deux logs du duel le plus serré, ou `null` s'il n'y en a
+  // pas eu (< 2 finisseurs, ou meilleur écart > 2 s) — le bouton est alors absent (ADR 0011).
+  | { type: "RaceOver"; results: RaceResult[]; playOfTheGame: PlayOfTheGame | null }
   // Échecs de jointure : envoyés au SEUL socket demandeur (aucune Room à qui diffuser).
   | { type: "RoomNotFound" }
   | { type: "RoomFull" };
