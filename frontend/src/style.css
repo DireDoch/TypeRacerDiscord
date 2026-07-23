@@ -398,6 +398,49 @@ button.primary:hover {
   margin-bottom: 0.4rem;
   color: var(--sub);
 }
+/* Carton « Play of the Game » (#55) : overlay ~1,5 s avant le duel, puis fondu. Purement
+   décoratif — pointer-events: none pour ne jamais capturer un clic. */
+.potg-card {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 1rem;
+  font-size: clamp(1.6rem, 6vw, 3rem);
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--main);
+  background: rgba(0, 0, 0, 0.62);
+  z-index: 50;
+  pointer-events: none;
+  transition: opacity 0.5s ease;
+}
+.potg-card.hide {
+  opacity: 0;
+}
+/* Flash du nom de la 2e voiture à couper la ligne (#55) : bref surlignage qui s'éteint. */
+.potg-flash {
+  animation: potg-flash 0.9s ease;
+}
+@keyframes potg-flash {
+  0% {
+    background: var(--main);
+  }
+  100% {
+    background: transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .potg-card {
+    transition: none;
+  }
+  .potg-flash {
+    animation: none;
+  }
+}
 
 /* Code de partie : fait pour être LU À VOIX HAUTE, d'où la chasse fixe et l'espacement
    — on dicte cinq caractères, pas un mot. */
