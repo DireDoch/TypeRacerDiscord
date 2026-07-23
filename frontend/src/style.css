@@ -379,6 +379,26 @@ button.primary:hover {
   max-height: none;
 }
 
+/* Play of the Game (ADR 0011) : deux pistes empilées, texte entier visible (hérite du
+   .race .words { max-height: none }). Une seule horloge partagée les anime. */
+.potg-title {
+  margin: 0;
+  text-align: center;
+  color: var(--main);
+}
+.potg-lane {
+  width: 100%;
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--border, #333);
+}
+.potg-name {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+  color: var(--sub);
+}
+
 /* Code de partie : fait pour être LU À VOIX HAUTE, d'où la chasse fixe et l'espacement
    — on dicte cinq caractères, pas un mot. */
 .race-code {

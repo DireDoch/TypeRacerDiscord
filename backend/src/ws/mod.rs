@@ -38,7 +38,8 @@ use crate::domain::text_gen::{generate_text, GenSettings};
 use crate::domain::types::{Keystroke, Mode, RunConfig};
 use crate::quote::QuoteClient;
 use protocol::{
-    ClientEvent, Identity, PlayerEntry, PlayerId, RaceResult, RoomKey, ServerEvent, TextSource,
+    ClientEvent, Identity, PlayOfTheGame, PlayerEntry, PlayerId, RaceResult, RoomKey, ServerEvent,
+    TextSource,
 };
 
 /// Longueur d'un texte `Words` en Race — les trois seules valeurs acceptées (ADR 0009).
@@ -70,7 +71,15 @@ pub enum RaceState {
     /// Course en cours. `racers` figés au départ (voir `all_racers_done`) ; `finishers`
     /// grandit jusqu'à `racers.len()` et retient le scoreboard COMPLET de chacun
     /// jusqu'à la clôture, pour que le podium n'ait rien à re-demander (ADR 0010).
-    Racing { start_at_epoch_ms: i64, racers: Vec<PlayerId>, finishers: Vec<RaceResult> },
+    /// `logs` retient les Keystroke logs des finisseurs jusqu'à `end_race` (ADR 0011) :
+    /// le Play of the Game rejoue les deux logs du duel. ~72 Ko à huit joueurs, libéré
+    /// avec la variante (retour en `Lobby`). Même durée de vie que `finishers`.
+    Racing {
+        start_at_epoch_ms: i64,
+        racers: Vec<PlayerId>,
+        finishers: Vec<RaceResult>,
+        logs: HashMap<PlayerId, Vec<Keystroke>>,
+    },
 }
 
 impl RaceState {
@@ -561,6 +570,7 @@ fn start_race(rooms: &Rooms, key: &str, player_id: &str) {
             start_at_epoch_ms: start,
             racers: room.players.clone(),
             finishers: Vec::new(),
+            logs: HashMap::new(),
         };
         let _ = room.tx.send(ServerEvent::RaceStart { start_at_epoch_ms: start });
     }
@@ -591,7 +601,12 @@ enum FinishOutcome {
 /// diffuse PlayerFinished, et clôt la course si c'était la dernière arrivée attendue.
 /// Machine d'état PURE : aucun socket, aucune DB — un seul paramètre (`pool`, dans
 /// `finish_race`) séparait ça d'une couverture complète (issue #18).
-fn record_finish(rooms: &Rooms, key: &str, result: RaceResult) -> FinishOutcome {
+///
+/// `log` est retenu dans l'état de course (ADR 0011) pour le Play of the Game. Il entre
+/// ICI, sous le MÊME verrou que le `push` du finisher et que `end_race` : un abandon passe
+/// un log vide (jamais choisi pour un duel). Le stasher dans un verrou séparé ouvrirait
+/// une fenêtre où `end_race` clôturerait sans ce log.
+fn record_finish(rooms: &Rooms, key: &str, result: RaceResult, log: Vec<Keystroke>) -> FinishOutcome {
     let mut rooms = rooms.lock().unwrap();
     let Some(room) = rooms.get_mut(key) else { return FinishOutcome::Rejected };
     let player_id = result.player_id.clone();
@@ -609,7 +624,8 @@ fn record_finish(rooms: &Rooms, key: &str, result: RaceResult) -> FinishOutcome 
 
     let wpm = result.wpm;
     let forfeit = result.forfeit;
-    let RaceState::Racing { finishers, .. } = &mut room.state else { unreachable!("vérifié ci-dessus") };
+    let RaceState::Racing { finishers, logs, .. } = &mut room.state else { unreachable!("vérifié ci-dessus") };
+    logs.insert(player_id.clone(), log);
     finishers.push(result);
     // PlayerFinished reste le signal LIVE « untel a fini » : le podium ne s'en nourrit
     // plus, il lit RaceOver (ADR 0010). `forfeit` fait afficher « abandon » sur la piste.
@@ -633,7 +649,8 @@ fn record_finish(rooms: &Rooms, key: &str, result: RaceResult) -> FinishOutcome 
 /// non-partant sont rejetés comme une arrivée normale. Renvoie `true` si cet abandon a CLOS
 /// la course (dernier partant attendu) — l'appelant regénère alors le texte, hors verrou.
 fn forfeit_race(rooms: &Rooms, key: &str, player_id: &str) -> bool {
-    record_finish(rooms, key, RaceResult::forfeited(player_id)) == FinishOutcome::RaceOver
+    // Log vide : un abandon n'est jamais choisi pour un Play of the Game (ADR 0011).
+    record_finish(rooms, key, RaceResult::forfeited(player_id), Vec::new()) == FinishOutcome::RaceOver
 }
 
 /// Finish : recompute AUTORITAIRE contre le texte du serveur, puis enregistre l'arrivée
@@ -670,6 +687,10 @@ fn finish_race(
 
     // Sérialisé avant le recompute (qui prend possession des keystrokes).
     let keystroke_log = serde_json::to_string(&keystrokes).unwrap_or_else(|_| "[]".to_string());
+    // CLONÉ pour la rétention en mémoire (ADR 0011, Play of the Game) : même motif que la
+    // série `per_second` clonée plus bas — un consommateur d'après-course a besoin du log,
+    // la persistance aussi. Le recompute juste après prend possession de `keystrokes`.
+    let retained_log = keystrokes.clone();
 
     // Race = Words sur le texte du salon (le serveur possède seed/texte/config).
     // Hors verrou : le recompute (O(n) sur le log) ne doit pas bloquer les autres Rooms.
@@ -694,6 +715,7 @@ fn finish_race(
             forfeit: false,
             per_second: sb.per_second.clone(),
         },
+        retained_log,
     );
     if outcome == FinishOutcome::Rejected {
         return false;
@@ -743,7 +765,7 @@ fn all_racers_done(
 /// revanche — nouveau seed + nouveau texte (l'ancien est mémorisé par les joueurs)
 /// re-diffusés via RoomState. L'owner peut relancer StartRace depuis l'écran RaceOver.
 fn end_race(room: &mut Room) {
-    let RaceState::Racing { finishers, .. } = &room.state else { return }; // rien à clore
+    let RaceState::Racing { finishers, logs, .. } = &room.state else { return }; // rien à clore
     // L'ORDRE DU TABLEAU EST LE CLASSEMENT (ADR 0010) : abandons repoussés derrière tous
     // les finisseurs, puis WPM décroissant. Classer au WPM et classer au temps donnent
     // le même ordre en Race — même texte pour tous, et on ne finit qu'à 100 % exact,
@@ -754,7 +776,19 @@ fn end_race(room: &mut Room) {
             .cmp(&b.forfeit)
             .then(b.wpm.partial_cmp(&a.wpm).unwrap_or(std::cmp::Ordering::Equal))
     });
-    let _ = room.tx.send(ServerEvent::RaceOver { results });
+    // Play of the Game (ADR 0011) : le serveur choisit le duel et n'expédie QUE ses deux
+    // logs, jamais les huit. `None` = pas de duel → le bouton est absent du podium.
+    let play_of_the_game = duel(&results).map(|(i, j)| {
+        let a = results[i].player_id.clone();
+        let b = results[j].player_id.clone();
+        PlayOfTheGame {
+            log_a: logs.get(&a).cloned().unwrap_or_default(),
+            log_b: logs.get(&b).cloned().unwrap_or_default(),
+            a,
+            b,
+        }
+    });
+    let _ = room.tx.send(ServerEvent::RaceOver { results, play_of_the_game });
 
     room.state = RaceState::Lobby;
     // Texte neuf IMMÉDIAT, et toujours des mots : la Room doit rester jouable sans
@@ -769,6 +803,40 @@ fn end_race(room: &mut Room) {
     room.seed = seed;
     room.target_text = text;
     let _ = room.tx.send(room_state(room));
+}
+
+/// Écart maximal (ms) entre deux finisseurs pour qu'ils forment un duel (ADR 0011).
+/// Au-delà, il n'y a pas eu de duel : un « Play of the Game » à 8 s d'écart détruirait la
+/// promesse de la fonctionnalité. Inclusif — exactement 2,0 s reste un duel.
+const DUEL_MAX_GAP_MS: f64 = 2000.0;
+
+/// Le duel le plus serré (ADR 0011) : la paire de finisseurs CONSÉCUTIFS au classement
+/// dont l'écart de durée est le plus faible — littéralement « les deux autos qui ont
+/// terminé le plus proche ». `results` est déjà trié (abandons en queue, puis WPM
+/// décroissant = durée croissante), donc consécutif au classement = consécutif à
+/// l'arrivée. Renvoie les indices dans `results`.
+///
+/// `None` s'il y a moins de deux finisseurs, ou si même le meilleur écart dépasse le
+/// seuil. Les abandons sont exclus (durée 0, pas de log). Égalité d'écart : la première
+/// paire rencontrée gagne — la plus haute au classement, le duel le plus prestigieux.
+/// Fonction pure : c'est le test qui garde la décision honnête.
+fn duel(results: &[RaceResult]) -> Option<(usize, usize)> {
+    let finishers: Vec<usize> = results
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| !r.forfeit)
+        .map(|(i, _)| i)
+        .collect();
+    let mut best: Option<(usize, usize, f64)> = None;
+    for pair in finishers.windows(2) {
+        let (i, j) = (pair[0], pair[1]);
+        let gap = (results[j].duration_ms - results[i].duration_ms).abs();
+        // `<` strict : une égalité ne remplace pas → la première paire (la mieux classée) gagne.
+        if best.is_none_or(|(_, _, g)| gap < g) {
+            best = Some((i, j, gap));
+        }
+    }
+    best.filter(|(_, _, gap)| *gap <= DUEL_MAX_GAP_MS).map(|(i, j, _)| (i, j))
 }
 
 /// Projette la présence en entrées dessinables. Un présent sans identité connue retombe
@@ -849,11 +917,17 @@ mod tests {
         }
     }
 
+    /// Enregistre une arrivée SANS log retenu — le duel n'est pas le sujet de ces tests.
+    /// Les tests qui exercent le Play of the Game passent un vrai log via `duel` directement.
+    fn record(rooms: &Rooms, key: &str, result: RaceResult) -> FinishOutcome {
+        record_finish(rooms, key, result, Vec::new())
+    }
+
     /// Les player_id de RaceOver, dans l'ordre du classement.
     fn ranking_of(rx: &mut broadcast::Receiver<ServerEvent>) -> Option<Vec<PlayerId>> {
         let mut out = None;
         while let Ok(ev) = rx.try_recv() {
-            if let ServerEvent::RaceOver { results } = ev {
+            if let ServerEvent::RaceOver { results, .. } = ev {
                 out = Some(results.into_iter().map(|r| r.player_id).collect());
             }
         }
@@ -902,7 +976,7 @@ mod tests {
         let rooms = new_rooms();
         start_race(&rooms, "c1", "p1");
         relay_progress(&rooms, "c1", "p1", 5);
-        assert_eq!(record_finish(&rooms, "c1", done("p1", 80.0)), FinishOutcome::Rejected);
+        assert_eq!(record(&rooms, "c1", done("p1", 80.0)), FinishOutcome::Rejected);
         assert!(rooms.lock().unwrap().is_empty());
     }
 
@@ -958,9 +1032,9 @@ mod tests {
         start_race(&rooms, "c1", "p1");
         join(&rooms, "c1", "spectateur"); // rejoint après le départ : pas un partant
 
-        assert_eq!(record_finish(&rooms, "c1", done("spectateur", 999.0)), FinishOutcome::Rejected);
-        assert_eq!(record_finish(&rooms, "c1", done("p1", 80.0)), FinishOutcome::Recorded);
-        assert_eq!(record_finish(&rooms, "c1", done("p1", 999.0)), FinishOutcome::Rejected); // doublon
+        assert_eq!(record(&rooms, "c1", done("spectateur", 999.0)), FinishOutcome::Rejected);
+        assert_eq!(record(&rooms, "c1", done("p1", 80.0)), FinishOutcome::Recorded);
+        assert_eq!(record(&rooms, "c1", done("p1", 999.0)), FinishOutcome::Rejected); // doublon
     }
 
     #[test]
@@ -971,8 +1045,8 @@ mod tests {
         start_race(&rooms, "c1", "p1");
         let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
 
-        assert_eq!(record_finish(&rooms, "c1", done("p1", 60.0)), FinishOutcome::Recorded);
-        assert_eq!(record_finish(&rooms, "c1", done("p2", 90.0)), FinishOutcome::RaceOver);
+        assert_eq!(record(&rooms, "c1", done("p1", 60.0)), FinishOutcome::Recorded);
+        assert_eq!(record(&rooms, "c1", done("p2", 90.0)), FinishOutcome::RaceOver);
 
         assert_eq!(ranking_of(&mut rx), Some(s(&["p2", "p1"]))); // p2 (90) devant p1 (60)
     }
@@ -984,7 +1058,7 @@ mod tests {
         let texte_avant = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
 
         start_race(&rooms, "c1", "p1");
-        assert_eq!(record_finish(&rooms, "c1", done("p1", 60.0)), FinishOutcome::RaceOver);
+        assert_eq!(record(&rooms, "c1", done("p1", 60.0)), FinishOutcome::RaceOver);
 
         {
             let guard = rooms.lock().unwrap();
@@ -1030,7 +1104,7 @@ mod tests {
         start_race(&rooms, "c1", "p1");
         let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
 
-        assert_eq!(record_finish(&rooms, "c1", done("p1", 80.0)), FinishOutcome::Recorded);
+        assert_eq!(record(&rooms, "c1", done("p1", 80.0)), FinishOutcome::Recorded);
         leave_room(&rooms, "c1", "p2"); // abandonne sans finir
         leave_room(&rooms, "c1", "p3"); // dernier partant restant : clôture
 
@@ -1041,7 +1115,7 @@ mod tests {
                 ServerEvent::PlayerFinished { player_id, wpm, .. } => {
                     finished_wpm.insert(player_id, wpm);
                 }
-                ServerEvent::RaceOver { results: r } => results = Some(r),
+                ServerEvent::RaceOver { results: r, .. } => results = Some(r),
                 _ => {}
             }
         }
@@ -1069,8 +1143,8 @@ mod tests {
         start_race(&rooms, "c1", "p1");
         let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
 
-        record_finish(&rooms, "c1", RaceResult::forfeited("p1"));
-        assert_eq!(record_finish(&rooms, "c1", done("p2", 10.0)), FinishOutcome::RaceOver);
+        record(&rooms, "c1", RaceResult::forfeited("p1"));
+        assert_eq!(record(&rooms, "c1", done("p2", 10.0)), FinishOutcome::RaceOver);
         assert_eq!(ranking_of(&mut rx), Some(s(&["p2", "p1"])));
     }
 
@@ -1091,11 +1165,11 @@ mod tests {
             errors: 0,
             burst: 70.0,
         }];
-        assert_eq!(record_finish(&rooms, "c1", r), FinishOutcome::RaceOver);
+        assert_eq!(record(&rooms, "c1", r), FinishOutcome::RaceOver);
 
         let mut results = None;
         while let Ok(ev) = rx.try_recv() {
-            if let ServerEvent::RaceOver { results: v } = ev {
+            if let ServerEvent::RaceOver { results: v, .. } = ev {
                 results = Some(v);
             }
         }
@@ -1137,7 +1211,7 @@ mod tests {
         // Doublon rejeté comme une arrivée normale : abandonner deux fois ne fait rien.
         assert!(!forfeit_race(&rooms, "c1", "p1"));
 
-        assert_eq!(record_finish(&rooms, "c1", done("p2", 80.0)), FinishOutcome::RaceOver);
+        assert_eq!(record(&rooms, "c1", done("p2", 80.0)), FinishOutcome::RaceOver);
 
         // p1 apparaît en abandon (flag explicite, jamais un 0 wpm déduit) et passe DERRIÈRE p2.
         let mut forfeited = std::collections::HashMap::new();
@@ -1147,7 +1221,7 @@ mod tests {
                 ServerEvent::PlayerFinished { player_id, forfeit, .. } => {
                     forfeited.insert(player_id, forfeit);
                 }
-                ServerEvent::RaceOver { results: r } => results = Some(r),
+                ServerEvent::RaceOver { results: r, .. } => results = Some(r),
                 _ => {}
             }
         }
@@ -1171,11 +1245,127 @@ mod tests {
         join(&rooms, "c1", "p2");
         start_race(&rooms, "c1", "p1");
 
-        assert_eq!(record_finish(&rooms, "c1", done("p1", 80.0)), FinishOutcome::Recorded);
+        assert_eq!(record(&rooms, "c1", done("p1", 80.0)), FinishOutcome::Recorded);
         assert!(forfeit_race(&rooms, "c1", "p2")); // dernier partant : clôt (true)
         assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
         // Les deux restent au lobby : personne n'a quitté la Room en abandonnant.
         assert_eq!(players_of(&rooms, "c1"), s(&["p1", "p2"]));
+    }
+
+    // --- Play of the Game : choix du duel (ADR 0011) ------------------------------
+
+    /// Un finisseur de durée fixée (le WPM n'entre pas dans le choix du duel).
+    fn fin(id: &str, duration_ms: f64) -> RaceResult {
+        RaceResult {
+            player_id: id.to_string(),
+            wpm: 0.0,
+            accuracy: 0.0,
+            duration_ms,
+            forfeit: false,
+            per_second: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn duel_choisit_la_paire_la_plus_serree_ou_qu_elle_soit_au_classement() {
+        // L'exemple de l'ADR : 0,0 / +8,1 / +8,4 / +19,0 → l'écart mini (0,3 s) est
+        // entre les 2e et 3e, pas en tête.
+        let results = vec![
+            fin("alice", 10_000.0),
+            fin("bob", 18_100.0),
+            fin("carol", 18_400.0),
+            fin("dave", 29_000.0),
+        ];
+        assert_eq!(duel(&results), Some((1, 2)));
+    }
+
+    #[test]
+    fn duel_aucun_si_le_meilleur_ecart_depasse_deux_secondes() {
+        let results = vec![fin("a", 10_000.0), fin("b", 13_000.0)]; // 3 s
+        assert_eq!(duel(&results), None);
+    }
+
+    #[test]
+    fn duel_le_seuil_de_deux_secondes_est_inclusif() {
+        let results = vec![fin("a", 10_000.0), fin("b", 12_000.0)]; // exactement 2,0 s
+        assert_eq!(duel(&results), Some((0, 1)));
+    }
+
+    #[test]
+    fn duel_ignore_les_abandons() {
+        // Deux finisseurs serrés + deux abandons (toujours en queue de classement) :
+        // le duel ne voit que les finisseurs.
+        let results = vec![
+            fin("a", 10_000.0),
+            fin("b", 10_500.0),
+            RaceResult::forfeited("c"),
+            RaceResult::forfeited("d"),
+        ];
+        assert_eq!(duel(&results), Some((0, 1)));
+    }
+
+    #[test]
+    fn duel_aucun_si_moins_de_deux_finisseurs() {
+        // Un seul finisseur, le reste en abandon → pas de duel possible.
+        let un = vec![fin("a", 10_000.0), RaceResult::forfeited("b")];
+        assert_eq!(duel(&un), None);
+        // Zéro finisseur (tout le monde a abandonné) → pas de duel non plus.
+        let zero = vec![RaceResult::forfeited("a"), RaceResult::forfeited("b")];
+        assert_eq!(duel(&zero), None);
+    }
+
+    #[test]
+    fn duel_en_cas_d_egalite_prend_la_paire_la_mieux_classee() {
+        // Deux écarts de 0,5 s : la première paire (la plus haute) gagne, déterministe.
+        let results = vec![fin("a", 10_000.0), fin("b", 10_500.0), fin("c", 11_000.0)];
+        assert_eq!(duel(&results), Some((0, 1)));
+    }
+
+    #[test]
+    fn end_race_transporte_les_deux_logs_du_duel() {
+        // Bout à bout : deux arrivées serrées → RaceOver porte le Play of the Game avec
+        // les DEUX logs concernés (dérivés du chemin d'arrivée réel via record_finish).
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p2");
+        start_race(&rooms, "c1", "p1");
+        let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
+
+        let log = |t: f64| vec![Keystroke { t, k: "a".into(), ctrl: None }];
+        record_finish(&rooms, "c1", fin("p1", 10_000.0), log(10_000.0));
+        record_finish(&rooms, "c1", fin("p2", 10_500.0), log(10_500.0));
+
+        let mut potg = None;
+        while let Ok(ev) = rx.try_recv() {
+            if let ServerEvent::RaceOver { play_of_the_game, .. } = ev {
+                potg = play_of_the_game;
+            }
+        }
+        let potg = potg.expect("un duel serré donne un Play of the Game");
+        assert_eq!(potg.a, "p1");
+        assert_eq!(potg.b, "p2");
+        assert_eq!(potg.log_a.len(), 1); // le vrai log retenu, pas un placeholder
+        assert_eq!(potg.log_b.len(), 1);
+    }
+
+    #[test]
+    fn end_race_sans_duel_ne_transporte_pas_de_play_of_the_game() {
+        // Un seul finisseur → pas de duel → play_of_the_game absent (bouton absent au podium).
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        start_race(&rooms, "c1", "p1");
+        let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
+
+        record_finish(&rooms, "c1", fin("p1", 10_000.0), vec![Keystroke { t: 10_000.0, k: "a".into(), ctrl: None }]);
+
+        let mut seen = false;
+        while let Ok(ev) = rx.try_recv() {
+            if let ServerEvent::RaceOver { play_of_the_game, .. } = ev {
+                seen = true;
+                assert!(play_of_the_game.is_none());
+            }
+        }
+        assert!(seen, "RaceOver diffusé");
     }
 
     #[test]
@@ -1343,7 +1533,7 @@ mod tests {
         set_text_source(&rooms, "c1", "p1", TextSource::Words { count: 15 });
 
         start_race(&rooms, "c1", "p1");
-        assert_eq!(record_finish(&rooms, "c1", done("p1", 60.0)), FinishOutcome::RaceOver);
+        assert_eq!(record(&rooms, "c1", done("p1", 60.0)), FinishOutcome::RaceOver);
         // end_race regénère immédiatement : le texte de la revanche fait bien 15 mots.
         assert_eq!(word_count_of(&rooms, "c1"), 15);
     }

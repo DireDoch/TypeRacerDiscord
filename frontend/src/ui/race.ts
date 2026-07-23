@@ -24,11 +24,13 @@ import {
   type ClientEvent,
   type Identity,
   type PlayerEntry,
+  type PlayOfTheGame,
   type RaceResult,
   type ServerEvent,
   type TextSource,
 } from "../core/net";
 import { podiumHtml, wirePodium, type PodiumOptions } from "./podium";
+import { runPlayOfTheGame } from "./potg";
 import { liveWpm } from "../live-stats";
 import { wordsHtml, placeCaret, escapeText } from "./typing-zone";
 import { avatarUrl, getIdentity, proxyBase } from "../discord";
@@ -86,6 +88,16 @@ export class Race {
   private forfeited = new Set<string>();
   /** Résultats complets de la dernière course, DANS L'ORDRE DU CLASSEMENT (ADR 0010). */
   private results: RaceResult[] = [];
+  /** Le duel le plus serré (ADR 0011), ou `null` s'il n'y en a pas eu → bouton absent. */
+  private playOfTheGame: PlayOfTheGame | null = null;
+  /**
+   * Snapshot des mots de la course JOUÉE, figé à `RaceOver`. Le `RoomState` de revanche
+   * (ordonné APRÈS, garanti par le WebSocket) écrase `targetWords` avec le texte suivant ;
+   * le Play of the Game rejoue les logs contre CE texte-ci, jamais celui de la revanche.
+   */
+  private racedWords: string[] = [];
+  /** Handle d'arrêt du Play of the Game : sa présence EST « le duel est à l'écran ». */
+  private potgStop: (() => void) | null = null;
   private countdownN = RACE_COUNTDOWN_S;
   private countdown: Countdown | null = null;
   private rafId = 0;
@@ -104,6 +116,8 @@ export class Race {
   destroy(): void {
     document.removeEventListener("keydown", this.onKeyDown);
     cancelAnimationFrame(this.rafId);
+    this.potgStop?.(); // coupe le rAF du duel s'il tournait
+    this.potgStop = null;
     this.countdown?.cancel();
     this.countdown = null;
     this.socket?.close();
@@ -145,6 +159,9 @@ export class Race {
         this.textSource = e.textSource;
         this.targetText = e.targetText;
         this.targetWords = e.targetText.split(" ").filter((w) => w.length > 0);
+        // Duel à l'écran : on met à jour les données (join/leave du lobby d'après-course)
+        // mais on NE re-render PAS — sinon on effacerait le Play of the Game en pleine lecture.
+        if (this.potgStop) return;
         if (this.phase === "connecting") this.phase = "lobby";
         this.render();
         break;
@@ -170,6 +187,9 @@ export class Race {
         break;
       case "RaceOver":
         this.results = e.results;
+        this.playOfTheGame = e.playOfTheGame;
+        // Snapshot AVANT que le RoomState de revanche (ordonné après) n'écrase targetWords.
+        this.racedWords = this.targetWords.slice();
         this.phase = "over";
         cancelAnimationFrame(this.rafId);
         this.render();
@@ -186,6 +206,9 @@ export class Race {
   // --- Cycle de course --------------------------------------------------------
 
   private startCountdown(): void {
+    // Un RaceStart reçu pendant le Play of the Game interrompt l'écran : la course prime.
+    this.potgStop?.();
+    this.potgStop = null;
     // Un seul décompte vivant : un second RaceStart pendant le décompte/la course est ignoré.
     if (this.phase === "countdown" || this.phase === "running") return;
     this.phase = "countdown";
@@ -193,6 +216,7 @@ export class Race {
     this.progress.clear();
     this.finished.clear();
     this.forfeited.clear();
+    this.playOfTheGame = null;
     // Contrôleur neuf dès le décompte : le texte ENTIER s'affiche vierge (le joueur lit
     // le début pendant l'attente) — indispensable après une revanche (état stale).
     this.doneLocal = false;
@@ -280,7 +304,12 @@ export class Race {
       .querySelector<HTMLButtonElement>("#forfeitRace")
       ?.addEventListener("click", () => this.forfeit());
     this.wireSourceButtons();
-    if (this.phase === "over") wirePodium(this.root, this.podiumOptions());
+    if (this.phase === "over") {
+      wirePodium(this.root, this.podiumOptions());
+      this.root
+        .querySelector<HTMLButtonElement>("#playOfTheGame")
+        ?.addEventListener("click", () => this.openPotg());
+    }
     // Décompte et début de course passent par render() : le bloc doit être placé
     // là aussi, sinon le 1er caractère (inversé sous lui) reste invisible.
     const wordsEl = this.root.querySelector<HTMLElement>("#words");
@@ -335,7 +364,10 @@ export class Race {
         // le même bouton StartRace relance (owner seulement). Le podium est donc posé
         // par-dessus un lobby DÉJÀ prêt — aucune séquence serveur, aucun minuteur.
         return (
-          podiumHtml(this.podiumOptions()) + this.startBtnHtml() + this.exitBtnHtml()
+          podiumHtml(this.podiumOptions()) +
+          this.potgBtnHtml() +
+          this.startBtnHtml() +
+          this.exitBtnHtml()
         );
     }
   }
@@ -453,6 +485,39 @@ export class Race {
 
   private podiumOptions(): PodiumOptions {
     return { results: this.results, players: this.players, me: this.me };
+  }
+
+  /** Bouton du duel — présent seulement quand le serveur a désigné un Play of the Game. */
+  private potgBtnHtml(): string {
+    return this.playOfTheGame ? `<button id="playOfTheGame" class="on">Play of the Game</button>` : "";
+  }
+
+  /**
+   * Ouvre le duel : monte l'écran autonome (`runPlayOfTheGame`) et garde son handle
+   * d'arrêt — sa présence gèle le re-render sur `RoomState` (voir la garde). On NE change
+   * PAS de phase : `potgStop` est le seul signal « duel à l'écran ». Retour → on redessine
+   * le podium (phase toujours "over").
+   */
+  private openPotg(): void {
+    const potg = this.playOfTheGame;
+    if (!potg) return;
+    const entry = (id: string): PlayerEntry =>
+      this.players.find((p) => p.playerId === id) ?? {
+        playerId: id,
+        displayName: id, // parti depuis : on retombe sur le snowflake, comme le podium
+        avatarHash: null,
+      };
+    this.potgStop = runPlayOfTheGame(this.root, {
+      racedWords: this.racedWords,
+      logA: potg.logA,
+      playerA: entry(potg.a),
+      logB: potg.logB,
+      playerB: entry(potg.b),
+      onBack: () => {
+        this.potgStop = null;
+        this.render();
+      },
+    });
   }
 }
 
