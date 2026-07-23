@@ -167,6 +167,12 @@ pub enum ClientEvent {
     /// Soumission finale : log brut + durée. Le serveur recompute contre SON texte
     /// (seed/texte/config lui appartiennent — jamais renvoyés par le client).
     Finish { keystrokes: Vec<Keystroke>, ended_at_ms: f64 },
+    /// Abandon VOLONTAIRE : le joueur renonce à la course en cours mais RESTE au lobby
+    /// pour la suivante. Enregistré comme une arrivée en abandon (0 WPM, flag explicite,
+    /// aucun recompute ni persistance) — même enregistrement qu'une déconnexion, un seul
+    /// chemin de code. Débloque la fin pour les autres au lieu de les faire attendre le
+    /// watchdog.
+    Forfeit,
     LeaveRoom,
 }
 
@@ -194,8 +200,10 @@ pub enum ServerEvent {
     RaceStart { start_at_epoch_ms: i64 },
     /// Position d'un adversaire (rendu temps réel).
     PlayerProgress { player_id: PlayerId, chars_done: u32 },
-    /// Scoreboard autoritaire d'un joueur ayant fini (recompute serveur).
-    PlayerFinished { player_id: PlayerId, wpm: f64 },
+    /// Scoreboard autoritaire d'un joueur ayant fini (recompute serveur). `forfeit`
+    /// distingue une VRAIE arrivée d'un abandon : la piste affiche « abandon » plutôt
+    /// que « 0 wpm » pendant la course (le podium, lui, lit RaceOver).
+    PlayerFinished { player_id: PlayerId, wpm: f64, forfeit: bool },
     /// Fin de course : les résultats COMPLETS, dans l'ordre du classement (ADR 0010).
     /// L'ordre du tableau EST le classement — il n'y a pas de champ d'ordre séparé.
     RaceOver { results: Vec<RaceResult> },
