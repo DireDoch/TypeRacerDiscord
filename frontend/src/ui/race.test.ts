@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { raceComplete, sourceLabel, currentCount, liveWpmOf } from "./race";
+import { raceComplete, sourceLabel, currentCount, liveWpmOf, trackLabel } from "./race";
 import { avatarUrl } from "../discord";
 import { WORDS_LENGTHS } from "../core/net";
 import type { InputView } from "../core/input/controller";
@@ -62,6 +62,21 @@ describe("WPM live de la piste — dérivé de charsDone, jamais transporté", (
 
   it("n'avoir rien tapé donne 0, pas NaN", () => {
     expect(liveWpmOf(0, 30_000)).toBe(0);
+  });
+});
+
+describe("trackLabel — un abandon s'affiche « abandon », jamais « 0 wpm »", () => {
+  it("abandon : le flag l'emporte, même avec un WPM à 0", () => {
+    expect(trackLabel(true, 0, 0)).toBe("abandon");
+    expect(trackLabel(true, 0, 0)).not.toContain("wpm");
+  });
+
+  it("fini pour de vrai : WPM autoritaire coché", () => {
+    expect(trackLabel(false, 72, 40)).toBe("72 wpm ✓");
+  });
+
+  it("en train de courir : WPM live dérivé", () => {
+    expect(trackLabel(false, undefined, 55)).toBe("55 wpm");
   });
 });
 

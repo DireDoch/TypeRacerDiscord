@@ -68,6 +68,9 @@ export type ClientEvent =
   | { type: "Progress"; charsDone: number }
   // Le serveur possède seed/texte/config : Finish n'envoie que le log + la durée.
   | { type: "Finish"; keystrokes: Keystroke[]; endedAtMs: number }
+  // Abandon VOLONTAIRE de la course en cours — le joueur RESTE au lobby (distinct de
+  // LeaveRoom, qui quitte la Room). Enregistré comme une arrivée en abandon côté serveur.
+  | { type: "Forfeit" }
   | { type: "LeaveRoom" };
 
 /** Serveur → Client. */
@@ -85,7 +88,8 @@ export type ServerEvent =
     }
   | { type: "RaceStart"; startAtEpochMs: number }
   | { type: "PlayerProgress"; playerId: string; charsDone: number }
-  | { type: "PlayerFinished"; playerId: string; wpm: number }
+  // `forfeit` : abandon — la piste affiche « abandon » plutôt que « 0 wpm ».
+  | { type: "PlayerFinished"; playerId: string; wpm: number; forfeit: boolean }
   // L'ORDRE DU TABLEAU EST LE CLASSEMENT — pas de champ d'ordre séparé (ADR 0010).
   | { type: "RaceOver"; results: RaceResult[] }
   // Échecs de jointure : envoyés au SEUL socket demandeur (aucune Room à qui diffuser).

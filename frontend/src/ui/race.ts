@@ -82,6 +82,8 @@ export class Race {
   private progress = new Map<string, number>();
   /** WPM autoritaire par joueur ayant fini (signal LIVE, pour la piste). */
   private finished = new Map<string, number>();
+  /** Joueurs ayant ABANDONNÉ — la piste affiche « abandon », jamais leur « 0 wpm ». */
+  private forfeited = new Set<string>();
   /** Résultats complets de la dernière course, DANS L'ORDRE DU CLASSEMENT (ADR 0010). */
   private results: RaceResult[] = [];
   private countdownN = RACE_COUNTDOWN_S;
@@ -163,6 +165,7 @@ export class Race {
         break;
       case "PlayerFinished":
         this.finished.set(e.playerId, e.wpm);
+        if (e.forfeit) this.forfeited.add(e.playerId);
         if (this.phase === "running") this.renderBars();
         break;
       case "RaceOver":
@@ -189,6 +192,7 @@ export class Race {
     this.countdownN = RACE_COUNTDOWN_S;
     this.progress.clear();
     this.finished.clear();
+    this.forfeited.clear();
     // Contrôleur neuf dès le décompte : le texte ENTIER s'affiche vierge (le joueur lit
     // le début pendant l'attente) — indispensable après une revanche (état stale).
     this.doneLocal = false;
@@ -251,6 +255,18 @@ export class Race {
     this.renderBars();
   }
 
+  /**
+   * Abandon volontaire : on arrête la voiture localement (`doneLocal`) et on prévient le
+   * serveur, qui enregistre une arrivée en abandon SANS nous retirer de la Room. On attend
+   * ensuite RaceOver comme après une vraie arrivée — d'où le même « en attente des autres… ».
+   */
+  private forfeit(): void {
+    if (this.phase !== "running" || this.doneLocal) return;
+    this.doneLocal = true;
+    this.socket?.send({ type: "Forfeit" });
+    this.render();
+  }
+
   // --- Rendu ------------------------------------------------------------------
 
   private render(): void {
@@ -260,6 +276,9 @@ export class Race {
     this.root
       .querySelector<HTMLButtonElement>("#exitRace")
       ?.addEventListener("click", () => this.onExit?.());
+    this.root
+      .querySelector<HTMLButtonElement>("#forfeitRace")
+      ?.addEventListener("click", () => this.forfeit());
     this.wireSourceButtons();
     if (this.phase === "over") wirePodium(this.root, this.podiumOptions());
     // Décompte et début de course passent par render() : le bloc doit être placé
@@ -309,7 +328,8 @@ export class Race {
         return `<div class="live-bar" id="liveBar"></div>
           <div class="words-wrap"><div class="words" id="words">${this.wordsAreaHtml()}</div><div class="caret-block"></div></div>
           <div class="bars" id="bars">${this.barsHtml()}</div>
-          <p class="hint">${this.doneLocal ? "Terminé — en attente des autres…" : "Tape le texte ; corrige tes fautes pour finir"}</p>`;
+          <p class="hint">${this.doneLocal ? "Terminé — en attente des autres…" : "Tape le texte ; corrige tes fautes pour finir"}</p>
+          ${this.forfeitBtnHtml()}`;
       case "over":
         // Revanche : le serveur a déjà re-diffusé un RoomState avec un NOUVEAU texte ;
         // le même bouton StartRace relance (owner seulement). Le podium est donc posé
@@ -379,6 +399,14 @@ export class Race {
     return this.onExit ? `<button id="exitRace" class="on">← menu</button>` : "";
   }
 
+  /**
+   * « Abandonner » : renonce à CETTE course sans quitter la Room (distinct de « ← menu »).
+   * Visible seulement pendant qu'on court — une fois abandonné/fini, plus rien à abandonner.
+   */
+  private forfeitBtnHtml(): string {
+    return this.doneLocal ? "" : `<button id="forfeitRace">Abandonner</button>`;
+  }
+
   private renderWords(): void {
     const el = this.root.querySelector<HTMLElement>("#words");
     if (!el) return;
@@ -413,11 +441,11 @@ export class Race {
         const done = isMe ? this.charsDone() : this.progress.get(p.playerId) ?? 0;
         const pct = Math.min(100, Math.round((done / total) * 100));
         const final = this.finished.get(p.playerId);
-        const wpm = final !== undefined ? `${final} wpm ✓` : `${liveWpmOf(done, elapsed)} wpm`;
+        const label = trackLabel(this.forfeited.has(p.playerId), final, liveWpmOf(done, elapsed));
         return `<div class="bar ${isMe ? "me" : ""} ${final !== undefined ? "done" : ""}">
           <span class="bar-label">${escapeText(isMe ? `${p.displayName} (toi)` : p.displayName)}</span>
           <div class="bar-track"><div class="bar-fill" style="width:${pct}%">${avatarHtml(p, "car")}</div></div>
-          <span class="bar-wpm">${wpm}</span>
+          <span class="bar-wpm">${label}</span>
         </div>`;
       })
       .join("");
@@ -453,6 +481,17 @@ function avatarHtml(p: PlayerEntry, cls = "car"): string {
 export function liveWpmOf(charsDone: number, elapsedMs: number): number {
   if (elapsedMs <= 0) return 0;
   return Math.round(charsDone / 5 / (elapsedMs / 60000));
+}
+
+/**
+ * Étiquette de la ligne d'arrivée sur la piste. Un abandon affiche « abandon » et JAMAIS
+ * « 0 wpm » — le flag est explicite, on ne le déduit pas d'un WPM nul. Sinon : le WPM
+ * autoritaire (✓) une fois fini, le WPM live dérivé tant qu'on court. Pure.
+ */
+export function trackLabel(forfeited: boolean, finalWpm: number | undefined, liveWpm: number): string {
+  if (forfeited) return "abandon";
+  if (finalWpm !== undefined) return `${finalWpm} wpm ✓`;
+  return `${liveWpm} wpm`;
 }
 
 /** Libellés des trois longueurs, dans l'ordre de `WORDS_LENGTHS`. */

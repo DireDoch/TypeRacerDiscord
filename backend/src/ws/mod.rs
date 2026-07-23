@@ -175,6 +175,12 @@ pub async fn handle_socket(
                     spawn_refresh_text(rooms.clone(), key.clone(), quotes.clone());
                 }
             }
+            Ok(ClientEvent::Forfeit) => {
+                if forfeit_race(&rooms, &key, &player_id) {
+                    // Abandon du dernier partant : la revanche part sur un texte neuf.
+                    spawn_refresh_text(rooms.clone(), key.clone(), quotes.clone());
+                }
+            }
             Ok(ClientEvent::LeaveRoom) => break,
             // Jointure en double : ignorée.
             Ok(_) | Err(_) => {}
@@ -491,7 +497,8 @@ fn close_race(room: &mut Room, require_absent: bool) {
         }
     }
     for r in &pending {
-        let _ = room.tx.send(ServerEvent::PlayerFinished { player_id: r.clone(), wpm: 0.0 });
+        let _ =
+            room.tx.send(ServerEvent::PlayerFinished { player_id: r.clone(), wpm: 0.0, forfeit: true });
     }
     end_race(room);
 }
@@ -601,11 +608,12 @@ fn record_finish(rooms: &Rooms, key: &str, result: RaceResult) -> FinishOutcome 
     }
 
     let wpm = result.wpm;
+    let forfeit = result.forfeit;
     let RaceState::Racing { finishers, .. } = &mut room.state else { unreachable!("vérifié ci-dessus") };
     finishers.push(result);
     // PlayerFinished reste le signal LIVE « untel a fini » : le podium ne s'en nourrit
-    // plus, il lit RaceOver (ADR 0010).
-    let _ = room.tx.send(ServerEvent::PlayerFinished { player_id, wpm });
+    // plus, il lit RaceOver (ADR 0010). `forfeit` fait afficher « abandon » sur la piste.
+    let _ = room.tx.send(ServerEvent::PlayerFinished { player_id, wpm, forfeit });
 
     let done = match &room.state {
         RaceState::Racing { racers, finishers, .. } => all_racers_done(racers, &room.players, finishers),
@@ -617,6 +625,15 @@ fn record_finish(rooms: &Rooms, key: &str, result: RaceResult) -> FinishOutcome 
     } else {
         FinishOutcome::Recorded
     }
+}
+
+/// Abandon VOLONTAIRE : enregistre une arrivée en abandon (0 WPM, flag explicite, aucun
+/// recompute ni persistance) SANS retirer le joueur de la Room — il reste au lobby pour la
+/// prochaine course. Réutilise `record_finish`, donc le doublon (déjà fini/abandonné) et le
+/// non-partant sont rejetés comme une arrivée normale. Renvoie `true` si cet abandon a CLOS
+/// la course (dernier partant attendu) — l'appelant regénère alors le texte, hors verrou.
+fn forfeit_race(rooms: &Rooms, key: &str, player_id: &str) -> bool {
+    record_finish(rooms, key, RaceResult::forfeited(player_id)) == FinishOutcome::RaceOver
 }
 
 /// Finish : recompute AUTORITAIRE contre le texte du serveur, puis enregistre l'arrivée
@@ -1021,7 +1038,7 @@ mod tests {
         let mut results = None;
         while let Ok(ev) = rx.try_recv() {
             match ev {
-                ServerEvent::PlayerFinished { player_id, wpm } => {
+                ServerEvent::PlayerFinished { player_id, wpm, .. } => {
                     finished_wpm.insert(player_id, wpm);
                 }
                 ServerEvent::RaceOver { results: r } => results = Some(r),
@@ -1105,6 +1122,63 @@ mod tests {
     }
 
     #[test]
+    fn abandon_volontaire_reste_au_lobby_et_debloque_la_fin() {
+        // issue #52 : abandonner enregistre une arrivée en abandon SANS retirer le joueur
+        // de la Room (contrairement à leave_room). p1 abandonne → il reste présent, débloque
+        // la fin quand p2 finit, et peut rejouer la course suivante.
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p2");
+        start_race(&rooms, "c1", "p1");
+        let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
+
+        assert!(!forfeit_race(&rooms, "c1", "p1")); // p2 court encore : pas la fin
+        assert!(players_of(&rooms, "c1").contains(&"p1".to_string())); // reste au lobby
+        // Doublon rejeté comme une arrivée normale : abandonner deux fois ne fait rien.
+        assert!(!forfeit_race(&rooms, "c1", "p1"));
+
+        assert_eq!(record_finish(&rooms, "c1", done("p2", 80.0)), FinishOutcome::RaceOver);
+
+        // p1 apparaît en abandon (flag explicite, jamais un 0 wpm déduit) et passe DERRIÈRE p2.
+        let mut forfeited = std::collections::HashMap::new();
+        let mut results = None;
+        while let Ok(ev) = rx.try_recv() {
+            match ev {
+                ServerEvent::PlayerFinished { player_id, forfeit, .. } => {
+                    forfeited.insert(player_id, forfeit);
+                }
+                ServerEvent::RaceOver { results: r } => results = Some(r),
+                _ => {}
+            }
+        }
+        assert_eq!(forfeited.get("p1"), Some(&true));
+        assert_eq!(forfeited.get("p2"), Some(&false));
+        let ids: Vec<PlayerId> = results.unwrap().iter().map(|r| r.player_id.clone()).collect();
+        assert_eq!(ids, s(&["p2", "p1"]));
+
+        // La Room est de retour au lobby, jouable : p1 (toujours présent) peut relancer.
+        assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+        start_race(&rooms, "c1", "p1"); // p1 est devenu owner ? non, p1 était déjà owner
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    }
+
+    #[test]
+    fn abandon_du_dernier_partant_clot_la_course() {
+        // issue #52 : quand c'est le SEUL partant restant qui abandonne, sa course se clôt
+        // immédiatement (elle n'attend pas le watchdog).
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p2");
+        start_race(&rooms, "c1", "p1");
+
+        assert_eq!(record_finish(&rooms, "c1", done("p1", 80.0)), FinishOutcome::Recorded);
+        assert!(forfeit_race(&rooms, "c1", "p2")); // dernier partant : clôt (true)
+        assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+        // Les deux restent au lobby : personne n'a quitté la Room en abandonnant.
+        assert_eq!(players_of(&rooms, "c1"), s(&["p1", "p2"]));
+    }
+
+    #[test]
     fn watchdog_clot_une_course_trop_longue_meme_si_tout_le_monde_est_encore_la() {
         // issue #24 : contrairement à l'abandon "tout le monde est parti" (#23), le
         // watchdog ferme même si des joueurs sont TOUJOURS connectés (silencieux depuis
@@ -1128,7 +1202,7 @@ mod tests {
         // p1 et p2 (jamais finis, toujours "connectés") apparaissent à 0 WPM.
         let mut finished_wpm = std::collections::HashMap::new();
         while let Ok(ev) = rx.try_recv() {
-            if let ServerEvent::PlayerFinished { player_id, wpm } = ev {
+            if let ServerEvent::PlayerFinished { player_id, wpm, .. } = ev {
                 finished_wpm.insert(player_id, wpm);
             }
         }
