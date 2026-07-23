@@ -16,10 +16,16 @@ import { avatarUrl } from "../discord";
 import { feedUntil } from "./replay";
 import { wordsHtml, placeCaret, escapeText } from "./typing-zone";
 
-/** Ralenti : la fenêtre de ~3,5 s réelles occupe ~14 s d'écran. */
+/** Ralenti final : la fenêtre de ~3,5 s réelles occupe ~14 s d'écran. */
 const SLOWMO = 0.25;
 /** La fenêtre s'ouvre 3 s avant l'arrivée du premier des deux (ADR 0011). */
 const LEAD_MS = 3000;
+/** Vitesse au démarrage du duel : temps réel, avant la rampe vers le ralenti (#55). */
+const FAST = 1.0;
+/** Durée d'écran (ms) sur laquelle la vitesse glisse de FAST à SLOWMO — pas de ralenti sec. */
+const RAMP_MS = 1200;
+/** Durée du carton « Play of the Game » avant que le duel démarre (#55). */
+const CARD_MS = 1500;
 
 /** L'arrivée d'un joueur = son dernier `t` (on ne finit qu'à texte exact). 0 si log vide. */
 function finishOf(log: KeystrokeLog): number {
@@ -41,6 +47,22 @@ export function duelWindow(
   return { start: Math.max(0, first - LEAD_MS), end: second };
 }
 
+/**
+ * Millisecondes de LOG avancées après `screenMs` d'écran, avec une rampe d'accélération
+ * (#55) : la vitesse glisse linéairement de FAST (temps réel) à SLOWMO sur les premières
+ * `RAMP_MS`, puis reste à SLOWMO. Forme close (intégrale de la vitesse), donc monotone et
+ * sans dérive frame-à-frame. Pure — testée.
+ */
+export function rampedAdvance(screenMs: number): number {
+  if (screenMs <= 0) return 0;
+  if (screenMs <= RAMP_MS) {
+    // ∫₀ˢ [FAST + (SLOWMO−FAST)·t/RAMP_MS] dt
+    return FAST * screenMs + ((SLOWMO - FAST) * screenMs * screenMs) / (2 * RAMP_MS);
+  }
+  const atRamp = ((FAST + SLOWMO) / 2) * RAMP_MS;
+  return atRamp + SLOWMO * (screenMs - RAMP_MS);
+}
+
 export interface PlayOfTheGameOptions {
   /** Mots de la course JOUÉE (snapshot pris avant que la revanche écrase le texte). */
   racedWords: string[];
@@ -58,8 +80,12 @@ export interface PlayOfTheGameOptions {
  */
 export function runPlayOfTheGame(root: HTMLElement, opts: PlayOfTheGameOptions): () => void {
   const win = duelWindow(opts.logA, opts.logB);
+  // La 2e voiture à couper la ligne = le log dont l'arrivée est la plus tardive. C'est
+  // elle qu'on met en avant au freeze-frame (#55).
+  const secondSuffix = finishOf(opts.logA) >= finishOf(opts.logB) ? "A" : "B";
   let stopped = false;
   let rafId = 0;
+  let cardTimer = 0;
   let startedAt = 0;
 
   const ctrlA = new FreeInput(opts.racedWords);
@@ -69,6 +95,7 @@ export function runPlayOfTheGame(root: HTMLElement, opts: PlayOfTheGameOptions):
 
   root.innerHTML = `
     <section class="race potg">
+      <div class="potg-card" id="potgCard">Play of the Game</div>
       <h2 class="potg-title">Play of the Game</h2>
       ${laneHtml(opts.playerA, "A")}
       ${laneHtml(opts.playerB, "B")}
@@ -79,10 +106,14 @@ export function runPlayOfTheGame(root: HTMLElement, opts: PlayOfTheGameOptions):
   const wordsA = root.querySelector<HTMLElement>("#potgWordsA")!;
   const wordsB = root.querySelector<HTMLElement>("#potgWordsB")!;
   const hintEl = root.querySelector<HTMLElement>("#potgHint")!;
+  const card = root.querySelector<HTMLElement>("#potgCard")!;
 
+  // stop() coupe le rAF ET le minuteur du carton : aucun timer fantôme au démontage ou
+  // sur un RaceStart reçu pendant l'après-course (#53, préservé).
   const stop = (): void => {
     stopped = true;
     cancelAnimationFrame(rafId);
+    clearTimeout(cardTimer);
   };
   root.querySelector("#potgBack")!.addEventListener("click", () => {
     stop();
@@ -96,33 +127,46 @@ export function runPlayOfTheGame(root: HTMLElement, opts: PlayOfTheGameOptions):
     placeCaret(wordsB);
   }
 
+  // Freeze-frame : image figée + flash du nom de la 2e voiture à couper la ligne (#55).
+  function finish(): void {
+    renderZones(false);
+    root.querySelector<HTMLElement>(`#potgLane${secondSuffix}`)?.classList.add("potg-flash");
+    hintEl.textContent = "Photo finish · retour au podium";
+  }
+
   // Amorçage instantané : on avance les deux voitures jusqu'à l'ouverture de la fenêtre,
   // sans animation (sinon on rejouerait toute la course au ralenti pour rien).
   nextA = feedUntil(ctrlA, opts.logA, 0, win.start);
   nextB = feedUntil(ctrlB, opts.logB, 0, win.start);
   renderZones(true);
 
+  // Garde : deux logs vides (ou duel dégénéré) → rien à animer ni à annoncer.
+  if (win.end <= win.start) {
+    card.classList.add("hide");
+    finish();
+    return stop;
+  }
+
   function loop(): void {
     if (stopped) return;
-    const logTime = win.start + (performance.now() - startedAt) * SLOWMO;
+    const logTime = win.start + rampedAdvance(performance.now() - startedAt);
     nextA = feedUntil(ctrlA, opts.logA, nextA, logTime);
     nextB = feedUntil(ctrlB, opts.logB, nextB, logTime);
     renderZones(true);
     if (logTime >= win.end) {
-      renderZones(false);
-      hintEl.textContent = "Fin du duel · retour au podium";
+      finish();
       return;
     }
     rafId = requestAnimationFrame(() => loop());
   }
 
-  // Garde : deux logs vides (ou duel dégénéré) → rien à animer, on reste sur l'amorçage.
-  if (win.end > win.start) {
+  // Carton d'abord (voitures posées à l'ouverture de la fenêtre pendant qu'il s'affiche),
+  // PUIS le duel démarre avec la rampe d'accélération.
+  cardTimer = window.setTimeout(() => {
+    card.classList.add("hide");
     startedAt = performance.now();
     rafId = requestAnimationFrame(() => loop());
-  } else {
-    renderZones(false);
-  }
+  }, CARD_MS);
 
   return stop;
 }
@@ -131,7 +175,7 @@ export function runPlayOfTheGame(root: HTMLElement, opts: PlayOfTheGameOptions):
 function laneHtml(p: PlayerEntry, suffix: string): string {
   const initial = escapeText([...p.displayName][0]?.toUpperCase() ?? "?");
   const src = escapeText(avatarUrl(p.playerId, p.avatarHash));
-  return `<div class="potg-lane">
+  return `<div class="potg-lane" id="potgLane${suffix}">
     <div class="potg-name"><span class="car">${initial}<img src="${src}" alt="" loading="lazy"></span> ${escapeText(p.displayName)}</div>
     <div class="words-wrap"><div class="words" id="potgWords${suffix}"></div><div class="caret-block"></div></div>
   </div>`;
