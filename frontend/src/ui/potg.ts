@@ -42,6 +42,10 @@ export function duelWindow(
   logA: KeystrokeLog,
   logB: KeystrokeLog,
 ): { start: number; end: number } {
+  // ponytail: les deux logs ont chacun leur t=0 LOCAL (le décompte est côté client), soit
+  // ~2 % de dérive inter-client sur la fenêtre — assumé pour un replay d'ambiance, jamais un
+  // score. Upgrade : si l'exactitude devient un enjeu, réaligner sur RaceStart.startAtEpochMs
+  // comme origine commune plutôt que sur le t=0 local de chaque log.
   const first = Math.min(finishOf(logA), finishOf(logB));
   const second = Math.max(finishOf(logA), finishOf(logB));
   return { start: Math.max(0, first - LEAD_MS), end: second };
