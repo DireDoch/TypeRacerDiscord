@@ -471,13 +471,20 @@ button.primary:hover {
   color: var(--text);
 }
 
-/* Réglages du lobby (Source de texte) : une seule ligne, l'hôte y clique, les autres
-   la lisent. */
+/* Réglages du lobby (Source de texte, taille du salon) : une seule ligne, l'hôte y
+   clique, les autres la lisent. */
 .race-settings {
   display: flex;
   align-items: center;
   gap: 0.4rem;
   flex-wrap: wrap;
+}
+.race-settings select {
+  padding: 0.2rem 0.4rem;
+  border-radius: 0.4rem;
+  border: 1px solid var(--sub);
+  background: var(--panel);
+  color: var(--text);
 }
 
 /* Cartes de présence empilées. */

@@ -20,6 +20,7 @@ import { Countdown } from "../core/countdown";
 import { FreeInput } from "../core/input/free-input";
 import {
   RaceSocket,
+  ROOM_SIZES,
   WORDS_LENGTHS,
   type ClientEvent,
   type Identity,
@@ -72,6 +73,8 @@ export class Race {
   private code: string | null = null;
   /** Source EFFECTIVE du texte (ADR 0009) — pas celle demandée : un repli se lit ici. */
   private textSource: TextSource = { kind: "quote" };
+  /** Taille max de la Room (réglage de l'hôte). Défaut = plafond dur du serveur. */
+  private maxPlayers = 8;
   /** Message affiché en phase "failed" (code inconnu, Room pleine). */
   private failure = "";
 
@@ -157,6 +160,7 @@ export class Race {
         this.owner = e.owner;
         this.code = e.code;
         this.textSource = e.textSource;
+        this.maxPlayers = e.maxPlayers;
         this.targetText = e.targetText;
         this.targetWords = e.targetText.split(" ").filter((w) => w.length > 0);
         // Duel à l'écran : on met à jour les données (join/leave du lobby d'après-course)
@@ -304,6 +308,14 @@ export class Race {
       .querySelector<HTMLButtonElement>("#forfeitRace")
       ?.addEventListener("click", () => this.forfeit());
     this.wireSourceButtons();
+    this.root
+      .querySelector<HTMLSelectElement>("#maxPlayers")
+      ?.addEventListener("change", (e) =>
+        this.socket?.send({
+          type: "SetMaxPlayers",
+          max: Number((e.target as HTMLSelectElement).value),
+        }),
+      );
     if (this.phase === "over") {
       wirePodium(this.root, this.podiumOptions());
       this.root
@@ -346,6 +358,7 @@ export class Race {
         return (
           this.codeHtml() +
           this.sourceHtml() +
+          this.sizeHtml() +
           this.cardsHtml() +
           this.startBtnHtml() +
           this.exitBtnHtml()
@@ -401,6 +414,25 @@ export class Race {
       <button data-src="quote"${on(src.kind === "quote")}>Citation</button>
       <button data-src="words"${on(src.kind === "words")}>Mots</button>
       ${lengths}
+    </div>`;
+  }
+
+  /**
+   * Taille max de la Room (issue #62). `select` natif plutôt que sept boutons : choisir
+   * une valeur dans une plage est exactement ce que l'élément natif fait, clavier et
+   * lecteur d'écran compris. Les non-hôtes lisent le compte : ils subissent le réglage.
+   */
+  private sizeHtml(): string {
+    const taken = this.players.length;
+    if (this.me !== this.owner) {
+      return `<p class="hint">Salon : ${taken}/${this.maxPlayers} joueurs</p>`;
+    }
+    const opts = ROOM_SIZES.map(
+      (n) => `<option value="${n}"${n === this.maxPlayers ? " selected" : ""}>${n}</option>`,
+    ).join("");
+    return `<div class="race-settings">
+      <label class="hint" for="maxPlayers">Salon (${taken} présents)</label>
+      <select id="maxPlayers">${opts}</select>
     </div>`;
   }
 

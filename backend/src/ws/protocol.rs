@@ -176,6 +176,9 @@ pub enum ClientEvent {
     /// Régler la Source de texte de la prochaine course — accepté du seul owner, et
     /// seulement hors course (ignoré sinon). Déclenche la regénération du texte.
     SetTextSource { source: TextSource },
+    /// Régler la taille max de la Room (2–8) — accepté du seul owner, et seulement hors
+    /// course (ignoré sinon). Ne porte que sur les arrivées : personne n'est expulsé.
+    SetMaxPlayers { max: u32 },
     /// Lancer la course — accepté du seul owner de la Room (ignoré sinon).
     StartRace,
     /// Progression de frappe (diffusée pour le rendu des "voitures"). Pas autoritaire.
@@ -211,6 +214,9 @@ pub enum ServerEvent {
         /// se lit donc ici : la Room bascule réellement sur `Words`, il n'y a pas de
         /// « Quote demandée mais pas obtenue » à représenter en plus.
         text_source: TextSource,
+        /// Taille max courante de la Room. Lue par TOUT le lobby : « 3/5 » se dessine
+        /// chez les non-hôtes aussi, ils subissent le réglage.
+        max_players: u32,
     },
     /// Top de départ partagé : t=0 pour TOUS les clients (cale les horloges locales).
     RaceStart { start_at_epoch_ms: i64 },
@@ -229,6 +235,6 @@ pub enum ServerEvent {
     /// il n'y a aucune Room à qui le diffuser). Le socket reste ouvert — le joueur
     /// corrige son code et retente sans se reconnecter.
     RoomNotFound,
-    /// Room déjà à `MAX_PLAYERS`. Même traitement : réponse directe, socket gardé.
+    /// Room déjà à sa taille max. Même traitement : réponse directe, socket gardé.
     RoomFull,
 }
