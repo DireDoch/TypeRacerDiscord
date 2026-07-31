@@ -7,9 +7,7 @@
 //  avant de cliquer, pas après avoir survolé.
 //
 //  Les sections se DÉCLARENT (`sections()`), elles ne se codent pas une par une :
-//  les issues #65-#70 ajoutent leurs lignes à cette liste, et le rendu suit. Seul
-//  le contrôle `segmented` existe — interrupteur et curseur arriveront avec la
-//  première Preference qui en aura besoin, pas avant.
+//  les issues #65-#70 ajoutent leurs lignes à cette liste, et le rendu suit.
 //
 //  Cet écran remplace l'ancienne vue Options du Menu, dont il reprend les liens
 //  légaux en pied de page (il n'y avait rien d'autre dedans).
@@ -22,6 +20,8 @@ import {
   QUICK_RESTART_LABELS,
   STOP_ON_ERROR_LABELS,
   STOP_ON_ERROR_VALUES,
+  TIME_WARNING_LABELS,
+  TIME_WARNING_VALUES,
   loadPreferences,
   setPreference,
   type Preferences,
@@ -41,7 +41,22 @@ export interface Segmented {
   options: { value: string; label: string; font?: string }[];
 }
 
-export type Control = Segmented;
+/** Curseur numérique continu (issue #66) — volume seul en a besoin pour l'instant. */
+export interface Slider {
+  kind: "slider";
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+}
+
+/** Interrupteur binaire (issue #66). */
+export interface Toggle {
+  kind: "toggle";
+  value: boolean;
+}
+
+export type Control = Segmented | Slider | Toggle;
 
 export interface SettingRow {
   key: string;
@@ -104,6 +119,33 @@ export function sections(prefs: Preferences): SettingSection[] {
         },
       ],
     },
+    {
+      title: "Son",
+      rows: [
+        {
+          key: "soundVolume",
+          label: "Volume",
+          description: "Volume de tous les effets sonores du jeu.",
+          control: { kind: "slider", value: prefs.soundVolume, min: 0, max: 1, step: 0.05 },
+        },
+        {
+          key: "soundOnError",
+          label: "Son sur erreur",
+          description: "Joue un bref son sur une frappe incorrecte ou un espace prématuré.",
+          control: { kind: "toggle", value: prefs.soundOnError },
+        },
+        {
+          key: "timeWarning",
+          label: "Avertissement de fin",
+          description: "Joue un bref son quand un test chronométré (Time) approche de sa fin.",
+          control: {
+            kind: "segmented",
+            value: prefs.timeWarning,
+            options: TIME_WARNING_VALUES.map((key) => ({ value: key, label: TIME_WARNING_LABELS[key] })),
+          },
+        },
+      ],
+    },
   ];
 }
 
@@ -113,8 +155,7 @@ export function sections(prefs: Preferences): SettingSection[] {
 
 /** Boutons-bascule plutôt que `role="radio"` : `aria-pressed` se lit correctement
  *  sans navigation aux flèches ni tabindex tournant à maintenir. */
-function controlHtml(row: SettingRow): string {
-  const control = row.control;
+function segmentedHtml(row: SettingRow, control: Segmented): string {
   const buttons = control.options
     .map(
       (option) => `
@@ -124,6 +165,20 @@ function controlHtml(row: SettingRow): string {
     )
     .join("");
   return `<div class="seg" role="group" aria-labelledby="lbl-${row.key}">${buttons}</div>`;
+}
+
+function controlHtml(row: SettingRow): string {
+  const control = row.control;
+  switch (control.kind) {
+    case "segmented":
+      return segmentedHtml(row, control);
+    case "slider":
+      return `<input type="range" data-setting="${row.key}" min="${control.min}" max="${control.max}"
+                step="${control.step}" value="${control.value}" aria-labelledby="lbl-${row.key}">`;
+    case "toggle":
+      return `<input type="checkbox" data-setting="${row.key}" ${control.value ? "checked" : ""}
+                aria-labelledby="lbl-${row.key}">`;
+  }
 }
 
 export function rowHtml(row: SettingRow): string {
@@ -198,12 +253,25 @@ export class Settings {
       ?.addEventListener("click", () => this.onBack());
 
     // Délégation : les lignes sont regénérées à chaque changement, un écouteur
-    // par bouton serait à recâbler à chaque rendu.
+    // par bouton serait à recâbler à chaque rendu. Boutons segmentés : `data-value`
+    // porte déjà la valeur cliquée.
     this.root.querySelector<HTMLElement>(".settings")?.addEventListener("click", (event) => {
       const target = (event.target as HTMLElement).closest<HTMLElement>("[data-setting]");
       const key = target?.dataset.setting;
       const value = target?.dataset.value;
       if (!key || value === undefined) return;
+      setPreference(key as keyof Preferences, value as Preferences[keyof Preferences]);
+      this.render();
+    });
+
+    // Curseur/interrupteur natifs : `change` (pas `click`), et pas de re-render à
+    // chaque cran glissé — seulement au relâchement, sinon le curseur perdrait le
+    // focus/le drag en cours de route.
+    this.root.querySelector<HTMLElement>(".settings")?.addEventListener("change", (event) => {
+      const target = event.target as HTMLInputElement;
+      const key = target.dataset.setting;
+      if (!key) return;
+      const value = target.type === "checkbox" ? target.checked : Number(target.value);
       setPreference(key as keyof Preferences, value as Preferences[keyof Preferences]);
       this.render();
     });
