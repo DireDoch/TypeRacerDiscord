@@ -39,6 +39,23 @@ Merge as a **regular merge, not a squash** — the individual features are alrea
 commits on `develop`; squashing again would collapse that history into one opaque commit.
 Tag it afterwards: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 
+### Standing exception: the parameter-issues batch (#59–71)
+
+For the Settings-menu PRD (#59) and its children (#60–71) specifically, the user has
+pre-approved section merges to `main` — no fresh ask needed each time. A "section" is one
+themed group of issues:
+
+- **Scaffold**: #60 (done).
+- **Room settings**: #61, #62 (done), #63.
+- **Difficulty & Failed**: #64, #71.
+- **Preferences**: #65, #66, #67, #68, #69, #70.
+
+When every issue in a group is closed, merge `develop` → `main` for that group: **regular
+merge, no squash, no version tag** — this is not a release, just keeping `main` reasonably
+current between real releases. Everything else in "Never" below still holds (no
+force-push, no skipped CI) — only the "ask first" part of the `main` rule is waived, and
+only for this named batch.
+
 ## Never
 
 - Merge or push to `main` without the user explicitly requesting that release, in the moment.
