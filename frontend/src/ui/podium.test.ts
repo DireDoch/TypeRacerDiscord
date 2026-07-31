@@ -8,6 +8,7 @@ const finished = (playerId: string, wpm: number, durationMs: number): RaceResult
   accuracy: 97,
   durationMs,
   forfeit: false,
+  failedPercent: null,
   perSecond: [],
 });
 
@@ -17,16 +18,27 @@ const forfeited = (playerId: string): RaceResult => ({
   accuracy: 0,
   durationMs: 0,
   forfeit: true,
+  failedPercent: null,
   perSecond: [],
 });
 
-describe("Gap — le chiffre qu'on dit à voix haute (ADR 0010)", () => {
-  const results = [
-    finished("alice", 92, 30_000),
-    finished("bob", 78, 31_400),
-    finished("carol", 64, 33_900),
-  ];
+const failed = (playerId: string, percent: number): RaceResult => ({
+  playerId,
+  wpm: 0,
+  accuracy: 0,
+  durationMs: 0,
+  forfeit: false,
+  failedPercent: percent,
+  perSecond: [],
+});
 
+const results = [
+  finished("alice", 92, 30_000),
+  finished("bob", 78, 31_400),
+  finished("carol", 64, 33_900),
+];
+
+describe("Gap — le chiffre qu'on dit à voix haute (ADR 0010)", () => {
   it("le vainqueur est la référence : écart nul", () => {
     expect(gapSeconds(results, 0)).toBe(0);
     expect(gapLabel(results, 0)).toBe("vainqueur");
@@ -60,5 +72,21 @@ describe("Gap — le chiffre qu'on dit à voix haute (ADR 0010)", () => {
 
   it("un index hors du tableau ne fait pas planter le podium", () => {
     expect(gapSeconds(results, 99)).toBeNull();
+  });
+});
+
+describe("Gap — un Échec Master (ADR 0013) n'a pas d'écart, distinct d'un abandon", () => {
+  it("un Échec affiche « échec », jamais « abandon » ni un WPM", () => {
+    const withFailed = [...results, failed("dave", 42)];
+    expect(gapSeconds(withFailed, 3)).toBeNull();
+    expect(gapLabel(withFailed, 3)).toBe("échec");
+  });
+
+  it("un Échec n'est jamais choisi comme référence (vainqueur) du Gap", () => {
+    // Même s'il arrive en tête du tableau, un Échec (durationMs=0) ne doit jamais servir
+    // de référence — sinon tout le monde afficherait un Gap négatif absurde.
+    const odd = [failed("dave", 90), finished("alice", 92, 30_000), finished("bob", 78, 31_400)];
+    expect(gapLabel(odd, 1)).toBe("vainqueur");
+    expect(gapSeconds(odd, 2)).toBeCloseTo(1.4);
   });
 });

@@ -13,12 +13,20 @@ A solo Run with **free input** (Monkeytype-style): backspace allowed, errors may
 _Avoid_: Solo, Training, Free mode.
 
 **Race**:
-A competitive Run inside a Room with **blocking input** (TypeRacer-style): an error must be corrected before advancing. Planned for Phase 2. The blocking input controller is built and testable in solo during the MVP, then rebound exclusively to Race later.
-_Avoid_: Match, Duel, Course.
+A competitive Run inside a Room, on the **same free input** as Practice: an error may be left uncorrected, extra characters are possible while typing. It only ends once the whole target text has been typed exactly — correcting mistakes is necessary to finish, but nothing forces a correction keystroke-by-keystroke. A **blocking input** controller (error forced to be corrected before advancing, TypeRacer-style) was once the plan for Race — it was never built, and Race has raced on free input from the start (ADR 0013).
+_Avoid_: Match, Duel, Course, Blocking input.
 
 **Abandon (forfeit)**:
 Giving up the current Race **without leaving the Room** — the Player's car stops, they are ranked last and labelled « abandon » (never « 0 wpm »), and they stay in the lobby to play the next Race. Recorded as an arrival at 0 WPM carrying an explicit `forfeit` flag, so it unblocks the finish for everyone else instead of making them wait out the watchdog. No Run is ever persisted for an Abandon: nothing to exclude from PBs, nothing to pollute the history. A Player who simply **disconnects** produces the exact same record — one code path for both.
 _Avoid_: Quit, Leave, Give up, DNF.
+
+**Difficulté (Difficulty)**:
+A cumulable fail condition layered on top of a Run's input model, evaluated purely on the keystroke log — the input controller itself is never touched. `Normal` (default) changes nothing. `Expert` fails a Run when a word is submitted with an uncorrected error; unreachable in Race, whose blocking input already forces a correction before a word can ever be submitted wrong. `Master` fails a Run on the very first incorrect keystroke, before any correction is possible — the only level available in Race, where it is authoritative (ADR 0013) the same way the Finish recompute already is. Never enters the Config bucket: two Difficulties are never compared for a PB.
+_Avoid_: Hard mode, Strict mode, Challenge mode.
+
+**Failed**:
+The terminal state of a Race Run ended by a Difficulty fail condition (Master) — distinct from an Abandon (the Player's own choice to give up) even though it behaves like one in every other respect: the car stops at the exact point of the mistake, the Race unblocks immediately for everyone else, the Player stays in the lobby for the next Race, and no Run is ever persisted. Ranks in the same tail tier as Abandoned (ADR 0013). Displays a completion percentage (« failed (42%) ») that is never used to rank — it is not "almost finished," it is disqualified.
+_Avoid_: DNF, Disqualified, Eliminated.
 
 **Gap (écart)**:
 How far a Player finished behind the winner of a Race, in seconds. It is the headline of the finish — the number that gets said out loud — while absolute WPM is secondary. Derived on the client from the durations carried by `RaceOver` (ADR 0010); the winner's own Gap is zero. Ranking by Gap and ranking by WPM are always the same order in a Race — everyone types the same text and only finishes at 100 % exact, so correct characters are identical across finishers.
@@ -34,6 +42,10 @@ _Avoid_: Mode, Race mode, Game mode.
 **Setting**:
 An independent, cumulable text modifier applied on top of a Mode — currently `Punctuation` and `Numbers`. Zero or more per Run.
 _Avoid_: Modifier, Option, Toggle.
+
+**Réglage de salon (Room setting)**:
+A lobby-only Room configuration set by the party leader and applied uniformly to every Player in the Race — countdown duration, max room size, ready-check, Difficulty. Same trust boundary and gating as Source de texte (ADR 0009): owner-only, rejected mid-race, re-broadcast to the whole lobby on every accepted change. Distinct from a Preference (device-local, never shared with the Room) and from a Setting (a per-Run text modifier, not a lobby-wide rule).
+_Avoid_: Room option, Lobby setting, Game setting.
 
 **Preference**:
 How a Player wants the game to look on **their own machine** — typing font, colour palette, and the Display identity override. A Preference belongs to the device, never leaves it, and is deliberately **not** a Setting: it never alters the generated text, never enters the Config bucket, and never affects a score. Two Players in the same Race may see different fonts and colours and still be racing the same text. Changing a Preference never invalidates a PB.

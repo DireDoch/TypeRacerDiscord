@@ -18,12 +18,15 @@ import type { InputView } from "../core/input/controller";
 import { RunClock } from "../core/clock";
 import { Countdown } from "../core/countdown";
 import { FreeInput } from "../core/input/free-input";
+import { detectDifficultyFailure } from "../core/difficulty";
 import {
   RaceSocket,
   COUNTDOWN_VALUES,
+  ROOM_DIFFICULTIES,
   ROOM_SIZES,
   WORDS_LENGTHS,
   type ClientEvent,
+  type Difficulty,
   type Identity,
   type PlayerEntry,
   type PlayOfTheGame,
@@ -83,6 +86,8 @@ export class Race {
   private countdownS = RACE_COUNTDOWN_S;
   /** Ready-check (réglage de l'hôte, issue #63). Mon état "prêt" vit sur `players[]`. */
   private readyCheck = false;
+  /** Difficulté de la Room (réglage de l'hôte, issue #71, ADR 0013). */
+  private difficulty: Difficulty = "normal";
   /** Message affiché en phase "failed" (code inconnu, Room pleine). */
   private failure = "";
 
@@ -97,6 +102,9 @@ export class Race {
   private finished = new Map<string, number>();
   /** Joueurs ayant ABANDONNÉ — la piste affiche « abandon », jamais leur « 0 wpm ». */
   private forfeited = new Set<string>();
+  /** Joueurs ayant ÉCHOUÉ (Master, ADR 0013), avec leur pourcentage — la piste affiche
+   *  « échec (X%) », jamais « abandon » ni leur « 0 wpm ». */
+  private failedPercents = new Map<string, number>();
   /** Résultats complets de la dernière course, DANS L'ORDRE DU CLASSEMENT (ADR 0010). */
   private results: RaceResult[] = [];
   /** Le duel le plus serré (ADR 0011), ou `null` s'il n'y en a pas eu → bouton absent. */
@@ -171,6 +179,7 @@ export class Race {
         this.maxPlayers = e.maxPlayers;
         this.countdownS = e.countdownS;
         this.readyCheck = e.readyCheck;
+        this.difficulty = e.difficulty;
         this.targetText = e.targetText;
         this.targetWords = e.targetText.split(" ").filter((w) => w.length > 0);
         // Duel à l'écran : on met à jour les données (join/leave du lobby d'après-course)
@@ -197,6 +206,7 @@ export class Race {
       case "PlayerFinished":
         this.finished.set(e.playerId, e.wpm);
         if (e.forfeit) this.forfeited.add(e.playerId);
+        if (e.failedPercent !== null) this.failedPercents.set(e.playerId, e.failedPercent);
         if (this.phase === "running") this.renderBars();
         break;
       case "RaceOver":
@@ -230,6 +240,7 @@ export class Race {
     this.progress.clear();
     this.finished.clear();
     this.forfeited.clear();
+    this.failedPercents.clear();
     this.playOfTheGame = null;
     // Contrôleur neuf dès le décompte : le texte ENTIER s'affiche vierge (le joueur lit
     // le début pendant l'attente) — indispensable après une revanche (état stale).
@@ -281,6 +292,21 @@ export class Race {
 
     const k = this.controller.handleKey(e.key, e.ctrlKey, this.clock.elapsed());
     if (k) this.log.push(k);
+
+    // Difficulté Master (issue #71, ADR 0013) : détectée localement sur le log free-input,
+    // avant tout le reste. Le serveur REJOUE contre son propre texte pour confirmer avant
+    // d'enregistrer un Échec — jamais fait confiance sur la seule parole du client.
+    if (this.difficulty === "master") {
+      const fail = detectDifficultyFailure("master", this.targetWords, this.log);
+      if (fail) {
+        this.doneLocal = true;
+        this.socket?.send({ type: "Fail", keystrokes: this.log });
+        this.renderWords();
+        this.renderBars();
+        return;
+      }
+    }
+
     this.socket?.send({ type: "Progress", charsDone: this.charsDone() });
 
     // Fin de course : uniquement quand TOUT le texte est exact (flux jamais bloqué,
@@ -346,6 +372,14 @@ export class Race {
       const me = this.players.find((p) => p.playerId === this.me);
       this.socket?.send({ type: "SetReady", ready: !(me?.ready ?? false) });
     });
+    this.root
+      .querySelector<HTMLSelectElement>("#raceDifficulty")
+      ?.addEventListener("change", (e) =>
+        this.socket?.send({
+          type: "SetDifficulty",
+          difficulty: (e.target as HTMLSelectElement).value as Difficulty,
+        }),
+      );
     if (this.phase === "over") {
       wirePodium(this.root, this.podiumOptions());
       this.root
@@ -391,6 +425,7 @@ export class Race {
           this.sizeHtml() +
           this.countdownHtml() +
           this.readyCheckHtml() +
+          this.difficultyHtml() +
           this.cardsHtml() +
           this.readyBtnHtml() +
           this.startBtnHtml() +
@@ -506,6 +541,24 @@ export class Race {
     return `<button id="toggleReady" class="${ready ? "on" : ""}">${ready ? "Prêt ✓" : "Se dire prêt"}</button>`;
   }
 
+  /**
+   * Difficulté de la Room (issue #71, ADR 0013) : Normal | Master seulement — Expert
+   * n'est pas un Réglage de salon, sa condition de déclenchement y est inatteignable.
+   * Même patron que les autres réglages : `select` pour l'hôte, mention pour les autres.
+   */
+  private difficultyHtml(): string {
+    if (this.me !== this.owner) {
+      return `<p class="hint">Difficulté : ${DIFFICULTY_LABELS[this.difficulty]}</p>`;
+    }
+    const opts = ROOM_DIFFICULTIES.map(
+      (d) => `<option value="${d}"${d === this.difficulty ? " selected" : ""}>${DIFFICULTY_LABELS[d]}</option>`,
+    ).join("");
+    return `<div class="race-settings">
+      <label class="hint" for="raceDifficulty">Difficulté</label>
+      <select id="raceDifficulty">${opts}</select>
+    </div>`;
+  }
+
   /** Cartes de présence empilées (owner en tête, moi souligné). */
   private cardsHtml(): string {
     const cards = this.players
@@ -576,7 +629,12 @@ export class Race {
         const done = isMe ? this.charsDone() : this.progress.get(p.playerId) ?? 0;
         const pct = Math.min(100, Math.round((done / total) * 100));
         const final = this.finished.get(p.playerId);
-        const label = trackLabel(this.forfeited.has(p.playerId), final, liveWpmOf(done, elapsed));
+        const label = trackLabel(
+          this.forfeited.has(p.playerId),
+          this.failedPercents.get(p.playerId),
+          final,
+          liveWpmOf(done, elapsed),
+        );
         return `<div class="bar ${isMe ? "me" : ""} ${final !== undefined ? "done" : ""}">
           <span class="bar-label">${escapeText(isMe ? `${p.displayName} (toi)` : p.displayName)}</span>
           <div class="bar-track"><div class="bar-fill" style="width:${pct}%">${avatarHtml(p, "car")}</div></div>
@@ -654,10 +712,17 @@ export function liveWpmOf(charsDone: number, elapsedMs: number): number {
 
 /**
  * Étiquette de la ligne d'arrivée sur la piste. Un abandon affiche « abandon » et JAMAIS
- * « 0 wpm » — le flag est explicite, on ne le déduit pas d'un WPM nul. Sinon : le WPM
- * autoritaire (✓) une fois fini, le WPM live dérivé tant qu'on court. Pure.
+ * « 0 wpm » — le flag est explicite, on ne le déduit pas d'un WPM nul. Un Échec Master
+ * (ADR 0013) affiche « échec (X%) », distinct de l'abandon. Sinon : le WPM autoritaire
+ * (✓) une fois fini, le WPM live dérivé tant qu'on court. Pure.
  */
-export function trackLabel(forfeited: boolean, finalWpm: number | undefined, liveWpm: number): string {
+export function trackLabel(
+  forfeited: boolean,
+  failedPercent: number | undefined,
+  finalWpm: number | undefined,
+  liveWpm: number,
+): string {
+  if (failedPercent !== undefined) return `échec (${failedPercent}%)`;
   if (forfeited) return "abandon";
   if (finalWpm !== undefined) return `${finalWpm} wpm ✓`;
   return `${liveWpm} wpm`;
@@ -665,6 +730,10 @@ export function trackLabel(forfeited: boolean, finalWpm: number | undefined, liv
 
 /** Libellés des trois longueurs, dans l'ordre de `WORDS_LENGTHS`. */
 const LENGTH_LABELS = ["Court", "Normal", "Long"] as const;
+
+/** Libellés de Difficulté (issue #71) — Expert n'apparaît dans aucun `select` de Room,
+ *  mais reste couvert ici : `this.difficulty` a le type `Difficulty` au complet. */
+const DIFFICULTY_LABELS: Record<Difficulty, string> = { normal: "Normal", expert: "Expert", master: "Master" };
 
 /** Longueur à reprendre quand on (re)passe sur `words`. Médiane par défaut. */
 export function currentCount(src: TextSource): number {

@@ -67,16 +67,26 @@ describe("WPM live de la piste — dérivé de charsDone, jamais transporté", (
 
 describe("trackLabel — un abandon s'affiche « abandon », jamais « 0 wpm »", () => {
   it("abandon : le flag l'emporte, même avec un WPM à 0", () => {
-    expect(trackLabel(true, 0, 0)).toBe("abandon");
-    expect(trackLabel(true, 0, 0)).not.toContain("wpm");
+    expect(trackLabel(true, undefined, 0, 0)).toBe("abandon");
+    expect(trackLabel(true, undefined, 0, 0)).not.toContain("wpm");
   });
 
   it("fini pour de vrai : WPM autoritaire coché", () => {
-    expect(trackLabel(false, 72, 40)).toBe("72 wpm ✓");
+    expect(trackLabel(false, undefined, 72, 40)).toBe("72 wpm ✓");
   });
 
   it("en train de courir : WPM live dérivé", () => {
-    expect(trackLabel(false, undefined, 55)).toBe("55 wpm");
+    expect(trackLabel(false, undefined, undefined, 55)).toBe("55 wpm");
+  });
+});
+
+describe("trackLabel — un Échec Master (ADR 0013) s'affiche « échec (X%) », distinct de l'abandon", () => {
+  it("l'emporte sur tout le reste, même un WPM final présent", () => {
+    expect(trackLabel(false, 42, 72, 40)).toBe("échec (42%)");
+  });
+
+  it("distinct d'un abandon même si les deux flags étaient vrais", () => {
+    expect(trackLabel(true, 42, 0, 0)).toBe("échec (42%)");
   });
 });
 

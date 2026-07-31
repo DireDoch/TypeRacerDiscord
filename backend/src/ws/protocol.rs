@@ -13,6 +13,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::domain::difficulty::Difficulty;
 use crate::domain::types::{Keystroke, PerSecondPoint};
 
 /// Clé d'une Room : soit un `ChannelId`, soit un Code de partie. Les deux formes ne
@@ -126,6 +127,10 @@ pub struct RaceResult {
     /// Abandon (volontaire ou déconnexion) : aucun recompute n'est fait sur son log,
     /// donc pas de série et pas de graphe à déplier.
     pub forfeit: bool,
+    /// Échec Difficulté Master (issue #71, ADR 0013) — distinct d'un Abandon (involontaire),
+    /// mêmes mécaniques par ailleurs. Pourcentage d'avancement au moment de la faute,
+    /// affiché (« failed (X%) ») mais JAMAIS utilisé pour classer. `None` sinon.
+    pub failed_percent: Option<i64>,
     pub per_second: Vec<PerSecondPoint>,
 }
 
@@ -139,6 +144,21 @@ impl RaceResult {
             accuracy: 0.0,
             duration_ms: 0.0,
             forfeit: true,
+            failed_percent: None,
+            per_second: Vec::new(),
+        }
+    }
+
+    /// Échec Master : même forme qu'un Abandon (0 WPM, aucun recompute, jamais persisté)
+    /// mais `forfeit: false` — un échec est involontaire, ADR 0013 le veut distinct.
+    pub fn failed(player_id: &str, percent: i64) -> RaceResult {
+        RaceResult {
+            player_id: player_id.to_string(),
+            wpm: 0.0,
+            accuracy: 0.0,
+            duration_ms: 0.0,
+            forfeit: false,
+            failed_percent: Some(percent),
             per_second: Vec::new(),
         }
     }
@@ -191,6 +211,9 @@ pub enum ClientEvent {
     /// Se marquer prêt/pas prêt — accepté de N'IMPORTE quel présent, hors course. Sans
     /// effet sur `StartRace` tant que `ready_check` est désactivé.
     SetReady { ready: bool },
+    /// Régler la Difficulté de la Room (Normal | Master — Expert n'est pas un Réglage
+    /// de salon, ADR 0013) — accepté du seul owner, et seulement hors course.
+    SetDifficulty { difficulty: Difficulty },
     /// Lancer la course — accepté du seul owner de la Room (ignoré sinon).
     StartRace,
     /// Progression de frappe (diffusée pour le rendu des "voitures"). Pas autoritaire.
@@ -204,6 +227,11 @@ pub enum ClientEvent {
     /// chemin de code. Débloque la fin pour les autres au lieu de les faire attendre le
     /// watchdog.
     Forfeit,
+    /// Échec Difficulté Master (issue #71, ADR 0013) : le client a détecté localement
+    /// (même logique pure que Practice) sa 1re frappe incorrecte et arrête d'y toucher.
+    /// Le serveur REJOUE le log contre SON texte pour confirmer l'échec avant de
+    /// l'enregistrer — jamais fait confiance sur la seule parole du client.
+    Fail { keystrokes: Vec<Keystroke> },
     LeaveRoom,
 }
 
@@ -235,6 +263,8 @@ pub enum ServerEvent {
         /// Ready-check activé ou non (issue #63). L'état « prêt » de chacun se lit sur
         /// `players[].ready`, pas ici.
         ready_check: bool,
+        /// Difficulté de la Room (Normal | Master, issue #71, ADR 0013).
+        difficulty: Difficulty,
     },
     /// Top de départ partagé : t=0 pour TOUS les clients (cale les horloges locales).
     RaceStart { start_at_epoch_ms: i64 },
@@ -242,8 +272,9 @@ pub enum ServerEvent {
     PlayerProgress { player_id: PlayerId, chars_done: u32 },
     /// Scoreboard autoritaire d'un joueur ayant fini (recompute serveur). `forfeit`
     /// distingue une VRAIE arrivée d'un abandon : la piste affiche « abandon » plutôt
-    /// que « 0 wpm » pendant la course (le podium, lui, lit RaceOver).
-    PlayerFinished { player_id: PlayerId, wpm: f64, forfeit: bool },
+    /// que « 0 wpm » pendant la course (le podium, lui, lit RaceOver). `failed_percent`
+    /// distingue un Échec Master (ADR 0013) — jamais les deux à la fois.
+    PlayerFinished { player_id: PlayerId, wpm: f64, forfeit: bool, failed_percent: Option<i64> },
     /// Fin de course : les résultats COMPLETS, dans l'ordre du classement (ADR 0010).
     /// L'ordre du tableau EST le classement — il n'y a pas de champ d'ordre séparé.
     /// `play_of_the_game` porte les deux logs du duel le plus serré (ADR 0011), ou
