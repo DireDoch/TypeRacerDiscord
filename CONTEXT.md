@@ -280,7 +280,7 @@ Discord retire le préfixe AVANT d'appliquer les URL Mappings → backend et dev
 
 **Navigation par écrans (pas d'URL).**
 L'URL de l'iframe est figée par le URL Mapping → toute navigation se fait PAR BOUTONS.
-`main.ts` orchestre Menu (hub : Solo / Multijoueur / Options / Quitter) ↔ Practice ↔
+`main.ts` orchestre Menu (hub : Solo / Multijoueur / Paramètres / Quitter) ↔ Practice ↔
 Race, chaque écran expose `destroy()` (écouteur clavier global, rAF, socket) pour éviter
 les écouteurs fantômes. La vue **Multijoueur du Menu** porte les trois portes d'entrée
 d'une Room (salon / créer / rejoindre par code) ET le champ de saisie du code — c'est
@@ -329,7 +329,21 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
 - Écran **Podium** (`ui/podium.ts`, ADR 0010) : trois marches + les autres visibles à
   côté, le **Gap** en gros, clic sur un joueur → son graphe par seconde (`drawChart`
   réutilisé de `results.ts`) **sans aucune requête**. Tout vient de `RaceOver`. Écran **Menu** (`ui/menu.ts`) : hub
-  d'arrivée + vue Options (liens légaux). Navigation par boutons avec `destroy()`.
+  d'arrivée. Navigation par boutons avec `destroy()`.
+- Écran **Paramètres** (`ui/settings.ts`, issue #60) : le socle des Preferences —
+  une ligne = libellé + explication à gauche, contrôle aligné à droite, groupées en
+  sections déclarées (`sections()`, c'est là que les prochaines Preferences s'ajoutent).
+  Le rendu est pur et testé sans DOM (`rowHtml` / `sectionHtml`, comme `wordsHtml`). Il a
+  REMPLACÉ la vue Options du Menu, dont il reprend les liens légaux en pied de page.
+  Seul le contrôle `segmented` existe ; interrupteur et curseur viendront avec la
+  première Preference qui en aura besoin. Première ligne câblée : la **police de frappe**,
+  chaque option rendue dans sa propre police (l'aperçu est le contrôle).
+  `core/preferences.ts` porte le schéma : défaut ET domaine de validité par clé,
+  persistance **localStorage seule** — une Preference appartient à l'appareil, donc aucune
+  table, aucun endpoint, rien vers le backend. Le stockage étant éditable à la main, toute
+  valeur inconnue ou hors domaine retombe sur son défaut *clé par clé*, sans emporter les
+  réglages voisins. `applyPreferences()` est appelé par `main.ts` avant le premier écran
+  (la police doit être en place au premier rendu, pas après un clignotement).
 - Écran **Apprendre** (`ui/learn.ts`, entrée au menu) : cursus complet (issues #4, #8) —
   liste des Lessons (verrouillée/disponible/complétée), 13 leçons réelles dans
   `core/learn.ts` (posture + F/J, rangées de base/haut/bas, majuscules, ponctuation,
