@@ -1,12 +1,12 @@
-# CI : tests + builds des deux moitiés, en parallèle, sur push et PR vers main.
+# CI : tests + builds des deux moitiés, en parallèle, sur push et PR vers main/develop.
 # Le build Vite attrape les erreurs TypeScript hors des fichiers testés par vitest.
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 jobs:
   frontend:
