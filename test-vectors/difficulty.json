@@ -1,0 +1,111 @@
+{
+  "_comment": "Vecteurs de parité TS/Rust pour detectDifficultyFailure/detect_difficulty_failure (issue #64, ADR 0013). Lu par frontend/src/core/difficulty.test.ts ET backend/src/domain/difficulty.rs — ajouter un cas ici, ou en changer un chiffre, doit faire échouer les DEUX côtés s'ils divergent.",
+  "cases": [
+    {
+      "name": "normal_jamais_d_echec",
+      "difficulty": "normal",
+      "targetWords": ["the", "cat"],
+      "keystrokes": [
+        { "t": 100, "k": "t" }, { "t": 200, "k": "x" }, { "t": 300, "k": "e" }, { "t": 400, "k": " " }
+      ],
+      "expected": null
+    },
+    {
+      "name": "expert_mot_exact_ne_seche_pas",
+      "difficulty": "expert",
+      "targetWords": ["the", "cat"],
+      "keystrokes": [
+        { "t": 100, "k": "t" }, { "t": 200, "k": "h" }, { "t": 300, "k": "e" }, { "t": 400, "k": " " },
+        { "t": 500, "k": "c" }, { "t": 600, "k": "a" }, { "t": 700, "k": "t" }
+      ],
+      "expected": null
+    },
+    {
+      "name": "expert_echoue_au_mot_soumis_faux",
+      "difficulty": "expert",
+      "targetWords": ["the", "cat"],
+      "keystrokes": [
+        { "t": 100, "k": "t" }, { "t": 200, "k": "h" }, { "t": 300, "k": "x" }, { "t": 400, "k": " " }
+      ],
+      "expected": { "charsDone": 0, "percent": 0 }
+    },
+    {
+      "name": "expert_corrige_avant_l_espace_ne_seche_pas",
+      "difficulty": "expert",
+      "targetWords": ["the", "cat"],
+      "keystrokes": [
+        { "t": 100, "k": "t" }, { "t": 200, "k": "x" },
+        { "t": 300, "k": "", "ctrl": "backspace" },
+        { "t": 400, "k": "h" }, { "t": 500, "k": "e" }, { "t": 600, "k": " " }
+      ],
+      "expected": null
+    },
+    {
+      "name": "expert_mot_incomplet_soumis_seche",
+      "difficulty": "expert",
+      "targetWords": ["the", "cat"],
+      "keystrokes": [
+        { "t": 100, "k": "t" }, { "t": 200, "k": "h" }, { "t": 300, "k": " " }
+      ],
+      "expected": { "charsDone": 0, "percent": 0 }
+    },
+    {
+      "name": "expert_seche_au_2e_mot_apres_le_1er_correct",
+      "difficulty": "expert",
+      "targetWords": ["the", "cat"],
+      "keystrokes": [
+        { "t": 100, "k": "t" }, { "t": 200, "k": "h" }, { "t": 300, "k": "e" }, { "t": 400, "k": " " },
+        { "t": 500, "k": "c" }, { "t": 600, "k": "x" }, { "t": 700, "k": " " }
+      ],
+      "expected": { "charsDone": 4, "percent": 57 }
+    },
+    {
+      "name": "master_jamais_d_erreur_ne_seche_pas",
+      "difficulty": "master",
+      "targetWords": ["the", "cat"],
+      "keystrokes": [
+        { "t": 100, "k": "t" }, { "t": 200, "k": "h" }, { "t": 300, "k": "e" }, { "t": 400, "k": " " },
+        { "t": 500, "k": "c" }, { "t": 600, "k": "a" }, { "t": 700, "k": "t" }
+      ],
+      "expected": null
+    },
+    {
+      "name": "master_seche_a_la_1ere_frappe_fausse",
+      "difficulty": "master",
+      "targetWords": ["the", "cat"],
+      "keystrokes": [
+        { "t": 100, "k": "x" }
+      ],
+      "expected": { "charsDone": 0, "percent": 0 }
+    },
+    {
+      "name": "master_seche_apres_prefixe_correct",
+      "difficulty": "master",
+      "targetWords": ["the", "cat"],
+      "keystrokes": [
+        { "t": 100, "k": "t" }, { "t": 200, "k": "h" }, { "t": 300, "k": "e" }, { "t": 400, "k": " " },
+        { "t": 500, "k": "c" }, { "t": 600, "k": "x" }
+      ],
+      "expected": { "charsDone": 5, "percent": 71 }
+    },
+    {
+      "name": "master_espace_precoce_n_est_jamais_incorrect",
+      "difficulty": "master",
+      "targetWords": ["the", "cat"],
+      "keystrokes": [
+        { "t": 100, "k": "t" }, { "t": 200, "k": "h" }, { "t": 300, "k": " " },
+        { "t": 400, "k": "c" }, { "t": 500, "k": "a" }, { "t": 600, "k": "t" }
+      ],
+      "expected": null
+    },
+    {
+      "name": "master_frappes_apres_l_echec_sont_ignorees",
+      "difficulty": "master",
+      "targetWords": ["the", "cat"],
+      "keystrokes": [
+        { "t": 100, "k": "x" }, { "t": 200, "k": "h" }, { "t": 300, "k": "e" }, { "t": 400, "k": " " }
+      ],
+      "expected": { "charsDone": 0, "percent": 0 }
+    }
+  ]
+}

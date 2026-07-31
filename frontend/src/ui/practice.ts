@@ -13,6 +13,7 @@ import type { RunConfig, RunPhase, KeystrokeLog, Keystroke } from "../core/types
 import { RunClock } from "../core/clock";
 import { FreeInput } from "../core/input/free-input";
 import type { InputController } from "../core/input/controller";
+import { detectDifficultyFailure, type Difficulty, type DifficultyFailure } from "../core/difficulty";
 import { generateWithRng, initialWordCount } from "../core/text-gen";
 import { generateDrillText } from "../core/text-gen/drill";
 import { Rng } from "../core/text-gen/rng";
@@ -26,6 +27,12 @@ import { wordsHtml, zenHtml, slideWindow, placeCaret } from "./typing-zone";
 // 0 = Time infini (horloge désactivée, mots en flux continu, fin sur Shift+Enter).
 const TIME_VALUES = [15, 30, 60, 120, 0];
 const WORD_VALUES = [10, 25, 50];
+
+/** Difficulté (issue #64, ADR 0013) : hors `RunConfig` — ne définit PAS le Config
+ *  bucket (aucun PB n'y est comparé), c'est un mode de jeu qui échoue le Run avant
+ *  la ligne d'arrivée plutôt qu'une variante de calcul de score. */
+const DIFFICULTIES: Difficulty[] = ["normal", "expert", "master"];
+const DIFFICULTY_LABELS: Record<Difficulty, string> = { normal: "Normal", expert: "Expert", master: "Master" };
 
 /** Marge de mots gardée en avance du curseur en Time infini (retop du flux). */
 const ENDLESS_LOOKAHEAD = 30;
@@ -47,6 +54,11 @@ export class Practice {
     punctuation: false,
     numbers: false,
   };
+
+  /** Difficulté (issue #64) — persiste entre les reset(), comme punctuation/numbers. */
+  private difficulty: Difficulty = "normal";
+  /** Point d'échec Expert/Master du Run courant, `null` sinon. */
+  private failure: DifficultyFailure | null = null;
 
   private phase: RunPhase = "idle";
   private seed = 0;
@@ -112,6 +124,7 @@ export class Practice {
     this.quoteId = undefined;
     this.quoteAuthor = undefined;
     this.quoteWikipediaUrl = undefined;
+    this.failure = null;
     this.loadError = false;
     this.loadErrorIsIdentity = false;
     this.drillNoProfile = false;
@@ -225,6 +238,15 @@ export class Practice {
   private handleTypingKey(e: KeyboardEvent): void {
     const k: Keystroke | null = this.controller.handleKey(e.key, e.ctrlKey, this.clock.elapsed());
     if (k) this.log.push(k);
+    // Difficulté (issue #64, ADR 0013) : évaluée sur le log free-input, indépendamment
+    // du contrôleur — Zen n'a pas de texte cible, la Difficulté n'y a pas de sens.
+    if (this.difficulty !== "normal" && this.config.mode !== "zen") {
+      const fail = detectDifficultyFailure(this.difficulty, this.targetWords, this.log);
+      if (fail) {
+        this.failRun(fail);
+        return;
+      }
+    }
     if (!this.isEndless() && this.controller.isComplete()) {
       void this.finish();
       return;
@@ -232,6 +254,17 @@ export class Practice {
     this.retopIfNeeded(); // Time infini : réalimente si le curseur approche du bout.
     this.renderWords();
     this.updateLiveBar(this.clock.elapsed());
+  }
+
+  /**
+   * Échec Expert/Master : le Run s'arrête là, comme un Abandon en Race — jamais
+   * soumis (`submitRun`), jamais compté dans l'historique/les PB.
+   */
+  private failRun(fail: DifficultyFailure): void {
+    cancelAnimationFrame(this.rafId);
+    this.phase = "finished";
+    this.failure = fail;
+    this.renderFailure();
   }
 
   /** Boucle d'affichage : compteur live + fin de Run en mode Time. */
@@ -382,6 +415,23 @@ export class Practice {
       .addEventListener("click", () => void this.finish());
   }
 
+  /** Échec Expert/Master (issue #64) : jamais soumis, Tab/Entrée relancent (onKeyDown,
+   *  phase "finished" déjà câblée pour ça). */
+  private renderFailure(): void {
+    const fail = this.failure;
+    if (!fail) return;
+    const label = this.difficulty === "master" ? "Master" : "Expert";
+    this.root.innerHTML = `
+      <section class="results">
+        <p class="hint">Échec (${label}) — ${fail.percent}% du texte</p>
+        <button id="retryFail" class="primary">Recommencer</button>
+      </section>
+    `;
+    this.root
+      .querySelector<HTMLButtonElement>("#retryFail")!
+      .addEventListener("click", () => void this.reset());
+  }
+
   private updateLiveBar(elapsed: number): void {
     const el = this.root.querySelector<HTMLElement>("#liveBar");
     if (el) el.innerHTML = this.liveBarHtml(elapsed);
@@ -484,6 +534,13 @@ export class Practice {
         </div>`;
     const modeBtn = (m: RunConfig["mode"]) =>
       `<button data-mode="${m}" class="${this.config.mode === m ? "on" : ""}">${MODE_LABELS[m]}</button>`;
+    // Zen n'a pas de texte cible (issue #64) : la Difficulté n'y a pas de sens.
+    const difficultyGroup =
+      this.config.mode === "zen"
+        ? ""
+        : `<div class="group">${DIFFICULTIES.map(
+            (d) => `<button data-difficulty="${d}" class="${this.difficulty === d ? "on" : ""}">${DIFFICULTY_LABELS[d]}</button>`,
+          ).join("")}</div>`;
     return `
       <div class="config">
         <div class="group">
@@ -496,6 +553,7 @@ export class Practice {
         </div>
         ${valueGroup}
         ${settingsGroup}
+        ${difficultyGroup}
         ${this.onExit ? `<div class="group"><button data-nav="menu">← menu</button></div>` : ""}
       </div>
     `;
@@ -520,6 +578,12 @@ export class Practice {
       b.addEventListener("click", () => {
         const key = b.dataset.toggle as "punctuation" | "numbers";
         this.config[key] = !this.config[key];
+        void this.reset();
+      }),
+    );
+    this.root.querySelectorAll<HTMLButtonElement>("[data-difficulty]").forEach((b) =>
+      b.addEventListener("click", () => {
+        this.difficulty = b.dataset.difficulty as Difficulty;
         void this.reset();
       }),
     );
