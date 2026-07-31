@@ -50,9 +50,13 @@ const WORDS_LENGTHS: [u32; 3] = [15, 30, 50];
 const ROOM_WORD_COUNT: u32 = 30;
 /// Profondeur du canal de diffusion par Room (messages en vol tolérés).
 const BROADCAST_CAP: usize = 64;
-/// Plafond de présents dans une Room. Porte sur `players`, donc un spectateur arrivé
-/// en cours de course occupe une place comme un autre.
+/// Plafond DUR de présents dans une Room, et taille par défaut. Porte sur `players`, donc
+/// un spectateur arrivé en cours de course occupe une place comme un autre. L'owner peut
+/// descendre en dessous (`Room::max_players`), jamais au-dessus : la piste et le Play of
+/// the Game sont dessinés pour huit.
 const MAX_PLAYERS: usize = 8;
+/// Plancher de la taille réglable : à un seul joueur il n'y a pas de course.
+const MIN_PLAYERS: usize = 2;
 /// Alphabet des Codes de partie : ni `0`/`O`, ni `1`/`I`/`L` — un code se dicte à
 /// l'oral, l'ambiguïté visuelle y coûte cher. 31 caractères.
 const CODE_ALPHABET: &[u8] = b"23456789ABCDEFGHJKMNPQRSTUVWXYZ";
@@ -108,6 +112,11 @@ pub struct Room {
     /// Source EFFECTIVE du `target_text` courant — pas celle qui a été demandée. Un repli
     /// après échec du proxy de citations bascule réellement ce champ (ADR 0009).
     pub text_source: TextSource,
+    /// Taille max de la Room, réglée par l'owner dans `MIN_PLAYERS..=MAX_PLAYERS`.
+    /// Ne porte QUE sur les arrivées : la baisser sous le nombre de présents n'expulse
+    /// personne — on ne sort pas quelqu'un du lobby par un réglage, la place se libère
+    /// quand il part de lui-même.
+    pub max_players: usize,
     pub state: RaceState,
     /// Diffusion des ServerEvent vers tous les sockets du salon.
     pub tx: broadcast::Sender<ServerEvent>,
@@ -173,6 +182,9 @@ pub async fn handle_socket(
                 if set_text_source(&rooms, &key, &player_id, source) {
                     spawn_refresh_text(rooms.clone(), key.clone(), quotes.clone());
                 }
+            }
+            Ok(ClientEvent::SetMaxPlayers { max }) => {
+                set_max_players(&rooms, &key, &player_id, max as usize);
             }
             Ok(ClientEvent::StartRace) => start_race(&rooms, &key, &player_id),
             Ok(ClientEvent::Progress { chars_done }) => {
@@ -311,6 +323,7 @@ fn new_room(key: RoomKey, code: Option<String>, owner: &str) -> Room {
         seed,
         target_text,
         text_source: TextSource::default(),
+        max_players: MAX_PLAYERS,
         state: RaceState::Lobby,
         tx,
     }
@@ -400,6 +413,23 @@ fn set_text_source(rooms: &Rooms, key: &str, player_id: &str, source: TextSource
     true
 }
 
+/// SetMaxPlayers : accepté du seul owner, hors course, et dans la plage autorisée. Même
+/// frontière de confiance que la Source de texte — la valeur vient du client et s'impose
+/// aux autres. Re-diffuse `RoomState` lui-même (rien à regénérer, contrairement au texte).
+fn set_max_players(rooms: &Rooms, key: &str, player_id: &str, max: usize) -> bool {
+    if !(MIN_PLAYERS..=MAX_PLAYERS).contains(&max) {
+        return false;
+    }
+    let mut rooms = rooms.lock().unwrap();
+    let Some(room) = rooms.get_mut(key) else { return false };
+    if room.owner != player_id || room.state.is_racing() {
+        return false; // non-owner, ou course en cours : ignoré
+    }
+    room.max_players = max;
+    let _ = room.tx.send(room_state(room));
+    true
+}
+
 /// Inscrit la présence, s'abonne à la diffusion, puis re-diffuse RoomState à tous. Le
 /// lock std n'est jamais tenu à travers un await (broadcast::send/subscribe sont
 /// synchrones). Rejoindre deux fois est idempotent et ne consomme pas de place.
@@ -409,7 +439,7 @@ fn add_player(
     identity: Identity,
 ) -> Result<broadcast::Receiver<ServerEvent>, JoinError> {
     let already_in = room.players.iter().any(|p| p == player_id);
-    if !already_in && room.players.len() >= MAX_PLAYERS {
+    if !already_in && room.players.len() >= room.max_players {
         return Err(JoinError::Full);
     }
     // S'abonner AVANT de diffuser → ce socket reçoit aussi le RoomState.
@@ -864,6 +894,7 @@ fn room_state(room: &Room) -> ServerEvent {
         target_text: room.target_text.clone(),
         code: room.code.clone(),
         text_source: room.text_source,
+        max_players: room.max_players as u32,
     }
 }
 
@@ -1634,6 +1665,74 @@ mod tests {
         }
         join(&rooms, "c1", "p0"); // déjà là : accepté, sans nouvelle place
         assert_eq!(players_of(&rooms, "c1").len(), MAX_PLAYERS);
+    }
+
+    // --- Taille max de la Room (issue #62) ----------------------------------------
+
+    fn max_of(rooms: &Rooms, key: &str) -> usize {
+        rooms.lock().unwrap().get(key).unwrap().max_players
+    }
+
+    #[test]
+    fn seul_l_owner_regle_la_taille_max() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1"); // owner
+        join(&rooms, "c1", "p2");
+
+        assert!(!set_max_players(&rooms, "c1", "p2", 4));
+        assert_eq!(max_of(&rooms, "c1"), MAX_PLAYERS); // inchangé
+
+        assert!(set_max_players(&rooms, "c1", "p1", 4));
+        assert_eq!(max_of(&rooms, "c1"), 4);
+    }
+
+    #[test]
+    fn la_taille_max_ne_change_pas_pendant_une_course() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        start_race(&rooms, "c1", "p1");
+        assert!(!set_max_players(&rooms, "c1", "p1", 2));
+        assert_eq!(max_of(&rooms, "c1"), MAX_PLAYERS);
+    }
+
+    #[test]
+    fn une_taille_hors_plage_est_refusee() {
+        // Frontière de confiance : 0 fermerait la Room, 999 casserait la piste des autres.
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        for max in [0, 1, 9, 999] {
+            assert!(!set_max_players(&rooms, "c1", "p1", max));
+        }
+        for max in MIN_PLAYERS..=MAX_PLAYERS {
+            assert!(set_max_players(&rooms, "c1", "p1", max));
+        }
+    }
+
+    #[test]
+    fn la_taille_reglee_remplace_le_plafond_dur() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        set_max_players(&rooms, "c1", "p1", 2);
+        join(&rooms, "c1", "p2"); // 2e place : encore libre
+
+        assert_eq!(join_channel(&rooms, "c1", "p3", ident("p3")).err(), Some(JoinError::Full));
+        assert_eq!(players_of(&rooms, "c1").len(), 2);
+    }
+
+    #[test]
+    fn baisser_la_taille_sous_le_nombre_de_presents_n_expulse_personne() {
+        // On ne sort pas quelqu'un du lobby par un réglage : la place se libère quand il
+        // part de lui-même. Seules les ARRIVÉES sont refusées.
+        let rooms = new_rooms();
+        for i in 0..4 {
+            join(&rooms, "c1", &format!("p{i}"));
+        }
+        assert!(set_max_players(&rooms, "c1", "p0", 2));
+        assert_eq!(players_of(&rooms, "c1").len(), 4); // les 4 présents restent
+
+        assert_eq!(join_channel(&rooms, "c1", "p9", ident("p9")).err(), Some(JoinError::Full));
+        join(&rooms, "c1", "p0"); // reconnexion d'un présent : toujours acceptée
+        assert_eq!(players_of(&rooms, "c1").len(), 4);
     }
 
     #[test]
