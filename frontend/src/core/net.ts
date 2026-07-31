@@ -65,6 +65,8 @@ export interface Identity {
 /** Un présent, tel que la piste et le podium le dessinent. */
 export interface PlayerEntry extends Identity {
   playerId: string;
+  /** Prêt pour le ready-check (issue #63). Sans objet quand le réglage est désactivé. */
+  ready: boolean;
 }
 
 /**
@@ -87,6 +89,10 @@ export type ClientEvent =
   | { type: "SetMaxPlayers"; max: number }
   // owner uniquement, hors course, 3/5/7/10 (le serveur rejette le reste)
   | { type: "SetCountdown"; seconds: number }
+  // owner uniquement, hors course. Vide les prêts déjà marqués (nouveau départ à zéro).
+  | { type: "SetReadyCheck"; enabled: boolean }
+  // n'importe quel présent, hors course. Sans effet sur StartRace si ready-check est off.
+  | { type: "SetReady"; ready: boolean }
   | { type: "StartRace" } // owner uniquement (le serveur rejette les autres)
   | { type: "Progress"; charsDone: number }
   // Le serveur possède seed/texte/config : Finish n'envoie que le log + la durée.
@@ -112,6 +118,8 @@ export type ServerEvent =
       maxPlayers: number;
       /** Durée du décompte avant le départ — lue par TOUT le lobby, pas que par l'hôte. */
       countdownS: number;
+      /** Ready-check activé ou non. L'état "prêt" de chacun se lit sur `players[].ready`. */
+      readyCheck: boolean;
     }
   | { type: "RaceStart"; startAtEpochMs: number }
   | { type: "PlayerProgress"; playerId: string; charsDone: number }

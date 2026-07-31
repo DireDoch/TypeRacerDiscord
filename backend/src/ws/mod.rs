@@ -24,7 +24,7 @@
 
 pub mod protocol;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -124,6 +124,12 @@ pub struct Room {
     pub max_players: usize,
     /// Durée du décompte avant le départ, réglée par l'owner parmi `COUNTDOWN_VALUES`.
     pub countdown_s: u32,
+    /// Ready-check activé par l'owner (issue #63) — par défaut désactivé, comportement
+    /// de départ inchangé (voir `all_present_ready`).
+    pub ready_check: bool,
+    /// Présents s'étant marqués prêts. Vidé à chaque bascule de `ready_check` et à
+    /// chaque retour en Lobby (`end_race`) : chaque manche redemande une confirmation.
+    pub ready: HashSet<PlayerId>,
     pub state: RaceState,
     /// Diffusion des ServerEvent vers tous les sockets du salon.
     pub tx: broadcast::Sender<ServerEvent>,
@@ -195,6 +201,12 @@ pub async fn handle_socket(
             }
             Ok(ClientEvent::SetCountdown { seconds }) => {
                 set_countdown(&rooms, &key, &player_id, seconds);
+            }
+            Ok(ClientEvent::SetReadyCheck { enabled }) => {
+                set_ready_check(&rooms, &key, &player_id, enabled);
+            }
+            Ok(ClientEvent::SetReady { ready }) => {
+                set_ready(&rooms, &key, &player_id, ready);
             }
             Ok(ClientEvent::StartRace) => start_race(&rooms, &key, &player_id),
             Ok(ClientEvent::Progress { chars_done }) => {
@@ -335,6 +347,8 @@ fn new_room(key: RoomKey, code: Option<String>, owner: &str) -> Room {
         text_source: TextSource::default(),
         max_players: MAX_PLAYERS,
         countdown_s: DEFAULT_COUNTDOWN_S,
+        ready_check: false,
+        ready: HashSet::new(),
         state: RaceState::Lobby,
         tx,
     }
@@ -457,6 +471,45 @@ fn set_countdown(rooms: &Rooms, key: &str, player_id: &str, seconds: u32) -> boo
     true
 }
 
+/// SetReadyCheck : accepté du seul owner, hors course. Vide les prêts déjà marqués à
+/// chaque bascule (ON ou OFF) — une activation repart de zéro, une désactivation ne
+/// laisse pas des prêts stales si le réglage est réactivé plus tard.
+fn set_ready_check(rooms: &Rooms, key: &str, player_id: &str, enabled: bool) -> bool {
+    let mut rooms = rooms.lock().unwrap();
+    let Some(room) = rooms.get_mut(key) else { return false };
+    if room.owner != player_id || room.state.is_racing() {
+        return false; // non-owner, ou course en cours : ignoré
+    }
+    room.ready_check = enabled;
+    room.ready.clear();
+    let _ = room.tx.send(room_state(room));
+    true
+}
+
+/// SetReady : n'importe quel présent se marque prêt/pas prêt, hors course. Un absent
+/// (parti entre-temps) ne peut pas se déclarer prêt sur une Room qu'il a quittée.
+fn set_ready(rooms: &Rooms, key: &str, player_id: &str, ready: bool) -> bool {
+    let mut rooms = rooms.lock().unwrap();
+    let Some(room) = rooms.get_mut(key) else { return false };
+    if !room.players.iter().any(|p| p == player_id) || room.state.is_racing() {
+        return false;
+    }
+    if ready {
+        room.ready.insert(player_id.to_string());
+    } else {
+        room.ready.remove(player_id);
+    }
+    let _ = room.tx.send(room_state(room));
+    true
+}
+
+/// Tous les présents sont prêts, ou le ready-check est désactivé (issue #63) — la garde
+/// que `start_race` ajoute à ses conditions habituelles (owner, hors course). Ready-check
+/// OFF (défaut) : toujours vrai, comportement de départ inchangé.
+fn all_present_ready(room: &Room) -> bool {
+    !room.ready_check || room.players.iter().all(|p| room.ready.contains(p))
+}
+
 /// Inscrit la présence, s'abonne à la diffusion, puis re-diffuse RoomState à tous. Le
 /// lock std n'est jamais tenu à travers un await (broadcast::send/subscribe sont
 /// synchrones). Rejoindre deux fois est idempotent et ne consomme pas de place.
@@ -516,6 +569,7 @@ fn leave_room(rooms: &Rooms, key: &str, player_id: &str) -> bool {
     if let Some(room) = rooms.get_mut(key) {
         room.players.retain(|p| p != player_id);
         room.identities.remove(player_id); // jamais persistée, oubliée en partant
+        room.ready.remove(player_id); // un absent ne reste pas "prêt" sans le savoir
         // Abandon total (y compris juste après le départ, sans état "décompte" dédié
         // côté serveur — voir CONTEXT.md) : clôt la course AVANT de retirer une Room
         // désormais vide, sinon elle reste gelée en RaceState::Racing (issue #23).
@@ -614,13 +668,14 @@ pub fn spawn_watchdog(rooms: Rooms, quotes: Arc<QuoteClient>) {
     });
 }
 
-/// StartRace : accepté du seul owner, hors course en cours. Fige les partants,
-/// fixe t=0 (horloge murale serveur) et le diffuse.
+/// StartRace : accepté du seul owner, hors course en cours, et seulement si le
+/// ready-check (s'il est activé) est satisfait par tous les présents (issue #63). Fige
+/// les partants, fixe t=0 (horloge murale serveur) et le diffuse.
 fn start_race(rooms: &Rooms, key: &str, player_id: &str) {
     let mut rooms = rooms.lock().unwrap();
     if let Some(room) = rooms.get_mut(key) {
-        if room.owner != player_id || room.state.is_racing() {
-            return; // non-owner ou course déjà lancée : ignoré
+        if room.owner != player_id || room.state.is_racing() || !all_present_ready(room) {
+            return; // non-owner, course déjà lancée, ou ready-check pas encore satisfait
         }
         let start = now_epoch_ms();
         room.state = RaceState::Racing {
@@ -848,6 +903,9 @@ fn end_race(room: &mut Room) {
     let _ = room.tx.send(ServerEvent::RaceOver { results, play_of_the_game });
 
     room.state = RaceState::Lobby;
+    // Nouvelle manche = nouvelle confirmation (issue #63) : les prêts de la manche
+    // précédente ne valent pas pour celle-ci, même pour un présent qui n'a pas bougé.
+    room.ready.clear();
     // Texte neuf IMMÉDIAT, et toujours des mots : la Room doit rester jouable sans
     // aller-retour réseau (l'owner peut relancer dès l'écran RaceOver). Si la Source est
     // Quote, `spawn_refresh_text` remplace ce texte dès que la citation arrive — c'est
@@ -911,6 +969,7 @@ fn room_state(room: &Room) -> ServerEvent {
                     .filter(|n| !n.is_empty())
                     .unwrap_or_else(|| id.clone()),
                 avatar_hash: ident.and_then(|i| i.avatar_hash.clone()),
+                ready: room.ready.contains(id),
             }
         })
         .collect();
@@ -923,6 +982,7 @@ fn room_state(room: &Room) -> ServerEvent {
         text_source: room.text_source,
         max_players: room.max_players as u32,
         countdown_s: room.countdown_s,
+        ready_check: room.ready_check,
     }
 }
 
@@ -1801,6 +1861,105 @@ mod tests {
         for seconds in COUNTDOWN_VALUES {
             assert!(set_countdown(&rooms, "c1", "p1", seconds));
         }
+    }
+
+    // --- Ready-check (issue #63) --------------------------------------------------
+
+    fn ready_check_of(rooms: &Rooms, key: &str) -> bool {
+        rooms.lock().unwrap().get(key).unwrap().ready_check
+    }
+
+    #[test]
+    fn seul_l_owner_active_le_ready_check() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1"); // owner
+        join(&rooms, "c1", "p2");
+
+        assert!(!set_ready_check(&rooms, "c1", "p2", true));
+        assert!(!ready_check_of(&rooms, "c1")); // inchangé
+
+        assert!(set_ready_check(&rooms, "c1", "p1", true));
+        assert!(ready_check_of(&rooms, "c1"));
+    }
+
+    #[test]
+    fn le_ready_check_ne_change_pas_pendant_une_course() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        start_race(&rooms, "c1", "p1");
+        assert!(!set_ready_check(&rooms, "c1", "p1", true));
+        assert!(!ready_check_of(&rooms, "c1"));
+    }
+
+    #[test]
+    fn ready_check_off_le_depart_reste_immediat() {
+        // Comportement par défaut inchangé : personne n'a rien marqué "prêt", ça démarre
+        // quand même — c'est tout le point de la garde `all_present_ready`.
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p2");
+        start_race(&rooms, "c1", "p1");
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    }
+
+    #[test]
+    fn start_race_attend_que_tous_soient_prets() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1"); // owner
+        join(&rooms, "c1", "p2");
+        set_ready_check(&rooms, "c1", "p1", true);
+
+        start_race(&rooms, "c1", "p1"); // personne n'est prêt : ignoré
+        assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+
+        assert!(set_ready(&rooms, "c1", "p1", true));
+        start_race(&rooms, "c1", "p1"); // p2 pas encore prêt : toujours ignoré
+        assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+
+        assert!(set_ready(&rooms, "c1", "p2", true));
+        start_race(&rooms, "c1", "p1"); // tous prêts : accepté
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    }
+
+    #[test]
+    fn set_ready_refuse_un_absent_et_pendant_une_course() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        assert!(!set_ready(&rooms, "c1", "spectateur", true)); // jamais rejoint
+
+        start_race(&rooms, "c1", "p1");
+        assert!(!set_ready(&rooms, "c1", "p1", true)); // course en cours
+    }
+
+    #[test]
+    fn la_bascule_du_ready_check_vide_les_prets() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        set_ready_check(&rooms, "c1", "p1", true);
+        set_ready(&rooms, "c1", "p1", true);
+
+        set_ready_check(&rooms, "c1", "p1", false);
+        set_ready_check(&rooms, "c1", "p1", true); // réactivé : repart de zéro
+        start_race(&rooms, "c1", "p1"); // p1 n'est plus marqué prêt : ignoré
+        assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    }
+
+    #[test]
+    fn une_nouvelle_manche_redemande_la_confirmation() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        set_ready_check(&rooms, "c1", "p1", true);
+        set_ready(&rooms, "c1", "p1", true);
+        start_race(&rooms, "c1", "p1");
+        assert_eq!(record(&rooms, "c1", done("p1", 60.0)), FinishOutcome::RaceOver);
+
+        // Retour au Lobby : p1 doit se remarquer prêt pour relancer.
+        start_race(&rooms, "c1", "p1");
+        assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+
+        assert!(set_ready(&rooms, "c1", "p1", true));
+        start_race(&rooms, "c1", "p1");
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
     }
 
     #[test]
