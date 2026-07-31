@@ -13,3 +13,7 @@ Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `
 ### Domain docs
 
 Single-context: `CONTEXT.md` at the repo root + ADRs in `Docs/adr/`. See `Docs/agents/domain.md`.
+
+### Git workflow
+
+`develop` is the integration branch: feature branches squash-merge into it, `develop` merges to `main` on release. Read before every commit/PR. See `Docs/agents/git-workflow.md`.
