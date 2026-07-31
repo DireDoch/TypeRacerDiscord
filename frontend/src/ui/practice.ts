@@ -14,7 +14,13 @@ import { RunClock } from "../core/clock";
 import { FreeInput } from "../core/input/free-input";
 import type { InputController } from "../core/input/controller";
 import { detectDifficultyFailure, type Difficulty, type DifficultyFailure } from "../core/difficulty";
-import { QUICK_RESTART_DOM_KEY, QUICK_RESTART_LABELS, loadPreferences } from "../core/preferences";
+import {
+  QUICK_RESTART_DOM_KEY,
+  QUICK_RESTART_LABELS,
+  TIME_WARNING_SECONDS,
+  loadPreferences,
+} from "../core/preferences";
+import { playErrorSound, playTimeWarningSound } from "../core/sound";
 import { generateWithRng, initialWordCount } from "../core/text-gen";
 import { generateDrillText } from "../core/text-gen/drill";
 import { Rng } from "../core/text-gen/rng";
@@ -61,6 +67,8 @@ export class Practice {
   private difficulty: Difficulty = "normal";
   /** Point d'échec Expert/Master du Run courant, `null` sinon. */
   private failure: DifficultyFailure | null = null;
+  /** Avertissement de fin (issue #66) : au plus une fois par Run. */
+  private warningPlayed = false;
 
   private phase: RunPhase = "idle";
   private seed = 0;
@@ -127,6 +135,7 @@ export class Practice {
     this.quoteAuthor = undefined;
     this.quoteWikipediaUrl = undefined;
     this.failure = null;
+    this.warningPlayed = false;
     this.loadError = false;
     this.loadErrorIsIdentity = false;
     this.drillNoProfile = false;
@@ -238,6 +247,11 @@ export class Practice {
   }
 
   private handleTypingKey(e: KeyboardEvent): void {
+    // Son sur erreur (issue #66) : évalué AVANT handleKey — stop-on-error (#65) peut
+    // rejeter la frappe (buffer inchangé), le retour audio doit quand même se produire.
+    const prefs = loadPreferences();
+    if (prefs.soundOnError && this.isWrongKeystroke(e.key)) playErrorSound(prefs.soundVolume);
+
     const k: Keystroke | null = this.controller.handleKey(e.key, e.ctrlKey, this.clock.elapsed());
     if (k) this.log.push(k);
     // Difficulté (issue #64, ADR 0013) : évaluée sur le log free-input, indépendamment
@@ -256,6 +270,24 @@ export class Practice {
     this.retopIfNeeded(); // Time infini : réalimente si le curseur approche du bout.
     this.renderWords();
     this.updateLiveBar(this.clock.elapsed());
+  }
+
+  /**
+   * Une frappe est "fausse" pour le son d'erreur (issue #66) : un caractère qui ne
+   * correspond pas à la position courante, ou un espace prématuré (mot pas encore
+   * exact). Zen n'a pas de cible : rien n'y est jamais faux. Pure vis-à-vis de l'état
+   * AVANT la frappe (appelée avant `handleKey`).
+   */
+  private isWrongKeystroke(key: string): boolean {
+    if (this.config.mode === "zen") return false;
+    const view = this.controller.view();
+    const tgt = this.targetWords[view.wordIndex] ?? "";
+    if (key === " ") return view.typed.length > 0 && view.typed !== tgt;
+    if (key.length === 1) {
+      const pos = view.typed.length;
+      return !(pos < tgt.length && key === tgt[pos]);
+    }
+    return false;
   }
 
   /**
@@ -279,9 +311,24 @@ export class Practice {
       return;
     }
 
+    this.maybePlayTimeWarning(elapsed);
     this.retopIfNeeded(); // Time infini : alimente le flux de mots.
     this.updateLiveBar(elapsed);
     this.rafId = requestAnimationFrame(() => this.loop());
+  }
+
+  /** Avertissement de fin (issue #66) : Time à durée fixe seulement, au plus une fois
+   *  par Run — sans quoi il rejouerait à chaque frame une fois le seuil franchi. */
+  private maybePlayTimeWarning(elapsed: number): void {
+    if (this.warningPlayed || this.config.mode !== "time" || this.config.modeValue <= 0) return;
+    const prefs = loadPreferences();
+    const warnAtS = TIME_WARNING_SECONDS[prefs.timeWarning];
+    if (warnAtS === null) return;
+    const remainingS = this.config.modeValue - elapsed / 1000;
+    if (remainingS <= warnAtS) {
+      this.warningPlayed = true;
+      playTimeWarningSound(prefs.soundVolume);
+    }
   }
 
   private async finish(): Promise<void> {

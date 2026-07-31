@@ -61,13 +61,36 @@ export const STOP_ON_ERROR_LABELS: Record<StopOnError, string> = {
   word: "Mot",
 };
 
+/** Avertissement sonore avant la fin d'un test chronométré (issue #66) — Time
+ *  uniquement, `off` par défaut (aucun bruit non demandé). */
+export type TimeWarning = "off" | "1s" | "3s" | "5s" | "10s";
+export const TIME_WARNING_VALUES: TimeWarning[] = ["off", "1s", "3s", "5s", "10s"];
+export const TIME_WARNING_LABELS: Record<TimeWarning, string> = {
+  off: "Désactivé",
+  "1s": "1 s",
+  "3s": "3 s",
+  "5s": "5 s",
+  "10s": "10 s",
+};
+/** Secondes restantes déclenchant l'avertissement, `null` si désactivé. */
+export const TIME_WARNING_SECONDS: Record<TimeWarning, number | null> = {
+  off: null,
+  "1s": 1,
+  "3s": 3,
+  "5s": 5,
+  "10s": 10,
+};
+
 export interface Preferences {
   fontFamily: FontFamily;
   quickRestartKey: QuickRestartKey;
   stopOnError: StopOnError;
+  soundVolume: number;
+  soundOnError: boolean;
+  timeWarning: TimeWarning;
 }
 
-/** Défaut + domaine de validité d'une clé. Les issues suivantes (#66-#70)
+/** Défaut + domaine de validité d'une clé. Les issues suivantes (#67-#70)
  *  ajoutent leurs clés ICI : c'est le seul endroit à toucher pour qu'une
  *  Preference soit typée, validée, persistée et réinitialisable. */
 const SPEC: { [K in keyof Preferences]: { default: Preferences[K]; valid: (v: unknown) => boolean } } = {
@@ -82,6 +105,18 @@ const SPEC: { [K in keyof Preferences]: { default: Preferences[K]; valid: (v: un
   stopOnError: {
     default: "off",
     valid: (v) => typeof v === "string" && (STOP_ON_ERROR_VALUES as string[]).includes(v),
+  },
+  soundVolume: {
+    default: 0.5,
+    valid: (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1,
+  },
+  soundOnError: {
+    default: false,
+    valid: (v) => typeof v === "boolean",
+  },
+  timeWarning: {
+    default: "off",
+    valid: (v) => typeof v === "string" && (TIME_WARNING_VALUES as string[]).includes(v),
   },
 };
 
