@@ -14,6 +14,7 @@ import { RunClock } from "../core/clock";
 import { FreeInput } from "../core/input/free-input";
 import type { InputController } from "../core/input/controller";
 import { detectDifficultyFailure, type Difficulty, type DifficultyFailure } from "../core/difficulty";
+import { QUICK_RESTART_DOM_KEY, QUICK_RESTART_LABELS, loadPreferences } from "../core/preferences";
 import { generateWithRng, initialWordCount } from "../core/text-gen";
 import { generateDrillText } from "../core/text-gen/drill";
 import { Rng } from "../core/text-gen/rng";
@@ -27,6 +28,7 @@ import { wordsHtml, zenHtml, slideWindow, placeCaret } from "./typing-zone";
 // 0 = Time infini (horloge désactivée, mots en flux continu, fin sur Shift+Enter).
 const TIME_VALUES = [15, 30, 60, 120, 0];
 const WORD_VALUES = [10, 25, 50];
+
 
 /** Difficulté (issue #64, ADR 0013) : hors `RunConfig` — ne définit PAS le Config
  *  bucket (aucun PB n'y est comparé), c'est un mode de jeu qui échoue le Run avant
@@ -192,7 +194,7 @@ export class Practice {
       this.targetWords = [];
     }
 
-    this.controller = new FreeInput(this.targetWords);
+    this.controller = new FreeInput(this.targetWords, loadPreferences().stopOnError);
     this.render();
   }
 
@@ -326,17 +328,17 @@ export class Practice {
   // --- Clavier ----------------------------------------------------------------
 
   private onKeyDown(e: KeyboardEvent): void {
-    // Tab = recommencer, depuis n'importe quel état.
-    if (e.key === "Tab") {
+    // Redémarrage rapide (issue #65) : depuis n'importe quel état. "off" (défaut) ne
+    // câble aucun raccourci — Tab redevient la navigation standard entre les contrôles,
+    // et le bouton "Rejouer" des résultats reste la seule voie.
+    const restartKey = QUICK_RESTART_DOM_KEY[loadPreferences().quickRestartKey];
+    if (restartKey !== null && e.key === restartKey && !e.shiftKey) {
       e.preventDefault();
       void this.reset();
       return;
     }
 
-    if (this.phase === "finished") {
-      if (e.key === "Enter") void this.reset();
-      return;
-    }
+    if (this.phase === "finished") return;
 
     const isTypingKey = e.key === "Backspace" || e.key === " " || e.key.length === 1;
 
@@ -484,7 +486,10 @@ export class Practice {
         : drillLike
           ? "Impossible de charger ton profil."
           : "Impossible de charger la citation.";
-      return `<div class="loading">${base} Tab pour réessayer.</div>`;
+      // Redémarrage rapide (issue #65) peut être désactivé : la retentative reste
+      // toujours possible en re-cliquant un mode dans la barre de config.
+      const retry = this.quickRestartHint();
+      return `<div class="loading">${base} ${retry ? `${retry} pour réessayer.` : "Change de mode pour réessayer."}</div>`;
     }
     const view = this.controller.view();
     if (this.config.mode === "zen") {
@@ -495,19 +500,33 @@ export class Practice {
     return wordsHtml(this.targetWords, view, this.phase === "running");
   }
 
+  /** Libellé du Redémarrage rapide (issue #65) configuré, `null` si désactivé — les
+   *  indices clavier de `hintText` disparaissent alors, seuls les contrôles cliquables
+   *  (barre de config, bouton "Rejouer" des résultats) restent mentionnés. */
+  private quickRestartHint(): string | null {
+    const key = loadPreferences().quickRestartKey;
+    return key === "off" ? null : QUICK_RESTART_LABELS[key];
+  }
+
   private hintText(): string {
+    const restartWord = this.quickRestartHint();
     if (this.phase === "idle") {
       if (this.config.mode === "zen") return "Clique ou tape pour démarrer · Shift+Enter pour terminer";
+      if (!restartWord) return "Clique ou tape pour démarrer";
       const regen =
         this.config.mode === "quotes"
-          ? "Tab pour une autre citation"
+          ? `${restartWord} pour une autre citation`
           : this.isDrillLike()
-            ? "Tab pour un autre texte"
-            : "Tab pour regénérer";
+            ? `${restartWord} pour un autre texte`
+            : `${restartWord} pour regénérer`;
       return `Clique ou tape pour démarrer · ${regen}`;
     }
     if (this.phase === "running") {
-      return this.isEndless() ? "Shift+Enter pour terminer · Tab pour recommencer" : "Tab pour recommencer";
+      const parts = [
+        this.isEndless() ? "Shift+Enter pour terminer" : "",
+        restartWord ? `${restartWord} pour recommencer` : "",
+      ].filter(Boolean);
+      return parts.join(" · ");
     }
     return "";
   }

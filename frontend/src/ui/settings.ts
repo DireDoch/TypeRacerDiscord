@@ -18,6 +18,10 @@
 import {
   FONT_KEYS,
   FONT_STACKS,
+  QUICK_RESTART_KEYS,
+  QUICK_RESTART_LABELS,
+  STOP_ON_ERROR_LABELS,
+  STOP_ON_ERROR_VALUES,
   loadPreferences,
   setPreference,
   type Preferences,
@@ -69,6 +73,33 @@ export function sections(prefs: Preferences): SettingSection[] {
               label: FONT_STACKS[key].label,
               font: FONT_STACKS[key].stack,
             })),
+          },
+        },
+      ],
+    },
+    {
+      title: "Solo",
+      rows: [
+        {
+          key: "quickRestartKey",
+          label: "Redémarrage rapide",
+          description:
+            "Redémarre Practice depuis n'importe quel écran, sans passer par un bouton. Choisir Tab lui retire sa navigation standard entre les contrôles — Échap et Entrée la laissent intacte.",
+          control: {
+            kind: "segmented",
+            value: prefs.quickRestartKey,
+            options: QUICK_RESTART_KEYS.map((key) => ({ value: key, label: QUICK_RESTART_LABELS[key] })),
+          },
+        },
+        {
+          key: "stopOnError",
+          label: "Stop en cas d'erreur",
+          description:
+            "Lettre bloque toute frappe fausse avant qu'elle n'apparaisse. Mot laisse taper librement mais bloque l'espace tant que le mot courant n'est pas exact.",
+          control: {
+            kind: "segmented",
+            value: prefs.stopOnError,
+            options: STOP_ON_ERROR_VALUES.map((key) => ({ value: key, label: STOP_ON_ERROR_LABELS[key] })),
           },
         },
       ],

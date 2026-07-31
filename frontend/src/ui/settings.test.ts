@@ -68,4 +68,12 @@ describe("sections — déclaration des réglages", () => {
       }
     }
   });
+
+  it("la section Solo (issue #65) reflète quickRestartKey et stopOnError", () => {
+    const solo = sections({ ...defaultPreferences(), quickRestartKey: "esc", stopOnError: "word" }).find(
+      (s) => s.title === "Solo",
+    );
+    expect(solo?.rows.find((r) => r.key === "quickRestartKey")?.control.value).toBe("esc");
+    expect(solo?.rows.find((r) => r.key === "stopOnError")?.control.value).toBe("word");
+  });
 });
