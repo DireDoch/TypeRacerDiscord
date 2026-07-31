@@ -21,16 +21,27 @@ Read this before running `git commit`, `git push`, or `gh pr`/`gh issue` in this
 
 ## Releasing: `develop` → `main`
 
-When the work sitting on `develop` is stable and ready to ship:
+**`main` only moves when the user explicitly asks for a release, by name, in that specific
+moment.** Work accumulates on `develop` indefinitely between releases — there is no
+default cadence, and "continue" / "wrap this up" / "merge everything" do **not** authorize
+touching `main`. Only an explicit release request does (e.g. "merge develop to main",
+"let's release v1.2.0"). If in doubt, ask before opening or merging anything against `main`.
+
+A release is versioned — `1.x.x` at minimum (this project hasn't shipped a `0.x` in the
+tag sense; treat the first release to `main` under this workflow as `v1.0.0` or later).
+When the user does ask for one:
 
 ```
-gh pr create --base main --head develop --title "release: ..."
+gh pr create --base main --head develop --title "release: vX.Y.Z — ..."
 ```
 
-Merge as a **regular merge, not a squash** — the individual features are already squashed commits on `develop`; squashing again would collapse that history into one opaque commit.
+Merge as a **regular merge, not a squash** — the individual features are already squashed
+commits on `develop`; squashing again would collapse that history into one opaque commit.
+Tag it afterwards: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 
 ## Never
 
-- Push directly to `main` or `develop`.
+- Merge or push to `main` without the user explicitly requesting that release, in the moment.
+- Push directly to `main` or `develop` (bypassing a PR).
 - Force-push either.
 - Skip CI or hooks (`--no-verify`) to force a merge through.

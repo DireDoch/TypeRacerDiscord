@@ -16,4 +16,4 @@ Single-context: `CONTEXT.md` at the repo root + ADRs in `Docs/adr/`. See `Docs/a
 
 ### Git workflow
 
-`develop` is the integration branch: feature branches squash-merge into it, `develop` merges to `main` on release. Read before every commit/PR. See `Docs/agents/git-workflow.md`.
+`develop` is the integration branch: feature branches squash-merge into it. `main` only moves on an explicit, user-requested versioned release (v1.x+) — never merge/push to `main` on your own initiative, "continue" doesn't count as that request. Read before every commit/PR. See `Docs/agents/git-workflow.md`.
