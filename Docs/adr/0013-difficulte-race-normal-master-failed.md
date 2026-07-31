@@ -11,29 +11,38 @@ frappe plus stricte, en Practice comme en Race. Deux niveaux au-dessus de Normal
 ## Où la logique vit
 
 Les deux conditions sont évaluées **directement sur le log de frappes**, en pur — jamais
-en modifiant un contrôleur d'entrée. Practice utilise déjà FreeInput (curseur libre) ;
-Race utilise déjà un contrôleur bloquant (correction obligatoire avant d'avancer). La
-Difficulté se pose PAR-DESSUS ces deux modèles sans les toucher :
-`core/difficulty.ts::detectDifficultyFailure` rejoue le log au fil de l'eau (même modèle
+en modifiant un contrôleur d'entrée. Practice et Race utilisent aujourd'hui tous les deux
+FreeInput (curseur libre) : le contrôleur bloquant que le glossaire annonçait pour Race
+(« error must be corrected before advancing ») n'a en réalité **jamais été câblé** — Race
+tape en flux libre exactement comme Practice, la « correction obligatoire » de CONTEXT.md
+décrit une intention qui n'a jamais atterri dans le code. Le mécanisme d'échec de cette
+ADR ne dépend donc d'AUCUN contrôleur particulier : la Difficulté se pose PAR-DESSUS le
+log de frappes, quel que soit le contrôleur qui le produit —
+`core/difficulty.ts::detectDifficultyFailure` rejoue ce log au fil de l'eau (même modèle
 de pile que `stats/scoreboard.ts`) et renvoie le premier point d'échec, ou `null`. Mirroré
 bit pour bit en Rust (`domain/difficulty.rs`), avec des vecteurs de parité partagés
 (`test-vectors/difficulty.json`) — même convention que le Scoreboard (issue #19).
 
 ## Pourquoi Expert n'existe pas en Race
 
-Le contrôleur bloquant de Race force déjà une correction avant de laisser le joueur
-avancer : on ne peut, par construction, jamais soumettre un mot encore faux. La condition
-de déclenchement d'Expert est donc **inatteignable** en Race — l'option n'y est pas
-proposée, ce n'est pas un oubli.
+Le PRD #59 justifiait l'absence d'Expert en Race par le contrôleur bloquant qui rendrait
+sa condition de déclenchement inatteignable. Ce contrôleur n'existant pas (voir
+ci-dessus), la vraie raison est plus simple : Expert échoue au **mot soumis**, et Race n'a
+qu'un adversaire — le texte — jamais un classement à départager sur une notion de mot
+« encore faux » qui viendrait s'ajouter à Master. Master seul (échec à la frappe, le
+signal le plus strict et le plus immédiat) est le niveau qui a du sens comme Réglage de
+salon, appliqué à tous les Players à la fois. Expert reste une nuance solo, propre à
+Practice, sans qu'aucune infrastructure supplémentaire ne soit nécessaire pour l'exclure.
 
 ## Pourquoi Master doit être autoritaire en Race
 
 Practice se fait confiance (comme le reste du Scoreboard client). Race ne se fait
 confiance sur RIEN — le Finish est déjà recalculé côté serveur contre son propre texte
-(seed/texte lui appartiennent). Master doit suivre la même règle : le serveur évalue
-`detect_difficulty_failure` **avant** de laisser le contrôleur bloquant faire son travail
-habituel — un joueur sous Master qui fait une faute échoue la course, il n'est jamais
-mis en attente d'une correction comme le contrôleur bloquant le ferait sinon.
+(seed/texte lui appartiennent). Master doit suivre la même règle : le CLIENT détecte
+localement (même `detectDifficultyFailure` que Practice) sa 1re frappe incorrecte et
+arrête d'y toucher, mais le SERVEUR rejoue le log contre son propre texte
+(`ws/mod.rs::fail_race`) avant d'enregistrer quoi que ce soit — une déclaration non
+confirmée par le recompute est rejetée, exactement comme un `Finish` mensonger le serait.
 
 ## L'issue Failed
 

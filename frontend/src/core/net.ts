@@ -7,6 +7,9 @@
 // =============================================================================
 
 import type { Keystroke, PerSecondPoint } from "./types";
+import type { Difficulty } from "./difficulty";
+
+export type { Difficulty };
 
 /**
  * L'arrivée d'un partant, telle que le podium l'affiche (ADR 0010). Le serveur possédait
@@ -20,6 +23,10 @@ export interface RaceResult {
   durationMs: number;
   /** Abandon (ou déconnexion) : pas de série, donc pas de graphe à déplier. */
   forfeit: boolean;
+  /** Échec Difficulté Master (issue #71, ADR 0013) — distinct d'un Abandon (involontaire),
+   *  mêmes mécaniques par ailleurs. Pourcentage affiché (« failed (X%) »), jamais utilisé
+   *  pour classer. `null` sinon, jamais en même temps que `forfeit`. */
+  failedPercent: number | null;
   perSecond: PerSecondPoint[];
 }
 
@@ -48,6 +55,10 @@ export const WORDS_LENGTHS = [15, 30, 50] as const;
 
 /** Miroir de `ws/mod.rs` : tailles de Room réglables. 8 = plafond dur et défaut. */
 export const ROOM_SIZES = [2, 3, 4, 5, 6, 7, 8] as const;
+
+/** Difficultés offertes comme Réglage de salon (ADR 0013) — Expert exclu, sa condition
+ *  de déclenchement y est inatteignable (voir `ws/mod.rs::set_difficulty`). */
+export const ROOM_DIFFICULTIES: Difficulty[] = ["normal", "master"];
 
 /** Miroir de `ws/mod.rs` : durées de décompte réglables (ADR 0007). 7 = défaut. */
 export const COUNTDOWN_VALUES = [3, 5, 7, 10] as const;
@@ -93,6 +104,9 @@ export type ClientEvent =
   | { type: "SetReadyCheck"; enabled: boolean }
   // n'importe quel présent, hors course. Sans effet sur StartRace si ready-check est off.
   | { type: "SetReady"; ready: boolean }
+  // owner uniquement, hors course. Normal | Master seulement — Expert n'est pas un
+  // Réglage de salon (ADR 0013), le serveur rejette toute autre valeur.
+  | { type: "SetDifficulty"; difficulty: Difficulty }
   | { type: "StartRace" } // owner uniquement (le serveur rejette les autres)
   | { type: "Progress"; charsDone: number }
   // Le serveur possède seed/texte/config : Finish n'envoie que le log + la durée.
@@ -100,6 +114,9 @@ export type ClientEvent =
   // Abandon VOLONTAIRE de la course en cours — le joueur RESTE au lobby (distinct de
   // LeaveRoom, qui quitte la Room). Enregistré comme une arrivée en abandon côté serveur.
   | { type: "Forfeit" }
+  // Échec Difficulté Master détecté localement (ADR 0013) : le serveur REJOUE le log
+  // contre SON texte avant d'y croire — jamais fait confiance sur la seule parole du client.
+  | { type: "Fail"; keystrokes: Keystroke[] }
   | { type: "LeaveRoom" };
 
 /** Serveur → Client. */
@@ -120,11 +137,14 @@ export type ServerEvent =
       countdownS: number;
       /** Ready-check activé ou non. L'état "prêt" de chacun se lit sur `players[].ready`. */
       readyCheck: boolean;
+      /** Difficulté de la Room (Normal | Master, issue #71, ADR 0013). */
+      difficulty: Difficulty;
     }
   | { type: "RaceStart"; startAtEpochMs: number }
   | { type: "PlayerProgress"; playerId: string; charsDone: number }
-  // `forfeit` : abandon — la piste affiche « abandon » plutôt que « 0 wpm ».
-  | { type: "PlayerFinished"; playerId: string; wpm: number; forfeit: boolean }
+  // `forfeit` : abandon — la piste affiche « abandon » plutôt que « 0 wpm ». `failedPercent`
+  // (ADR 0013) affiche « échec (X%) » à la place — jamais les deux en même temps.
+  | { type: "PlayerFinished"; playerId: string; wpm: number; forfeit: boolean; failedPercent: number | null }
   // L'ORDRE DU TABLEAU EST LE CLASSEMENT — pas de champ d'ordre séparé (ADR 0010).
   // `playOfTheGame` porte les deux logs du duel le plus serré, ou `null` s'il n'y en a
   // pas eu (< 2 finisseurs, ou meilleur écart > 2 s) — le bouton est alors absent (ADR 0011).

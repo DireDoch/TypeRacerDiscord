@@ -22,22 +22,29 @@ import { escapeText } from "./typing-zone";
 const PODIUM_PLACES = 3;
 const MEDALS = ["🥇", "🥈", "🥉"] as const;
 
+/** Abandon OU Échec Master (ADR 0013) : ni l'un ni l'autre n'a de durée à classer. */
+function isTail(r: RaceResult): boolean {
+  return r.forfeit || r.failedPercent !== null;
+}
+
 /**
  * Écart avec le vainqueur, en secondes. Le vainqueur affiche 0.
  *
- * Un abandon n'a pas de durée (`durationMs` vaut 0, aucun recompute n'est fait sur son
- * log) : il n'a donc pas de Gap du tout, d'où `null` plutôt qu'un écart négatif absurde.
- * Pure — c'est la logique testée de ce fichier.
+ * Un abandon (ou un Échec) n'a pas de durée (`durationMs` vaut 0, aucun recompute n'est
+ * fait sur son log) : il n'a donc pas de Gap du tout, d'où `null` plutôt qu'un écart
+ * négatif absurde. Pure — c'est la logique testée de ce fichier.
  */
 export function gapSeconds(results: RaceResult[], i: number): number | null {
   const r = results[i];
-  const winner = results.find((x) => !x.forfeit);
-  if (!r || r.forfeit || !winner) return null;
+  const winner = results.find((x) => !isTail(x));
+  if (!r || isTail(r) || !winner) return null;
   return (r.durationMs - winner.durationMs) / 1000;
 }
 
 /** `+1.4 s` ; le vainqueur n'a pas d'écart à afficher, il EST la référence. */
 export function gapLabel(results: RaceResult[], i: number): string {
+  const r = results[i];
+  if (r?.failedPercent !== null && r?.failedPercent !== undefined) return "échec";
   const g = gapSeconds(results, i);
   if (g === null) return "abandon";
   return g <= 0 ? "vainqueur" : `+${g.toFixed(1)} s`;
@@ -78,7 +85,7 @@ function rowHtml(o: PodiumOptions, i: number): string {
   const r = o.results[i];
   return `<button class="podium-row ${r.playerId === o.me ? "me" : ""}"
       data-player="${escapeText(r.playerId)}">
-    <span class="podium-rank">${r.forfeit ? "—" : `${i + 1}.`}</span>
+    <span class="podium-rank">${isTail(r) ? "—" : `${i + 1}.`}</span>
     ${avatarHtml(o, r.playerId)}
     <span class="podium-name">${escapeText(nameOf(o, r.playerId))}</span>
     <span class="podium-gap">${gapLabel(o.results, i)}</span>
@@ -86,8 +93,13 @@ function rowHtml(o: PodiumOptions, i: number): string {
   </button>`;
 }
 
-/** Un abandon n'a pas de chiffres : ne pas écrire « 0 wpm », qui se lirait comme un score. */
+/**
+ * Un abandon n'a pas de chiffres : ne pas écrire « 0 wpm », qui se lirait comme un score.
+ * Un Échec Master affiche son pourcentage d'avancement (ADR 0013) — jamais un WPM, et
+ * jamais utilisé pour classer.
+ */
 function statsLabel(r: RaceResult): string {
+  if (r.failedPercent !== null) return `échec (${r.failedPercent}%)`;
   return r.forfeit ? "" : `${Math.round(r.wpm)} wpm · ${Math.round(r.accuracy)} %`;
 }
 
@@ -121,8 +133,9 @@ export function wirePodium(root: HTMLElement, o: PodiumOptions): void {
       }
       open = id;
       const r = o.results.find((x) => x.playerId === id);
-      if (!r || r.forfeit || r.perSecond.length === 0) {
-        detail.innerHTML = `<p class="hint">${escapeText(nameOf(o, id))} a abandonné — pas de course à tracer.</p>`;
+      if (!r || r.perSecond.length === 0) {
+        const verb = r?.failedPercent !== null && r?.failedPercent !== undefined ? "a échoué" : "a abandonné";
+        detail.innerHTML = `<p class="hint">${escapeText(nameOf(o, id))} ${verb} — pas de course à tracer.</p>`;
         return;
       }
       detail.innerHTML = `<p class="hint">${escapeText(nameOf(o, id))}</p>

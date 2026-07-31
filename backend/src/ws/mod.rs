@@ -33,6 +33,7 @@ use futures_util::{SinkExt, StreamExt};
 use sqlx::sqlite::SqlitePool;
 use tokio::sync::broadcast;
 
+use crate::domain::difficulty::{detect_difficulty_failure, Difficulty};
 use crate::domain::replay::{compute_scoreboard, ScoreInput};
 use crate::domain::text_gen::{generate_text, GenSettings};
 use crate::domain::types::{Keystroke, Mode, RunConfig};
@@ -130,6 +131,9 @@ pub struct Room {
     /// Présents s'étant marqués prêts. Vidé à chaque bascule de `ready_check` et à
     /// chaque retour en Lobby (`end_race`) : chaque manche redemande une confirmation.
     pub ready: HashSet<PlayerId>,
+    /// Difficulté de la Room (Normal | Master, issue #71, ADR 0013) — Expert n'est pas
+    /// un Réglage de salon, sa condition de déclenchement y est inatteignable.
+    pub difficulty: Difficulty,
     pub state: RaceState,
     /// Diffusion des ServerEvent vers tous les sockets du salon.
     pub tx: broadcast::Sender<ServerEvent>,
@@ -208,6 +212,9 @@ pub async fn handle_socket(
             Ok(ClientEvent::SetReady { ready }) => {
                 set_ready(&rooms, &key, &player_id, ready);
             }
+            Ok(ClientEvent::SetDifficulty { difficulty }) => {
+                set_difficulty(&rooms, &key, &player_id, difficulty);
+            }
             Ok(ClientEvent::StartRace) => start_race(&rooms, &key, &player_id),
             Ok(ClientEvent::Progress { chars_done }) => {
                 relay_progress(&rooms, &key, &player_id, chars_done)
@@ -221,6 +228,12 @@ pub async fn handle_socket(
             Ok(ClientEvent::Forfeit) => {
                 if forfeit_race(&rooms, &key, &player_id) {
                     // Abandon du dernier partant : la revanche part sur un texte neuf.
+                    spawn_refresh_text(rooms.clone(), key.clone(), quotes.clone());
+                }
+            }
+            Ok(ClientEvent::Fail { keystrokes }) => {
+                if fail_race(&rooms, &key, &player_id, keystrokes) {
+                    // Échec du dernier partant : la revanche part sur un texte neuf.
                     spawn_refresh_text(rooms.clone(), key.clone(), quotes.clone());
                 }
             }
@@ -349,6 +362,7 @@ fn new_room(key: RoomKey, code: Option<String>, owner: &str) -> Room {
         countdown_s: DEFAULT_COUNTDOWN_S,
         ready_check: false,
         ready: HashSet::new(),
+        difficulty: Difficulty::Normal,
         state: RaceState::Lobby,
         tx,
     }
@@ -510,6 +524,23 @@ fn all_present_ready(room: &Room) -> bool {
     !room.ready_check || room.players.iter().all(|p| room.ready.contains(p))
 }
 
+/// SetDifficulty : accepté du seul owner, hors course, et seulement Normal | Master —
+/// Expert n'est pas un Réglage de salon (ADR 0013), sa condition de déclenchement (mot
+/// soumis faux) est inatteignable dès que Race force la correction avant d'avancer.
+fn set_difficulty(rooms: &Rooms, key: &str, player_id: &str, difficulty: Difficulty) -> bool {
+    if difficulty == Difficulty::Expert {
+        return false;
+    }
+    let mut rooms = rooms.lock().unwrap();
+    let Some(room) = rooms.get_mut(key) else { return false };
+    if room.owner != player_id || room.state.is_racing() {
+        return false;
+    }
+    room.difficulty = difficulty;
+    let _ = room.tx.send(room_state(room));
+    true
+}
+
 /// Inscrit la présence, s'abonne à la diffusion, puis re-diffuse RoomState à tous. Le
 /// lock std n'est jamais tenu à travers un await (broadcast::send/subscribe sont
 /// synchrones). Rejoindre deux fois est idempotent et ne consomme pas de place.
@@ -617,8 +648,12 @@ fn close_race(room: &mut Room, require_absent: bool) {
         }
     }
     for r in &pending {
-        let _ =
-            room.tx.send(ServerEvent::PlayerFinished { player_id: r.clone(), wpm: 0.0, forfeit: true });
+        let _ = room.tx.send(ServerEvent::PlayerFinished {
+            player_id: r.clone(),
+            wpm: 0.0,
+            forfeit: true,
+            failed_percent: None,
+        });
     }
     end_race(room);
 }
@@ -736,12 +771,14 @@ fn record_finish(rooms: &Rooms, key: &str, result: RaceResult, log: Vec<Keystrok
 
     let wpm = result.wpm;
     let forfeit = result.forfeit;
+    let failed_percent = result.failed_percent;
     let RaceState::Racing { finishers, logs, .. } = &mut room.state else { unreachable!("vérifié ci-dessus") };
     logs.insert(player_id.clone(), log);
     finishers.push(result);
     // PlayerFinished reste le signal LIVE « untel a fini » : le podium ne s'en nourrit
-    // plus, il lit RaceOver (ADR 0010). `forfeit` fait afficher « abandon » sur la piste.
-    let _ = room.tx.send(ServerEvent::PlayerFinished { player_id, wpm, forfeit });
+    // plus, il lit RaceOver (ADR 0010). `forfeit` fait afficher « abandon » sur la piste,
+    // `failed_percent` fait afficher « échec (X%) » (ADR 0013) — jamais les deux ensemble.
+    let _ = room.tx.send(ServerEvent::PlayerFinished { player_id, wpm, forfeit, failed_percent });
 
     let done = match &room.state {
         RaceState::Racing { racers, finishers, .. } => all_racers_done(racers, &room.players, finishers),
@@ -763,6 +800,40 @@ fn record_finish(rooms: &Rooms, key: &str, result: RaceResult, log: Vec<Keystrok
 fn forfeit_race(rooms: &Rooms, key: &str, player_id: &str) -> bool {
     // Log vide : un abandon n'est jamais choisi pour un Play of the Game (ADR 0011).
     record_finish(rooms, key, RaceResult::forfeited(player_id), Vec::new()) == FinishOutcome::RaceOver
+}
+
+/// Échec Difficulté Master (issue #71, ADR 0013) : le client a détecté localement sa 1re
+/// frappe incorrecte, mais le serveur REJOUE le log contre SON texte avant d'y croire —
+/// même frontière de confiance que Finish. Rejette si la Room n'est pas sous Master, si
+/// le partant n'est pas éligible, ou si le recompute ne confirme PAS d'échec (le client
+/// s'est trompé, ou a triché). Renvoie `true` si cet échec a CLOS la course, comme
+/// `forfeit_race`/`finish_race`.
+fn fail_race(rooms: &Rooms, key: &str, player_id: &str, keystrokes: Vec<Keystroke>) -> bool {
+    let (target_text, difficulty) = {
+        let rooms = rooms.lock().unwrap();
+        let Some(room) = rooms.get(key) else { return false };
+        let eligible = match &room.state {
+            RaceState::Racing { racers, finishers, .. } => {
+                racers.iter().any(|p| p == player_id)
+                    && !finishers.iter().any(|f| f.player_id == player_id)
+            }
+            RaceState::Lobby => false,
+        };
+        if !eligible {
+            return false;
+        }
+        (room.target_text.clone(), room.difficulty)
+    };
+    if difficulty != Difficulty::Master {
+        return false; // Room pas sous Master : rien à confirmer, requête ignorée
+    }
+    let target_words: Vec<String> = target_text.split(' ').map(str::to_string).collect();
+    let Some(fail) = detect_difficulty_failure(Difficulty::Master, &target_words, &keystrokes) else {
+        return false; // le recompute NE confirme PAS d'échec : rejeté
+    };
+    // Log vide : un échec n'est, comme un abandon, jamais choisi pour un Play of the Game.
+    record_finish(rooms, key, RaceResult::failed(player_id, fail.percent), Vec::new())
+        == FinishOutcome::RaceOver
 }
 
 /// Finish : recompute AUTORITAIRE contre le texte du serveur, puis enregistre l'arrivée
@@ -825,6 +896,7 @@ fn finish_race(
             accuracy: sb.accuracy,
             duration_ms: sb.duration_ms,
             forfeit: false,
+            failed_percent: None,
             per_second: sb.per_second.clone(),
         },
         retained_log,
@@ -873,19 +945,27 @@ fn all_racers_done(
             .all(|r| finishers.iter().any(|f| f.player_id == *r))
 }
 
+/// Un Abandon ou un Échec Master (ADR 0013) : même rang de queue, jamais un finisseur —
+/// ni l'un ni l'autre n'a de temps à classer.
+fn is_tail(r: &RaceResult) -> bool {
+    r.forfeit || r.failed_percent.is_some()
+}
+
 /// Clôt la course : diffuse le classement (par WPM décroissant), puis prépare la
 /// revanche — nouveau seed + nouveau texte (l'ancien est mémorisé par les joueurs)
 /// re-diffusés via RoomState. L'owner peut relancer StartRace depuis l'écran RaceOver.
 fn end_race(room: &mut Room) {
     let RaceState::Racing { finishers, logs, .. } = &room.state else { return }; // rien à clore
-    // L'ORDRE DU TABLEAU EST LE CLASSEMENT (ADR 0010) : abandons repoussés derrière tous
-    // les finisseurs, puis WPM décroissant. Classer au WPM et classer au temps donnent
-    // le même ordre en Race — même texte pour tous, et on ne finit qu'à 100 % exact,
-    // donc les caractères corrects sont identiques entre finisseurs.
+    // L'ORDRE DU TABLEAU EST LE CLASSEMENT (ADR 0010) : abandons ET échecs Master repoussés
+    // derrière tous les finisseurs (ADR 0013 : même rang de queue), puis WPM décroissant.
+    // Classer au WPM et classer au temps donnent le même ordre en Race — même texte pour
+    // tous, et on ne finit qu'à 100 % exact, donc les caractères corrects sont identiques
+    // entre finisseurs. Le tri est STABLE : deux entrées de queue gardent leur ordre
+    // d'arrivée relatif, jamais départagées par le pourcentage d'échec.
     let mut results = finishers.clone();
     results.sort_by(|a, b| {
-        a.forfeit
-            .cmp(&b.forfeit)
+        is_tail(a)
+            .cmp(&is_tail(b))
             .then(b.wpm.partial_cmp(&a.wpm).unwrap_or(std::cmp::Ordering::Equal))
     });
     // Play of the Game (ADR 0011) : le serveur choisit le duel et n'expédie QUE ses deux
@@ -939,7 +1019,7 @@ fn duel(results: &[RaceResult]) -> Option<(usize, usize)> {
     let finishers: Vec<usize> = results
         .iter()
         .enumerate()
-        .filter(|(_, r)| !r.forfeit)
+        .filter(|(_, r)| !is_tail(r))
         .map(|(i, _)| i)
         .collect();
     let mut best: Option<(usize, usize, f64)> = None;
@@ -983,6 +1063,7 @@ fn room_state(room: &Room) -> ServerEvent {
         max_players: room.max_players as u32,
         countdown_s: room.countdown_s,
         ready_check: room.ready_check,
+        difficulty: room.difficulty,
     }
 }
 
@@ -1032,6 +1113,7 @@ mod tests {
             accuracy: 97.0,
             duration_ms: if wpm > 0.0 { 60_000.0 / wpm } else { 0.0 },
             forfeit: false,
+            failed_percent: None,
             per_second: Vec::new(),
         }
     }
@@ -1381,8 +1463,15 @@ mod tests {
             accuracy: 0.0,
             duration_ms,
             forfeit: false,
+            failed_percent: None,
             per_second: Vec::new(),
         }
+    }
+
+    /// Un Échec Master (issue #71, ADR 0013) : même forme qu'un abandon (0 WPM, durée
+    /// nulle) mais `forfeit: false`, distinction que l'ADR veut.
+    fn fail_res(id: &str, percent: i64) -> RaceResult {
+        RaceResult::failed(id, percent)
     }
 
     #[test]
@@ -1421,6 +1510,14 @@ mod tests {
             RaceResult::forfeited("d"),
         ];
         assert_eq!(duel(&results), Some((0, 1)));
+    }
+
+    #[test]
+    fn duel_exclut_les_echecs_master() {
+        // Un Échec (ADR 0013) a duration_ms=0 comme un abandon : sans l'exclusion, il
+        // serait pris pour le meilleur "finisseur" et faussement apparié en duel.
+        let results = vec![fin("a", 30_000.0), fail_res("b", 50), fin("c", 30_500.0)];
+        assert_eq!(duel(&results), Some((0, 2))); // a et c, jamais b (l'échec)
     }
 
     #[test]
@@ -1960,6 +2057,134 @@ mod tests {
         assert!(set_ready(&rooms, "c1", "p1", true));
         start_race(&rooms, "c1", "p1");
         assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    }
+
+    // --- Difficulté & Failed (issue #71, ADR 0013) ---------------------------------
+
+    fn difficulty_of(rooms: &Rooms, key: &str) -> Difficulty {
+        rooms.lock().unwrap().get(key).unwrap().difficulty
+    }
+
+    /// Une frappe garantie FAUSSE contre `word` (jamais égale à son 1er caractère).
+    fn wrong_keystroke(word: &str) -> Keystroke {
+        let first = word.chars().next().unwrap_or('a');
+        let bad = if first == 'x' { 'y' } else { 'x' };
+        Keystroke { t: 100.0, k: bad.to_string(), ctrl: None }
+    }
+
+    #[test]
+    fn seul_l_owner_regle_la_difficulte() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1"); // owner
+        join(&rooms, "c1", "p2");
+
+        assert!(!set_difficulty(&rooms, "c1", "p2", Difficulty::Master));
+        assert_eq!(difficulty_of(&rooms, "c1"), Difficulty::Normal);
+
+        assert!(set_difficulty(&rooms, "c1", "p1", Difficulty::Master));
+        assert_eq!(difficulty_of(&rooms, "c1"), Difficulty::Master);
+    }
+
+    #[test]
+    fn expert_est_refuse_comme_reglage_de_salon() {
+        // Expert n'est pas un Réglage de salon (ADR 0013) : sa condition de déclenchement
+        // (mot soumis faux) est inatteignable dès que la course force la correction.
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        assert!(!set_difficulty(&rooms, "c1", "p1", Difficulty::Expert));
+        assert_eq!(difficulty_of(&rooms, "c1"), Difficulty::Normal);
+    }
+
+    #[test]
+    fn la_difficulte_ne_change_pas_pendant_une_course() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        start_race(&rooms, "c1", "p1");
+        assert!(!set_difficulty(&rooms, "c1", "p1", Difficulty::Master));
+        assert_eq!(difficulty_of(&rooms, "c1"), Difficulty::Normal);
+    }
+
+    #[test]
+    fn fail_rejette_si_la_room_n_est_pas_sous_master() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1"); // Difficulté par défaut : Normal
+        start_race(&rooms, "c1", "p1");
+        let target = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
+        let bad = wrong_keystroke(target.split(' ').next().unwrap_or(""));
+        assert!(!fail_race(&rooms, "c1", "p1", vec![bad]));
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    }
+
+    #[test]
+    fn fail_rejette_une_fausse_declaration() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        assert!(set_difficulty(&rooms, "c1", "p1", Difficulty::Master));
+        start_race(&rooms, "c1", "p1");
+        let target = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
+        let first_word = target.split(' ').next().unwrap_or("");
+        // Le client PRÉTEND avoir échoué, mais son log tape le mot EXACTEMENT : le
+        // serveur rejoue contre son propre texte et NE confirme PAS d'échec.
+        let correct: Vec<Keystroke> =
+            first_word.chars().map(|c| Keystroke { t: 100.0, k: c.to_string(), ctrl: None }).collect();
+        assert!(!fail_race(&rooms, "c1", "p1", correct));
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    }
+
+    #[test]
+    fn master_confirme_l_echec_a_la_1ere_frappe_fausse() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        assert!(set_difficulty(&rooms, "c1", "p1", Difficulty::Master));
+        start_race(&rooms, "c1", "p1");
+        let target = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
+        let bad = wrong_keystroke(target.split(' ').next().unwrap_or(""));
+        assert!(fail_race(&rooms, "c1", "p1", vec![bad])); // dernier partant : clôture
+        assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    }
+
+    #[test]
+    fn un_echec_passe_derriere_tous_les_finisseurs() {
+        // Sibling de abandon_partiel_classement_a_zero_pour_les_partants_jamais_finis :
+        // un Échec Master suit exactement la même règle de classement qu'un Abandon.
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p2");
+        assert!(set_difficulty(&rooms, "c1", "p1", Difficulty::Master));
+        start_race(&rooms, "c1", "p1");
+        let target = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
+        let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
+
+        assert_eq!(record(&rooms, "c1", done("p1", 60.0)), FinishOutcome::Recorded);
+        let bad = wrong_keystroke(target.split(' ').next().unwrap_or(""));
+        assert!(fail_race(&rooms, "c1", "p2", vec![bad])); // dernier partant : clôture
+
+        assert_eq!(ranking_of(&mut rx), Some(s(&["p1", "p2"]))); // p1 fini devant p2 en échec
+    }
+
+    #[test]
+    fn le_pourcentage_d_echec_n_affecte_pas_l_ordre_relatif() {
+        // p1 échoue à la 1re frappe (pourcentage bas), p2 après un mot entier tapé juste
+        // (pourcentage plus haut) : l'ordre doit rester p1 PUIS p2 (ordre d'arrivée),
+        // jamais réordonné par un pourcentage pourtant plus favorable à p2.
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p2");
+        assert!(set_difficulty(&rooms, "c1", "p1", Difficulty::Master));
+        start_race(&rooms, "c1", "p1");
+        let target = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
+        let words: Vec<&str> = target.split(' ').collect();
+        let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
+
+        assert!(!fail_race(&rooms, "c1", "p1", vec![wrong_keystroke(words[0])])); // p2 pas encore fini
+
+        let mut late: Vec<Keystroke> =
+            words[0].chars().map(|c| Keystroke { t: 100.0, k: c.to_string(), ctrl: None }).collect();
+        late.push(Keystroke { t: 200.0, k: " ".to_string(), ctrl: None });
+        late.push(wrong_keystroke(words.get(1).copied().unwrap_or("zz")));
+        assert!(fail_race(&rooms, "c1", "p2", late)); // dernier partant : clôture
+
+        assert_eq!(ranking_of(&mut rx), Some(s(&["p1", "p2"]))); // ordre d'arrivée, pas de pourcentage
     }
 
     #[test]
