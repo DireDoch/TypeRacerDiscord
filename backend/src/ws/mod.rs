@@ -57,6 +57,11 @@ const BROADCAST_CAP: usize = 64;
 const MAX_PLAYERS: usize = 8;
 /// Plancher de la taille réglable : à un seul joueur il n'y a pas de course.
 const MIN_PLAYERS: usize = 2;
+/// Durées de décompte réglables par l'owner (ADR 0007 : réglage produit, pas une unité
+/// de mesure — t=0 reste la fin du décompte quelle que soit la valeur choisie).
+const COUNTDOWN_VALUES: [u32; 4] = [3, 5, 7, 10];
+/// Durée par défaut d'une Room neuve.
+const DEFAULT_COUNTDOWN_S: u32 = 7;
 /// Alphabet des Codes de partie : ni `0`/`O`, ni `1`/`I`/`L` — un code se dicte à
 /// l'oral, l'ambiguïté visuelle y coûte cher. 31 caractères.
 const CODE_ALPHABET: &[u8] = b"23456789ABCDEFGHJKMNPQRSTUVWXYZ";
@@ -117,6 +122,8 @@ pub struct Room {
     /// personne — on ne sort pas quelqu'un du lobby par un réglage, la place se libère
     /// quand il part de lui-même.
     pub max_players: usize,
+    /// Durée du décompte avant le départ, réglée par l'owner parmi `COUNTDOWN_VALUES`.
+    pub countdown_s: u32,
     pub state: RaceState,
     /// Diffusion des ServerEvent vers tous les sockets du salon.
     pub tx: broadcast::Sender<ServerEvent>,
@@ -185,6 +192,9 @@ pub async fn handle_socket(
             }
             Ok(ClientEvent::SetMaxPlayers { max }) => {
                 set_max_players(&rooms, &key, &player_id, max as usize);
+            }
+            Ok(ClientEvent::SetCountdown { seconds }) => {
+                set_countdown(&rooms, &key, &player_id, seconds);
             }
             Ok(ClientEvent::StartRace) => start_race(&rooms, &key, &player_id),
             Ok(ClientEvent::Progress { chars_done }) => {
@@ -324,6 +334,7 @@ fn new_room(key: RoomKey, code: Option<String>, owner: &str) -> Room {
         target_text,
         text_source: TextSource::default(),
         max_players: MAX_PLAYERS,
+        countdown_s: DEFAULT_COUNTDOWN_S,
         state: RaceState::Lobby,
         tx,
     }
@@ -426,6 +437,22 @@ fn set_max_players(rooms: &Rooms, key: &str, player_id: &str, max: usize) -> boo
         return false; // non-owner, ou course en cours : ignoré
     }
     room.max_players = max;
+    let _ = room.tx.send(room_state(room));
+    true
+}
+
+/// SetCountdown : accepté du seul owner, hors course, et parmi les valeurs autorisées.
+/// Même frontière de confiance que la taille max — re-diffuse `RoomState` lui-même.
+fn set_countdown(rooms: &Rooms, key: &str, player_id: &str, seconds: u32) -> bool {
+    if !COUNTDOWN_VALUES.contains(&seconds) {
+        return false;
+    }
+    let mut rooms = rooms.lock().unwrap();
+    let Some(room) = rooms.get_mut(key) else { return false };
+    if room.owner != player_id || room.state.is_racing() {
+        return false; // non-owner, ou course en cours : ignoré
+    }
+    room.countdown_s = seconds;
     let _ = room.tx.send(room_state(room));
     true
 }
@@ -895,6 +922,7 @@ fn room_state(room: &Room) -> ServerEvent {
         code: room.code.clone(),
         text_source: room.text_source,
         max_players: room.max_players as u32,
+        countdown_s: room.countdown_s,
     }
 }
 
@@ -1733,6 +1761,46 @@ mod tests {
         assert_eq!(join_channel(&rooms, "c1", "p9", ident("p9")).err(), Some(JoinError::Full));
         join(&rooms, "c1", "p0"); // reconnexion d'un présent : toujours acceptée
         assert_eq!(players_of(&rooms, "c1").len(), 4);
+    }
+
+    // --- Décompte de la Room (issue #61) ------------------------------------------
+
+    fn countdown_of(rooms: &Rooms, key: &str) -> u32 {
+        rooms.lock().unwrap().get(key).unwrap().countdown_s
+    }
+
+    #[test]
+    fn seul_l_owner_regle_le_decompte() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1"); // owner
+        join(&rooms, "c1", "p2");
+
+        assert!(!set_countdown(&rooms, "c1", "p2", 3));
+        assert_eq!(countdown_of(&rooms, "c1"), DEFAULT_COUNTDOWN_S); // inchangé
+
+        assert!(set_countdown(&rooms, "c1", "p1", 3));
+        assert_eq!(countdown_of(&rooms, "c1"), 3);
+    }
+
+    #[test]
+    fn le_decompte_ne_change_pas_pendant_une_course() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        start_race(&rooms, "c1", "p1");
+        assert!(!set_countdown(&rooms, "c1", "p1", 3));
+        assert_eq!(countdown_of(&rooms, "c1"), DEFAULT_COUNTDOWN_S);
+    }
+
+    #[test]
+    fn une_duree_hors_plage_est_refusee() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        for seconds in [0, 1, 4, 6, 8, 11, 999] {
+            assert!(!set_countdown(&rooms, "c1", "p1", seconds));
+        }
+        for seconds in COUNTDOWN_VALUES {
+            assert!(set_countdown(&rooms, "c1", "p1", seconds));
+        }
     }
 
     #[test]
