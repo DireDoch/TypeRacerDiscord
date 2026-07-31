@@ -773,6 +773,229 @@ button.primary:hover {
   align-self: stretch;
 }
 
+/* --- Écran Paramètres (issue #60) ------------------------------------------
+   Disposition Monkeytype : libellé + explication à gauche, contrôle à droite.
+   La colonne de droite est de largeur FIXE — c'est elle qui crée l'arête
+   verticale d'un tableau de bord, et qui fait que l'œil descend la liste sans
+   rechercher le contrôle à chaque ligne.
+   Aucune couleur nouvelle : le corail reste le signal « actif », rien d'autre. */
+.settings {
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: 2.5rem 0 4rem;
+}
+.settings-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 1.1rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--sub) 20%, transparent);
+}
+.settings-head h2 {
+  margin: 0;
+  color: var(--main);
+  font-size: 1.9rem;
+  letter-spacing: -0.01em;
+}
+.settings .ghost {
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--sub) 45%, transparent);
+  color: var(--sub);
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0.4rem 0.9rem;
+  border-radius: 0.4rem;
+  transition:
+    color 0.12s,
+    border-color 0.12s;
+}
+.settings .ghost:hover {
+  color: var(--main);
+  border-color: var(--main);
+}
+
+/* Section : un numéro en chasse fixe, un titre espacé, puis un filet qui court
+   jusqu'au bord. Le numéro reprend la convention du reste de l'app (les chiffres
+   sont en mono) et donne à la page sa structure éditoriale. */
+.set-section {
+  margin-top: 2.6rem;
+}
+.set-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0 0 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--sub);
+}
+.set-section h3::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: color-mix(in srgb, var(--sub) 20%, transparent);
+}
+.set-index {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.05em;
+  color: var(--main);
+}
+
+.set-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr minmax(0, 19rem);
+  align-items: center;
+  gap: 0.6rem 2rem;
+  padding: 1.15rem 0.9rem;
+  border-radius: 0.5rem;
+  transition: background 0.14s;
+}
+.set-row + .set-row {
+  border-top: 1px solid color-mix(in srgb, var(--sub) 14%, transparent);
+}
+.set-row:hover,
+.set-row:focus-within {
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+}
+/* Repère corail à l'entrée de la ligne survolée : signale « c'est ici que ça se
+   règle » sans déplacer un pixel du texte. */
+.set-row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.7rem;
+  bottom: 0.7rem;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--main);
+  opacity: 0;
+  transition: opacity 0.14s;
+}
+.set-row:hover::before,
+.set-row:focus-within::before {
+  opacity: 1;
+}
+
+.set-label {
+  display: block;
+  font-size: 1rem;
+  color: var(--text);
+}
+.set-desc {
+  margin: 0.3rem 0 0;
+  max-width: 48ch;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: var(--sub);
+}
+.set-control {
+  justify-self: end;
+  width: 100%;
+}
+
+/* Contrôle segmenté : le choix actif est corail (texte, filet et fond sourd),
+   les autres restent en --sub. Un seul élément coloré par ligne. */
+/* Grille plutôt que flex-wrap : les options s'affichant chacune DANS SA POLICE,
+   leurs largeurs n'ont aucune raison de se ressembler — enveloppées en flex elles
+   retombent en escalier. Des cellules égales rangent tout ça. */
+.seg {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: 0.3rem;
+  width: 100%;
+  padding: 0.28rem;
+  background: var(--panel);
+  border-radius: 0.55rem;
+}
+.seg button {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--sub);
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0.38rem 0.8rem;
+  border-radius: 0.4rem;
+  transition:
+    color 0.12s,
+    background 0.12s,
+    border-color 0.12s;
+}
+.seg button:hover {
+  color: var(--text);
+}
+.seg button[aria-pressed="true"] {
+  color: var(--main);
+  border-color: color-mix(in srgb, var(--main) 45%, transparent);
+  background: color-mix(in srgb, var(--main) 12%, transparent);
+}
+
+.settings-foot {
+  margin-top: 3rem;
+  padding-top: 1.2rem;
+  border-top: 1px solid color-mix(in srgb, var(--sub) 20%, transparent);
+}
+.settings-foot .hint {
+  margin: 0.4rem 0;
+}
+.settings-foot a {
+  color: var(--main);
+}
+
+.settings :focus-visible {
+  outline: 2px solid var(--main);
+  outline-offset: 2px;
+}
+
+/* Révélation décalée section par section (--i = rang) : une seule orchestration
+   à l'ouverture, rien qui bouge ensuite. */
+@keyframes set-rise {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.set-section {
+  animation: set-rise 0.5s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+
+/* Panneau étroit (iframe Discord réduite) : le contrôle passe SOUS son libellé
+   plutôt que de comprimer les deux colonnes. */
+@media (max-width: 34rem) {
+  .set-row {
+    grid-template-columns: 1fr;
+  }
+  .set-control {
+    justify-self: start;
+  }
+  .seg {
+    justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .set-section {
+    animation: none;
+  }
+  .set-row,
+  .set-row::before,
+  .seg button,
+  .settings .ghost {
+    transition: none;
+  }
+}
+
 /* --- Bandeau d'erreurs (debug in-iframe, console invisible dans Discord) ---- */
 #errbar {
   position: fixed;

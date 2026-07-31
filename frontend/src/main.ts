@@ -14,6 +14,8 @@ import { Practice } from "./ui/practice";
 import { Race, type RaceIntent } from "./ui/race";
 import { History } from "./ui/history";
 import { Learn } from "./ui/learn";
+import { Settings } from "./ui/settings";
+import { applyPreferences } from "./core/preferences";
 import { getAuthToken } from "./discord";
 
 // --- Bandeau d'erreurs (debug in-iframe) -------------------------------------
@@ -36,6 +38,10 @@ window.addEventListener("unhandledrejection", (e) => showError(String(e.reason))
 // Amorce le handshake d'identité tôt (non bloquant).
 getAuthToken().catch((e) => showError(`Auth Discord échouée : ${e}`));
 
+// Preferences appliquées AVANT le premier écran : la police choisie doit être en
+// place au premier rendu, pas après un clignotement.
+applyPreferences();
+
 const rootEl = document.querySelector<HTMLDivElement>("#app");
 if (!rootEl) throw new Error("#app introuvable dans index.html");
 const root: HTMLElement = rootEl;
@@ -44,9 +50,22 @@ let screen: { destroy(): void } | null = null;
 
 function showMenu(): void {
   screen?.destroy();
-  const m = new Menu(root, { solo: showPractice, multi: showRace, history: showHistory, learn: showLearn });
+  const m = new Menu(root, {
+    solo: showPractice,
+    multi: showRace,
+    history: showHistory,
+    learn: showLearn,
+    settings: showSettings,
+  });
   screen = m;
   m.mount();
+}
+
+function showSettings(): void {
+  screen?.destroy();
+  const s = new Settings(root, showMenu);
+  screen = s;
+  s.mount();
 }
 
 function showLearn(): void {

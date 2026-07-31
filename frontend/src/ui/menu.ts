@@ -1,10 +1,11 @@
 // =============================================================================
 //  ui/menu.ts — menu principal (hub de navigation) + vue Options.
 //
-//  Écran d'arrivée : Solo (Practice), Multijoueur (Race), Options, Quitter.
+//  Écran d'arrivée : Solo (Practice), Multijoueur (Race), Paramètres, Quitter.
 //  « Quitter » ferme l'Activity via le SDK (visible uniquement dans Discord).
 //  Les réglages de partie (mode, durée, ponctuation…) restent dans l'écran Solo ;
-//  la vue Options n'accueille pour l'instant que les liens légaux et la version.
+//  les Preferences ont leur propre écran (ui/settings.ts), qui a remplacé la vue
+//  Options — elle ne portait que les liens légaux, partis avec elle.
 //
 //  La vue Multijoueur porte les trois portes d'entrée d'une Room (ADR 0008) — c'est
 //  aussi elle qui porte le champ du Code de partie, pas l'écran de Race : un code
@@ -15,10 +16,8 @@ import { closeActivity, isInsideDiscord } from "../discord";
 import { normalizeCode, CODE_LEN } from "../core/net";
 import type { RaceIntent } from "./race";
 
-const REPO = "https://github.com/DireDoch/TypeRacerDiscord";
-
 export class Menu {
-  private view: "home" | "multi" | "options" = "home";
+  private view: "home" | "multi" = "home";
 
   constructor(
     private readonly root: HTMLElement,
@@ -27,6 +26,7 @@ export class Menu {
       multi(intent: RaceIntent): void;
       history(): void;
       learn(): void;
+      settings(): void;
     },
   ) {}
 
@@ -53,8 +53,6 @@ export class Menu {
         return this.homeHtml();
       case "multi":
         return this.multiHtml();
-      case "options":
-        return this.optionsHtml();
     }
   }
 
@@ -67,7 +65,7 @@ export class Menu {
       <button data-menu="multi">Multijoueur</button>
       <button data-menu="learn">Apprendre</button>
       <button data-menu="history">Historique</button>
-      <button data-menu="options">Options</button>
+      <button data-menu="settings">Paramètres</button>
       ${quit}
     `;
   }
@@ -81,18 +79,6 @@ export class Menu {
                maxlength="${CODE_LEN}" placeholder="Code de partie" aria-label="Code de partie" />
         <button data-menu="multi-join" disabled>Rejoindre</button>
       </div>
-      <button data-menu="back">← Retour</button>
-    `;
-  }
-
-  private optionsHtml(): string {
-    return `
-      <p class="hint">Les réglages de partie (mode, durée, ponctuation…) sont dans l'écran Solo.</p>
-      <p class="hint">
-        <a href="${REPO}/blob/main/TERMS.md" target="_blank" rel="noreferrer">Conditions d'utilisation</a>
-        ·
-        <a href="${REPO}/blob/main/PRIVACY.md" target="_blank" rel="noreferrer">Confidentialité</a>
-      </p>
       <button data-menu="back">← Retour</button>
     `;
   }
@@ -111,10 +97,7 @@ export class Menu {
     });
     on("multi-channel", () => this.nav.multi({ kind: "channel" }));
     on("multi-create", () => this.nav.multi({ kind: "create" }));
-    on("options", () => {
-      this.view = "options";
-      this.render();
-    });
+    on("settings", () => this.nav.settings());
     on("back", () => {
       this.view = "home";
       this.render();
