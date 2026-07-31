@@ -5,6 +5,7 @@
 // (en MVP le client envoie `targetText`, le serveur recompute dessus).
 
 pub mod analysis;
+pub mod difficulty;
 pub mod replay;
 pub mod text_gen;
 pub mod types;
