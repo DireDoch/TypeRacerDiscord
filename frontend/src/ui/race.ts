@@ -20,6 +20,7 @@ import { Countdown } from "../core/countdown";
 import { FreeInput } from "../core/input/free-input";
 import {
   RaceSocket,
+  COUNTDOWN_VALUES,
   ROOM_SIZES,
   WORDS_LENGTHS,
   type ClientEvent,
@@ -53,6 +54,9 @@ export type RaceIntent =
  * n'est jamais PB-eligible — la changer n'invalide donc rien (contrairement à l'ADR 0004,
  * qui déplaçait t=0 lui-même en solo). 7 s = le temps de voir la grille de départ et de
  * lire le premier mot du texte, qui reste visible EN ENTIER pendant tout le décompte.
+ *
+ * Valeur de repli avant le premier `RoomState` (issue #61) — la Room réelle porte la
+ * valeur réglée par l'owner dans `countdownS`, qui la remplace dès qu'elle arrive.
  */
 export const RACE_COUNTDOWN_S = 7;
 
@@ -75,6 +79,10 @@ export class Race {
   private textSource: TextSource = { kind: "quote" };
   /** Taille max de la Room (réglage de l'hôte). Défaut = plafond dur du serveur. */
   private maxPlayers = 8;
+  /** Durée du décompte (réglage de l'hôte, issue #61). Défaut avant le 1er RoomState. */
+  private countdownS = RACE_COUNTDOWN_S;
+  /** Ready-check (réglage de l'hôte, issue #63). Mon état "prêt" vit sur `players[]`. */
+  private readyCheck = false;
   /** Message affiché en phase "failed" (code inconnu, Room pleine). */
   private failure = "";
 
@@ -161,6 +169,8 @@ export class Race {
         this.code = e.code;
         this.textSource = e.textSource;
         this.maxPlayers = e.maxPlayers;
+        this.countdownS = e.countdownS;
+        this.readyCheck = e.readyCheck;
         this.targetText = e.targetText;
         this.targetWords = e.targetText.split(" ").filter((w) => w.length > 0);
         // Duel à l'écran : on met à jour les données (join/leave du lobby d'après-course)
@@ -216,7 +226,7 @@ export class Race {
     // Un seul décompte vivant : un second RaceStart pendant le décompte/la course est ignoré.
     if (this.phase === "countdown" || this.phase === "running") return;
     this.phase = "countdown";
-    this.countdownN = RACE_COUNTDOWN_S;
+    this.countdownN = this.countdownS;
     this.progress.clear();
     this.finished.clear();
     this.forfeited.clear();
@@ -226,7 +236,7 @@ export class Race {
     this.doneLocal = false;
     this.controller = new FreeInput(this.targetWords);
     this.countdown = new Countdown(
-      RACE_COUNTDOWN_S,
+      this.countdownS,
       (n) => {
         this.countdownN = n;
         this.render();
@@ -316,6 +326,26 @@ export class Race {
           max: Number((e.target as HTMLSelectElement).value),
         }),
       );
+    this.root
+      .querySelector<HTMLSelectElement>("#raceCountdown")
+      ?.addEventListener("change", (e) =>
+        this.socket?.send({
+          type: "SetCountdown",
+          seconds: Number((e.target as HTMLSelectElement).value),
+        }),
+      );
+    this.root
+      .querySelector<HTMLInputElement>("#readyCheck")
+      ?.addEventListener("change", (e) =>
+        this.socket?.send({
+          type: "SetReadyCheck",
+          enabled: (e.target as HTMLInputElement).checked,
+        }),
+      );
+    this.root.querySelector<HTMLButtonElement>("#toggleReady")?.addEventListener("click", () => {
+      const me = this.players.find((p) => p.playerId === this.me);
+      this.socket?.send({ type: "SetReady", ready: !(me?.ready ?? false) });
+    });
     if (this.phase === "over") {
       wirePodium(this.root, this.podiumOptions());
       this.root
@@ -359,7 +389,10 @@ export class Race {
           this.codeHtml() +
           this.sourceHtml() +
           this.sizeHtml() +
+          this.countdownHtml() +
+          this.readyCheckHtml() +
           this.cardsHtml() +
+          this.readyBtnHtml() +
           this.startBtnHtml() +
           this.exitBtnHtml()
         );
@@ -436,6 +469,43 @@ export class Race {
     </div>`;
   }
 
+  /**
+   * Durée du décompte avant le départ (issue #61). Même patron que la taille max :
+   * `select` natif pour l'hôte, simple mention pour les autres — ils subissent le réglage.
+   */
+  private countdownHtml(): string {
+    if (this.me !== this.owner) {
+      return `<p class="hint">Décompte : ${this.countdownS} s</p>`;
+    }
+    const opts = COUNTDOWN_VALUES.map(
+      (n) => `<option value="${n}"${n === this.countdownS ? " selected" : ""}>${n} s</option>`,
+    ).join("");
+    return `<div class="race-settings">
+      <label class="hint" for="raceCountdown">Décompte</label>
+      <select id="raceCountdown">${opts}</select>
+    </div>`;
+  }
+
+  /**
+   * Ready-check (issue #63) : case à cocher pour l'hôte, simple mention pour les autres —
+   * même patron que les autres réglages de salon.
+   */
+  private readyCheckHtml(): string {
+    if (this.me !== this.owner) {
+      return `<p class="hint">Ready-check : ${this.readyCheck ? "activé" : "désactivé"}</p>`;
+    }
+    return `<label class="hint" for="readyCheck">
+      <input type="checkbox" id="readyCheck"${this.readyCheck ? " checked" : ""}> Ready-check
+    </label>`;
+  }
+
+  /** Bouton pour se marquer prêt/pas prêt — seulement visible quand le réglage est actif. */
+  private readyBtnHtml(): string {
+    if (!this.readyCheck) return "";
+    const ready = this.players.find((p) => p.playerId === this.me)?.ready ?? false;
+    return `<button id="toggleReady" class="${ready ? "on" : ""}">${ready ? "Prêt ✓" : "Se dire prêt"}</button>`;
+  }
+
   /** Cartes de présence empilées (owner en tête, moi souligné). */
   private cardsHtml(): string {
     const cards = this.players
@@ -444,9 +514,10 @@ export class Race {
         const isMe = p.playerId === this.me;
         const tags = [isOwner ? "owner" : "", isMe ? "me" : ""].filter(Boolean).join(" ");
         const label = isMe ? `${p.displayName} (toi)` : p.displayName;
+        const readyTag = this.readyCheck ? (p.ready ? " ✓" : " ⌛") : "";
         return `<div class="card ${tags}">${avatarHtml(p)} ${escapeText(label)}${
           isOwner ? " 👑" : ""
-        }</div>`;
+        }${readyTag}</div>`;
       })
       .join("");
     return `<div class="cards">${cards}</div>`;
@@ -538,6 +609,7 @@ export class Race {
         playerId: id,
         displayName: id, // parti depuis : on retombe sur le snowflake, comme le podium
         avatarHash: null,
+        ready: false,
       };
     this.potgStop = runPlayOfTheGame(this.root, {
       racedWords: this.racedWords,

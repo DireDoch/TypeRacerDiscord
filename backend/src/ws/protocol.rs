@@ -100,6 +100,9 @@ pub struct PlayerEntry {
     pub player_id: PlayerId,
     pub display_name: String,
     pub avatar_hash: Option<String>,
+    /// Prêt pour le ready-check (issue #63). Sans objet quand `ready_check` est
+    /// désactivé — `false` par défaut, jamais lu dans ce cas.
+    pub ready: bool,
 }
 
 /// L'arrivée d'un partant, telle que le podium l'affiche (ADR 0010).
@@ -179,6 +182,15 @@ pub enum ClientEvent {
     /// Régler la taille max de la Room (2–8) — accepté du seul owner, et seulement hors
     /// course (ignoré sinon). Ne porte que sur les arrivées : personne n'est expulsé.
     SetMaxPlayers { max: u32 },
+    /// Régler la durée du décompte avant le départ (3/5/7/10 s) — accepté du seul owner,
+    /// et seulement hors course (ignoré sinon).
+    SetCountdown { seconds: u32 },
+    /// Activer/désactiver le ready-check — accepté du seul owner, et seulement hors
+    /// course. Réinitialise les prêts déjà marqués (nouveau départ à zéro).
+    SetReadyCheck { enabled: bool },
+    /// Se marquer prêt/pas prêt — accepté de N'IMPORTE quel présent, hors course. Sans
+    /// effet sur `StartRace` tant que `ready_check` est désactivé.
+    SetReady { ready: bool },
     /// Lancer la course — accepté du seul owner de la Room (ignoré sinon).
     StartRace,
     /// Progression de frappe (diffusée pour le rendu des "voitures"). Pas autoritaire.
@@ -217,6 +229,12 @@ pub enum ServerEvent {
         /// Taille max courante de la Room. Lue par TOUT le lobby : « 3/5 » se dessine
         /// chez les non-hôtes aussi, ils subissent le réglage.
         max_players: u32,
+        /// Durée du décompte avant le départ, en secondes. Lue par TOUT le lobby : le
+        /// décompte s'impose aussi aux non-hôtes.
+        countdown_s: u32,
+        /// Ready-check activé ou non (issue #63). L'état « prêt » de chacun se lit sur
+        /// `players[].ready`, pas ici.
+        ready_check: bool,
     },
     /// Top de départ partagé : t=0 pour TOUS les clients (cale les horloges locales).
     RaceStart { start_at_epoch_ms: i64 },
