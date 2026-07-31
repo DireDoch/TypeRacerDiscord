@@ -20,6 +20,7 @@ import { Countdown } from "../core/countdown";
 import { FreeInput } from "../core/input/free-input";
 import {
   RaceSocket,
+  COUNTDOWN_VALUES,
   ROOM_SIZES,
   WORDS_LENGTHS,
   type ClientEvent,
@@ -53,6 +54,9 @@ export type RaceIntent =
  * n'est jamais PB-eligible — la changer n'invalide donc rien (contrairement à l'ADR 0004,
  * qui déplaçait t=0 lui-même en solo). 7 s = le temps de voir la grille de départ et de
  * lire le premier mot du texte, qui reste visible EN ENTIER pendant tout le décompte.
+ *
+ * Valeur de repli avant le premier `RoomState` (issue #61) — la Room réelle porte la
+ * valeur réglée par l'owner dans `countdownS`, qui la remplace dès qu'elle arrive.
  */
 export const RACE_COUNTDOWN_S = 7;
 
@@ -75,6 +79,8 @@ export class Race {
   private textSource: TextSource = { kind: "quote" };
   /** Taille max de la Room (réglage de l'hôte). Défaut = plafond dur du serveur. */
   private maxPlayers = 8;
+  /** Durée du décompte (réglage de l'hôte, issue #61). Défaut avant le 1er RoomState. */
+  private countdownS = RACE_COUNTDOWN_S;
   /** Message affiché en phase "failed" (code inconnu, Room pleine). */
   private failure = "";
 
@@ -161,6 +167,7 @@ export class Race {
         this.code = e.code;
         this.textSource = e.textSource;
         this.maxPlayers = e.maxPlayers;
+        this.countdownS = e.countdownS;
         this.targetText = e.targetText;
         this.targetWords = e.targetText.split(" ").filter((w) => w.length > 0);
         // Duel à l'écran : on met à jour les données (join/leave du lobby d'après-course)
@@ -216,7 +223,7 @@ export class Race {
     // Un seul décompte vivant : un second RaceStart pendant le décompte/la course est ignoré.
     if (this.phase === "countdown" || this.phase === "running") return;
     this.phase = "countdown";
-    this.countdownN = RACE_COUNTDOWN_S;
+    this.countdownN = this.countdownS;
     this.progress.clear();
     this.finished.clear();
     this.forfeited.clear();
@@ -226,7 +233,7 @@ export class Race {
     this.doneLocal = false;
     this.controller = new FreeInput(this.targetWords);
     this.countdown = new Countdown(
-      RACE_COUNTDOWN_S,
+      this.countdownS,
       (n) => {
         this.countdownN = n;
         this.render();
@@ -316,6 +323,14 @@ export class Race {
           max: Number((e.target as HTMLSelectElement).value),
         }),
       );
+    this.root
+      .querySelector<HTMLSelectElement>("#raceCountdown")
+      ?.addEventListener("change", (e) =>
+        this.socket?.send({
+          type: "SetCountdown",
+          seconds: Number((e.target as HTMLSelectElement).value),
+        }),
+      );
     if (this.phase === "over") {
       wirePodium(this.root, this.podiumOptions());
       this.root
@@ -359,6 +374,7 @@ export class Race {
           this.codeHtml() +
           this.sourceHtml() +
           this.sizeHtml() +
+          this.countdownHtml() +
           this.cardsHtml() +
           this.startBtnHtml() +
           this.exitBtnHtml()
@@ -433,6 +449,23 @@ export class Race {
     return `<div class="race-settings">
       <label class="hint" for="maxPlayers">Salon (${taken} présents)</label>
       <select id="maxPlayers">${opts}</select>
+    </div>`;
+  }
+
+  /**
+   * Durée du décompte avant le départ (issue #61). Même patron que la taille max :
+   * `select` natif pour l'hôte, simple mention pour les autres — ils subissent le réglage.
+   */
+  private countdownHtml(): string {
+    if (this.me !== this.owner) {
+      return `<p class="hint">Décompte : ${this.countdownS} s</p>`;
+    }
+    const opts = COUNTDOWN_VALUES.map(
+      (n) => `<option value="${n}"${n === this.countdownS ? " selected" : ""}>${n} s</option>`,
+    ).join("");
+    return `<div class="race-settings">
+      <label class="hint" for="raceCountdown">Décompte</label>
+      <select id="raceCountdown">${opts}</select>
     </div>`;
   }
 

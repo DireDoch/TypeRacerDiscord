@@ -179,6 +179,9 @@ pub enum ClientEvent {
     /// Régler la taille max de la Room (2–8) — accepté du seul owner, et seulement hors
     /// course (ignoré sinon). Ne porte que sur les arrivées : personne n'est expulsé.
     SetMaxPlayers { max: u32 },
+    /// Régler la durée du décompte avant le départ (3/5/7/10 s) — accepté du seul owner,
+    /// et seulement hors course (ignoré sinon).
+    SetCountdown { seconds: u32 },
     /// Lancer la course — accepté du seul owner de la Room (ignoré sinon).
     StartRace,
     /// Progression de frappe (diffusée pour le rendu des "voitures"). Pas autoritaire.
@@ -217,6 +220,9 @@ pub enum ServerEvent {
         /// Taille max courante de la Room. Lue par TOUT le lobby : « 3/5 » se dessine
         /// chez les non-hôtes aussi, ils subissent le réglage.
         max_players: u32,
+        /// Durée du décompte avant le départ, en secondes. Lue par TOUT le lobby : le
+        /// décompte s'impose aussi aux non-hôtes.
+        countdown_s: u32,
     },
     /// Top de départ partagé : t=0 pour TOUS les clients (cale les horloges locales).
     RaceStart { start_at_epoch_ms: i64 },

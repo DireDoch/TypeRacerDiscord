@@ -49,6 +49,9 @@ export const WORDS_LENGTHS = [15, 30, 50] as const;
 /** Miroir de `ws/mod.rs` : tailles de Room réglables. 8 = plafond dur et défaut. */
 export const ROOM_SIZES = [2, 3, 4, 5, 6, 7, 8] as const;
 
+/** Miroir de `ws/mod.rs` : durées de décompte réglables (ADR 0007). 7 = défaut. */
+export const COUNTDOWN_VALUES = [3, 5, 7, 10] as const;
+
 /**
  * La Display identity annoncée à la Room. `playerId` reste la vérité durable (il possède
  * les Runs) ; le reste n'est que la façon de le dessiner — jamais vérifiée, jamais
@@ -82,6 +85,8 @@ export type ClientEvent =
   | { type: "SetTextSource"; source: TextSource }
   // owner uniquement, hors course, 2–8 (le serveur rejette le reste)
   | { type: "SetMaxPlayers"; max: number }
+  // owner uniquement, hors course, 3/5/7/10 (le serveur rejette le reste)
+  | { type: "SetCountdown"; seconds: number }
   | { type: "StartRace" } // owner uniquement (le serveur rejette les autres)
   | { type: "Progress"; charsDone: number }
   // Le serveur possède seed/texte/config : Finish n'envoie que le log + la durée.
@@ -105,6 +110,8 @@ export type ServerEvent =
       textSource: TextSource;
       /** Taille max courante de la Room — lue par TOUT le lobby, pas que par l'hôte. */
       maxPlayers: number;
+      /** Durée du décompte avant le départ — lue par TOUT le lobby, pas que par l'hôte. */
+      countdownS: number;
     }
   | { type: "RaceStart"; startAtEpochMs: number }
   | { type: "PlayerProgress"; playerId: string; charsDone: number }
