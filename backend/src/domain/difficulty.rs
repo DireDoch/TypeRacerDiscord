@@ -4,11 +4,9 @@
 //  PORT Rust de `frontend/src/core/difficulty.ts` (la RÉFÉRENCE) — doit reproduire
 //  ses chiffres bit pour bit : c'est la version autoritaire (Race, ADR 0013).
 //
-//  NON CÂBLÉ pour l'instant : le Practice de l'issue #64 est purement TS
-//  (free-input côté client). Câblé côté Race par l'issue #71 (Master authoritatif).
+//  Câblé côté Race (issue #71, `ws/mod.rs::fail_race`) pour Master, authoritatif —
+//  le Practice de l'issue #64 reste purement TS (free-input côté client).
 // =============================================================================
-
-#![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
 

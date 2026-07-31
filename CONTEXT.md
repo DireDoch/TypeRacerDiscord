@@ -13,8 +13,8 @@ A solo Run with **free input** (Monkeytype-style): backspace allowed, errors may
 _Avoid_: Solo, Training, Free mode.
 
 **Race**:
-A competitive Run inside a Room with **blocking input** (TypeRacer-style): an error must be corrected before advancing. Planned for Phase 2. The blocking input controller is built and testable in solo during the MVP, then rebound exclusively to Race later.
-_Avoid_: Match, Duel, Course.
+A competitive Run inside a Room, on the **same free input** as Practice: an error may be left uncorrected, extra characters are possible while typing. It only ends once the whole target text has been typed exactly — correcting mistakes is necessary to finish, but nothing forces a correction keystroke-by-keystroke. A **blocking input** controller (error forced to be corrected before advancing, TypeRacer-style) was once the plan for Race — it was never built, and Race has raced on free input from the start (ADR 0013).
+_Avoid_: Match, Duel, Course, Blocking input.
 
 **Abandon (forfeit)**:
 Giving up the current Race **without leaving the Room** — the Player's car stops, they are ranked last and labelled « abandon » (never « 0 wpm »), and they stay in the lobby to play the next Race. Recorded as an arrival at 0 WPM carrying an explicit `forfeit` flag, so it unblocks the finish for everyone else instead of making them wait out the watchdog. No Run is ever persisted for an Abandon: nothing to exclude from PBs, nothing to pollute the history. A Player who simply **disconnects** produces the exact same record — one code path for both.
