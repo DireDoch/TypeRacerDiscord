@@ -31,17 +31,57 @@ export type FontFamily = keyof typeof FONT_STACKS;
 
 export const FONT_KEYS = Object.keys(FONT_STACKS) as FontFamily[];
 
+/** Redémarrage rapide (issue #65) : la touche qui redémarre depuis n'importe quel état
+ *  de Practice. "off" laisse Tab au comportement standard (navigation) — un bouton
+ *  cliquable (résultats) reste toujours disponible. */
+export type QuickRestartKey = "off" | "tab" | "esc" | "enter";
+export const QUICK_RESTART_KEYS: QuickRestartKey[] = ["off", "tab", "esc", "enter"];
+export const QUICK_RESTART_LABELS: Record<QuickRestartKey, string> = {
+  off: "Désactivé",
+  tab: "Tab",
+  esc: "Échap",
+  enter: "Entrée",
+};
+/** `KeyboardEvent.key` DOM associée à chaque valeur, `null` = aucun raccourci câblé. */
+export const QUICK_RESTART_DOM_KEY: Record<QuickRestartKey, string | null> = {
+  off: null,
+  tab: "Tab",
+  esc: "Escape",
+  enter: "Enter",
+};
+
+/** Stop on error (issue #65) : granularité du blocage en Practice — jamais en Race
+ *  (Solo only). "letter" bloque toute frappe fausse ; "word" bloque l'espace tant que
+ *  le mot courant n'est pas exact. */
+export type StopOnError = "off" | "letter" | "word";
+export const STOP_ON_ERROR_VALUES: StopOnError[] = ["off", "letter", "word"];
+export const STOP_ON_ERROR_LABELS: Record<StopOnError, string> = {
+  off: "Désactivé",
+  letter: "Lettre",
+  word: "Mot",
+};
+
 export interface Preferences {
   fontFamily: FontFamily;
+  quickRestartKey: QuickRestartKey;
+  stopOnError: StopOnError;
 }
 
-/** Défaut + domaine de validité d'une clé. Les issues suivantes (#65-#70)
+/** Défaut + domaine de validité d'une clé. Les issues suivantes (#66-#70)
  *  ajoutent leurs clés ICI : c'est le seul endroit à toucher pour qu'une
  *  Preference soit typée, validée, persistée et réinitialisable. */
 const SPEC: { [K in keyof Preferences]: { default: Preferences[K]; valid: (v: unknown) => boolean } } = {
   fontFamily: {
     default: "jetbrains",
     valid: (v) => typeof v === "string" && v in FONT_STACKS,
+  },
+  quickRestartKey: {
+    default: "off",
+    valid: (v) => typeof v === "string" && (QUICK_RESTART_KEYS as string[]).includes(v),
+  },
+  stopOnError: {
+    default: "off",
+    valid: (v) => typeof v === "string" && (STOP_ON_ERROR_VALUES as string[]).includes(v),
   },
 };
 

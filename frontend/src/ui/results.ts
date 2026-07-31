@@ -82,7 +82,7 @@ export function renderResults(
 
       <div class="analysis" id="analysis"></div>
 
-      <button id="restart" class="primary">Rejouer (Tab / Entrée)</button>
+      <button id="restart" class="primary">Rejouer</button>
       ${onReplay ? `<button id="replayBtn">Replay</button>` : ""}
       <button id="analyzeBtn">Analyser</button>
     </section>

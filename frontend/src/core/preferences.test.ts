@@ -51,7 +51,8 @@ describe("parsePreferences — le stockage est une frontière de confiance", () 
 
   it("clé inconnue dans le stockage : ignorée, jamais recopiée", () => {
     const parsed = parsePreferences({ fontFamily: "inter", vieilleCle: true });
-    expect(parsed).toEqual({ fontFamily: "inter" });
+    expect(parsed).toEqual({ ...defaultPreferences(), fontFamily: "inter" });
+    expect(parsed).not.toHaveProperty("vieilleCle");
   });
 });
 
@@ -96,6 +97,24 @@ describe("setPreference", () => {
   });
 });
 
+describe("quickRestartKey / stopOnError (issue #65)", () => {
+  it("défaut off pour les deux", () => {
+    expect(defaultPreferences().quickRestartKey).toBe("off");
+    expect(defaultPreferences().stopOnError).toBe("off");
+  });
+
+  it("valeurs valides acceptées", () => {
+    expect(setPreference("quickRestartKey", "esc").quickRestartKey).toBe("esc");
+    expect(setPreference("stopOnError", "word").stopOnError).toBe("word");
+  });
+
+  it("valeur hors domaine refusée, rien n'est écrit", () => {
+    setPreference("quickRestartKey", "tab");
+    // @ts-expect-error — valeur qu'un import JSON pourrait produire
+    expect(setPreference("quickRestartKey", "space").quickRestartKey).toBe("tab");
+  });
+});
+
 describe("resetPreferences", () => {
   it("ramène tout au défaut et le persiste", () => {
     setPreference("fontFamily", "courier");
@@ -106,7 +125,7 @@ describe("resetPreferences", () => {
 
 describe("applyPreferences", () => {
   it("projette la police choisie sur --font-mono", () => {
-    applyPreferences({ fontFamily: "courier" });
+    applyPreferences({ ...defaultPreferences(), fontFamily: "courier" });
     expect(applied["--font-mono"]).toBe(FONT_STACKS.courier.stack);
   });
 

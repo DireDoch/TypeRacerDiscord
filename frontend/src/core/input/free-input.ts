@@ -17,14 +17,21 @@
 
 import type { Keystroke } from "../types";
 import type { InputController, InputView } from "./controller";
+import type { StopOnError } from "../preferences";
 
 export class FreeInput implements InputController {
   private readonly target: string[];
+  private readonly stopOnError: StopOnError;
   private locked: string[] = [];
   private typed = "";
 
-  constructor(targetWords: string[]) {
+  /** `stopOnError` (issue #65, Solo only — Race ne le passe jamais, défaut "off") :
+   *  "letter" bloque toute frappe fausse avant qu'elle n'entre au buffer ; "word"
+   *  bloque l'espace tant que le mot courant n'est pas exact. Zen (target vide)
+   *  n'a rien à être "juste" contre : jamais bloqué, quelle que soit la valeur. */
+  constructor(targetWords: string[], stopOnError: StopOnError = "off") {
     this.target = targetWords;
+    this.stopOnError = targetWords.length > 0 ? stopOnError : "off";
   }
 
   private get wordIndex(): number {
@@ -77,6 +84,9 @@ export class FreeInput implements InputController {
     // --- Espace : verrouille le mot et avance ------------------------------
     if (key === " ") {
       if (this.typed.length === 0) return null; // espace en tête / double espace ignoré
+      // Stop on error (mot) : bloque l'espace tant que le mot courant n'est pas exact —
+      // la frappe n'est même pas journalisée, comme si elle n'avait pas eu lieu.
+      if (this.stopOnError === "word" && this.typed !== this.currentTarget()) return null;
       this.locked.push(this.typed);
       this.typed = "";
       return { t: now, k: " " };
@@ -84,6 +94,14 @@ export class FreeInput implements InputController {
 
     // --- Caractère imprimable ---------------------------------------------
     if (key.length === 1) {
+      // Stop on error (lettre) : une frappe fausse est bloquée avant d'exister — jamais
+      // journalisée, jamais ajoutée au buffer. Même correction possible pas nécessaire :
+      // il n'y a jamais d'erreur à corriger.
+      if (this.stopOnError === "letter") {
+        const tgt = this.currentTarget();
+        const pos = this.typed.length;
+        if (!(pos < tgt.length && key === tgt[pos])) return null;
+      }
       // Toujours journalisé (Rust compte l'Extra) ; ajouté au buffer si sous le plafond.
       if (this.typed.length < this.maxBuffer()) {
         this.typed += key;

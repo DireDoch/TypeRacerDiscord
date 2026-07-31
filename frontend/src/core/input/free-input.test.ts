@@ -72,3 +72,63 @@ describe("FreeInput — curseur libre", () => {
     expect(log).toHaveLength(10); // toutes les frappes restent dans le log
   });
 });
+
+describe("FreeInput — stop on error (issue #65, Solo only)", () => {
+  it("lettre : une frappe fausse est bloquée, jamais journalisée ni ajoutée au buffer", () => {
+    const fi = new FreeInput(["the"], "letter");
+    const k = fi.handleKey("x", false, 100); // 'x' au lieu de 't'
+    expect(k).toBeNull();
+    expect(fi.view().typed).toBe("");
+  });
+
+  it("lettre : une frappe correcte passe normalement", () => {
+    const fi = new FreeInput(["the"], "letter");
+    const log = play(fi, "the");
+    expect(log).toHaveLength(3);
+    expect(fi.view().typed).toBe("the");
+  });
+
+  it("lettre : bloque aussi un caractère en trop au-delà du mot cible", () => {
+    const fi = new FreeInput(["hi"], "letter");
+    play(fi, "hi");
+    const k = fi.handleKey("x", false, 400); // le mot cible est déjà entièrement tapé
+    expect(k).toBeNull();
+    expect(fi.view().typed).toBe("hi");
+  });
+
+  it("mot : l'espace est bloqué tant que le mot courant n'est pas exact", () => {
+    const fi = new FreeInput(["the", "cat"], "word");
+    const log = play(fi, "th "); // mot incomplet, espace prématuré
+    expect(log.at(-1)?.k).not.toBe(" "); // l'espace n'a pas été journalisé
+    expect(fi.view().lockedWords).toEqual([]);
+    expect(fi.view().typed).toBe("th");
+  });
+
+  it("mot : les erreurs restent libres À L'INTÉRIEUR du mot (seul l'espace bloque)", () => {
+    const fi = new FreeInput(["the"], "word");
+    play(fi, "txe"); // 'x' au lieu de 'h' : accepté quand même
+    expect(fi.view().typed).toBe("txe");
+  });
+
+  it("mot : une fois corrigé, l'espace verrouille normalement", () => {
+    const fi = new FreeInput(["the", "cat"], "word");
+    play(fi, "txe"); // faute
+    play(fi, "<<"); // corrige
+    play(fi, "he ");
+    expect(fi.view().lockedWords).toEqual(["the"]);
+  });
+
+  it("off (défaut) : aucun blocage, comportement inchangé", () => {
+    const fi = new FreeInput(["the"]);
+    const log = play(fi, "xhe");
+    expect(log).toHaveLength(3);
+    expect(fi.view().typed).toBe("xhe");
+  });
+
+  it("Zen (pas de texte cible) : jamais bloqué, quelle que soit la valeur", () => {
+    const fi = new FreeInput([], "letter");
+    const log = play(fi, "xyz");
+    expect(log).toHaveLength(3);
+    expect(fi.view().typed).toBe("xyz");
+  });
+});
