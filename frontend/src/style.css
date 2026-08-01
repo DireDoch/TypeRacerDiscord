@@ -919,6 +919,19 @@ button.primary:hover {
   width: 100%;
 }
 
+/* Zone à risque (issue #70) : bouton destructeur et erreur d'import — mêmes couleurs
+   de faute que la zone de frappe (--error/--error-bg), rien de nouveau à inventer. */
+.danger {
+  color: var(--error);
+  border-color: var(--error);
+}
+.set-error {
+  color: var(--error);
+  background: var(--error-bg);
+  border-radius: 4px;
+  padding: 0.5rem 0.7rem;
+}
+
 /* Contrôle segmenté : le choix actif est corail (texte, filet et fond sourd),
    les autres restent en --sub. Un seul élément coloré par ligne. */
 /* Grille plutôt que flex-wrap : les options s'affichant chacune DANS SA POLICE,

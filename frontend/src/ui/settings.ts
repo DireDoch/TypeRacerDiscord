@@ -26,7 +26,12 @@ import {
   STOP_ON_ERROR_VALUES,
   TIME_WARNING_LABELS,
   TIME_WARNING_VALUES,
+  applyPreferences,
+  exportPreferences,
+  importPreferences,
   loadPreferences,
+  resetPreferences,
+  savePreferences,
   setPreference,
   type Preferences,
 } from "../core/preferences";
@@ -62,7 +67,16 @@ export interface Toggle {
   value: boolean;
 }
 
-export type Control = Segmented | Slider | Toggle;
+/** Nombre entier libre (issue #70) — un plafond FPS personnalisé n'est pas une
+ *  poignée de valeurs discrètes comme `Slider`, l'entrée native `number` s'impose. */
+export interface NumberInput {
+  kind: "number";
+  value: number;
+  min?: number;
+  placeholder?: string;
+}
+
+export type Control = Segmented | Slider | Toggle | NumberInput;
 
 export interface SettingRow {
   key: string;
@@ -252,6 +266,9 @@ function controlHtml(row: SettingRow): string {
     case "toggle":
       return `<input type="checkbox" data-setting="${row.key}" ${control.value ? "checked" : ""}
                 aria-labelledby="lbl-${row.key}">`;
+    case "number":
+      return `<input type="number" data-setting="${row.key}" min="${control.min ?? 0}" value="${control.value}"
+                ${control.placeholder ? `placeholder="${control.placeholder}"` : ""} aria-labelledby="lbl-${row.key}">`;
   }
 }
 
@@ -307,7 +324,8 @@ export class Settings {
   }
 
   private render(): void {
-    const body = sections(loadPreferences()).map(sectionHtml).join("");
+    const secs = sections(loadPreferences());
+    const body = secs.map(sectionHtml).join("");
     this.root.innerHTML = `
       <section class="settings">
         <header class="settings-head">
@@ -315,6 +333,7 @@ export class Settings {
           <button type="button" class="ghost" data-act="back">← Retour</button>
         </header>
         ${body}
+        ${this.dangerZoneHtml(secs.length)}
         <footer class="settings-foot">
           <p class="hint">Ces réglages appartiennent à cet appareil : ils ne quittent jamais votre machine.</p>
           <p class="hint">
@@ -325,6 +344,59 @@ export class Settings {
         </footer>
       </section>`;
     this.wire();
+  }
+
+  /**
+   * Zone à risque (issue #70) : à part de `sections()` — ce ne sont pas des
+   * Preferences à valeur unique mais des ACTIONS (export/import/reset), avec
+   * confirmation native (`confirm()`, pas de composant modal dans ce dépôt à
+   * réutiliser — la plateforme le fait déjà). Import et Reset écrasent des
+   * réglages existants : confirmation. Export ne fait que lire ; le curseur FPS
+   * est une Preference comme une autre (déjà réversible) : ni l'un ni l'autre n'en a besoin.
+   */
+  private dangerZoneHtml(index: number): string {
+    const number = String(index + 1).padStart(2, "0");
+    const fps = loadPreferences().fpsLimit;
+    return `
+      <section class="set-section" style="--i:${index}">
+        <h3><span class="set-index">${number}</span>Zone à risque</h3>
+        <div class="set-rows">
+          <div class="set-row">
+            <div class="set-text">
+              <span class="set-label" id="lbl-fpsLimit">Plafond d'images/s</span>
+              <p class="set-desc">Limite la fréquence de l'animation live (compteurs qui bougent). 0 = natif, illimité.</p>
+            </div>
+            <div class="set-control">
+              <input type="number" data-setting="fpsLimit" min="0" value="${fps}" placeholder="natif" aria-labelledby="lbl-fpsLimit">
+            </div>
+          </div>
+          <div class="set-row">
+            <div class="set-text">
+              <span class="set-label">Exporter les Preferences</span>
+              <p class="set-desc">Télécharge un fichier JSON de tes réglages actuels.</p>
+            </div>
+            <div class="set-control"><button type="button" data-act="export">Exporter</button></div>
+          </div>
+          <div class="set-row">
+            <div class="set-text">
+              <span class="set-label">Importer des Preferences</span>
+              <p class="set-desc">Restaure des réglages depuis un fichier JSON exporté — écrase les réglages actuels, après confirmation.</p>
+            </div>
+            <div class="set-control">
+              <button type="button" data-act="import">Importer</button>
+              <input type="file" id="importFile" accept="application/json" hidden>
+            </div>
+          </div>
+          <p class="set-desc set-error" id="importError" hidden></p>
+          <div class="set-row">
+            <div class="set-text">
+              <span class="set-label">Réinitialiser les réglages</span>
+              <p class="set-desc">Remet tous les réglages ci-dessus à leur défaut, après confirmation. Ne touche à rien d'autre.</p>
+            </div>
+            <div class="set-control"><button type="button" class="danger" data-act="reset-settings">Réinitialiser</button></div>
+          </div>
+        </div>
+      </section>`;
   }
 
   private wire(): void {
@@ -355,5 +427,55 @@ export class Settings {
       setPreference(key as keyof Preferences, value as Preferences[keyof Preferences]);
       this.render();
     });
+
+    this.wireDangerZone();
+  }
+
+  /** Zone à risque (issue #70) : export/import/reset, à part de la délégation
+   *  générique ci-dessus — ce sont des actions, pas des Preferences à valeur unique. */
+  private wireDangerZone(): void {
+    this.root.querySelector<HTMLButtonElement>('[data-act="export"]')?.addEventListener("click", () => {
+      const blob = new Blob([exportPreferences()], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "typeracer-preferences.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    const fileInput = this.root.querySelector<HTMLInputElement>("#importFile");
+    this.root
+      .querySelector<HTMLButtonElement>('[data-act="import"]')
+      ?.addEventListener("click", () => fileInput?.click());
+    fileInput?.addEventListener("change", () => {
+      const file = fileInput.files?.[0];
+      fileInput.value = ""; // permet de réimporter le même fichier deux fois de suite
+      if (file) void this.handleImportFile(file);
+    });
+
+    this.root.querySelector<HTMLButtonElement>('[data-act="reset-settings"]')?.addEventListener("click", () => {
+      if (!confirm("Réinitialiser tous les réglages à leur défaut ?")) return;
+      resetPreferences();
+      this.render();
+    });
+  }
+
+  /** Rejeté (JSON cassé, ou pas un objet) → erreur visible, RIEN n'est écrit. Valide →
+   *  confirmation avant d'écraser les réglages actuels (issue #70). */
+  private async handleImportFile(file: File): Promise<void> {
+    const parsed = importPreferences(await file.text());
+    if (!parsed) {
+      const err = this.root.querySelector<HTMLElement>("#importError");
+      if (err) {
+        err.textContent = "Fichier invalide — ce n'est pas un JSON de Preferences.";
+        err.hidden = false;
+      }
+      return;
+    }
+    if (!confirm("Remplacer tes réglages actuels par ceux de ce fichier ?")) return;
+    savePreferences(parsed);
+    applyPreferences(parsed);
+    this.render();
   }
 }

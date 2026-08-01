@@ -22,6 +22,7 @@ import {
 } from "../core/preferences";
 import { playErrorSound, playTimeWarningSound } from "../core/sound";
 import { formatSpeed } from "../core/speed-unit";
+import { shouldRenderFrame } from "../core/fps";
 import { generateWithRng, initialWordCount } from "../core/text-gen";
 import { generateDrillText } from "../core/text-gen/drill";
 import { Rng } from "../core/text-gen/rng";
@@ -78,6 +79,8 @@ export class Practice {
   /** Instant (horloge du Run) de la 1re frappe du mot courant, pour le burst live —
    *  `null` tant qu'aucune frappe n'a commencé le mot. */
   private wordStartMs: number | null = null;
+  /** Dernier rendu du bandeau live (`performance.now()`), pour le plafond FPS (issue #70). */
+  private lastFrameMs = 0;
 
   private phase: RunPhase = "idle";
   private seed = 0;
@@ -343,8 +346,13 @@ export class Practice {
     }
 
     this.maybePlayTimeWarning(elapsed);
-    this.retopIfNeeded(); // Time infini : alimente le flux de mots.
-    this.updateLiveBar(elapsed);
+    this.retopIfNeeded(); // Time infini : alimente le flux de mots — jamais throttlé,
+    // c'est de la logique de jeu, pas de l'animation (issue #70 ne plafonne QUE le rendu).
+    const now = performance.now();
+    if (shouldRenderFrame(this.lastFrameMs, now, loadPreferences().fpsLimit)) {
+      this.lastFrameMs = now;
+      this.updateLiveBar(elapsed);
+    }
     this.rafId = requestAnimationFrame(() => this.loop());
   }
 
