@@ -126,4 +126,11 @@ describe("sections — déclaration des réglages", () => {
     expect(apparence?.rows.find((r) => r.key === "timerOpacity")?.control.value).toBe(0.5);
     expect(apparence?.rows.find((r) => r.key === "showAllLines")?.control.value).toBe(true);
   });
+
+  it("la section Apparence (issue #68) reflète highlightMode", () => {
+    const apparence = sections({ ...defaultPreferences(), highlightMode: "next-word" }).find(
+      (s) => s.title === "Apparence",
+    );
+    expect(apparence?.rows.find((r) => r.key === "highlightMode")?.control.value).toBe("next-word");
+  });
 });

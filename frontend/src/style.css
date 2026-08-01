@@ -162,6 +162,11 @@ body {
   background: var(--error-bg);
   border-radius: 2px;
 }
+/* Highlight mode (issue #68) : mots hors de la fenêtre mise en avant — assombris pour
+   faire ressortir le mot courant et ceux qui le suivent de près. */
+.word.dim .untyped {
+  color: var(--sub);
+}
 
 /* --- Curseur bloc glissant ------------------------------------------------
    Un SEUL élément, déplacé par JS (placeCaret) ; c'est CSS qui fait glisser.

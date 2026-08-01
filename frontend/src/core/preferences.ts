@@ -92,6 +92,31 @@ export const LIVE_STAT_STYLE_LABELS: Record<LiveStatStyle, string> = { text: "Te
 export type TimerOpacity = 0.25 | 0.5 | 0.75 | 1;
 export const TIMER_OPACITIES: TimerOpacity[] = [0.25, 0.5, 0.75, 1];
 
+/**
+ * Highlight mode (issue #68) : ce qui est mis en avant AU-DELÀ du mot courant dans la
+ * zone de frappe. "off"/"letter" ne mettent rien en avant en plus de la lettre sous le
+ * curseur (déjà portée par le curseur bloc) — le texte à venir reste uniformément net,
+ * comportement d'origine. "word"/"next-*-words" éclaircissent une fenêtre de N mots
+ * après le courant et assombrissent tout le reste pour la faire ressortir.
+ */
+export type HighlightMode = "off" | "letter" | "word" | "next-word" | "next-two-words" | "next-three-words";
+export const HIGHLIGHT_MODES: HighlightMode[] = [
+  "off",
+  "letter",
+  "word",
+  "next-word",
+  "next-two-words",
+  "next-three-words",
+];
+export const HIGHLIGHT_MODE_LABELS: Record<HighlightMode, string> = {
+  off: "Désactivé",
+  letter: "Lettre",
+  word: "Mot",
+  "next-word": "Mot suivant",
+  "next-two-words": "2 mots suivants",
+  "next-three-words": "3 mots suivants",
+};
+
 export interface Preferences {
   fontFamily: FontFamily;
   quickRestartKey: QuickRestartKey;
@@ -104,9 +129,10 @@ export interface Preferences {
   liveBurstStyle: LiveStatStyle;
   timerOpacity: TimerOpacity;
   showAllLines: boolean;
+  highlightMode: HighlightMode;
 }
 
-/** Défaut + domaine de validité d'une clé. Les issues suivantes (#68-#70)
+/** Défaut + domaine de validité d'une clé. Les issues suivantes (#69-#70)
  *  ajoutent leurs clés ICI : c'est le seul endroit à toucher pour qu'une
  *  Preference soit typée, validée, persistée et réinitialisable. */
 const SPEC: { [K in keyof Preferences]: { default: Preferences[K]; valid: (v: unknown) => boolean } } = {
@@ -153,6 +179,10 @@ const SPEC: { [K in keyof Preferences]: { default: Preferences[K]; valid: (v: un
   showAllLines: {
     default: false,
     valid: (v) => typeof v === "boolean",
+  },
+  highlightMode: {
+    default: "letter",
+    valid: (v) => typeof v === "string" && (HIGHLIGHT_MODES as string[]).includes(v),
   },
 };
 
