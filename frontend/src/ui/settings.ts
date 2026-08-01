@@ -16,6 +16,8 @@
 import {
   FONT_KEYS,
   FONT_STACKS,
+  HIGHLIGHT_MODES,
+  HIGHLIGHT_MODE_LABELS,
   LIVE_STAT_STYLES,
   LIVE_STAT_STYLE_LABELS,
   QUICK_RESTART_KEYS,
@@ -134,6 +136,17 @@ export function sections(prefs: Preferences): SettingSection[] {
           description:
             "Solo uniquement (words/citations) : montre le texte entier au lieu de la fenêtre de 3 lignes. Peut masquer le timer/les stats live sous un long texte — c'est attendu.",
           control: { kind: "toggle", value: prefs.showAllLines },
+        },
+        {
+          key: "highlightMode",
+          label: "Mode de surbrillance",
+          description:
+            "Ce qui est mis en avant devant le curseur. Lettre/désactivé laissent tout le texte net ; les modes Mot assombrissent tout sauf une fenêtre de mots proches.",
+          control: {
+            kind: "segmented",
+            value: prefs.highlightMode,
+            options: HIGHLIGHT_MODES.map((key) => ({ value: key, label: HIGHLIGHT_MODE_LABELS[key] })),
+          },
         },
       ],
     },

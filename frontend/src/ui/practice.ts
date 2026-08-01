@@ -472,7 +472,9 @@ export class Practice {
     if (!el) return;
     const view = this.controller.view();
     el.innerHTML =
-      this.config.mode === "zen" ? zenHtml(view, this.phase === "running") : wordsHtml(this.targetWords, view, this.phase === "running");
+      this.config.mode === "zen"
+        ? zenHtml(view, this.phase === "running")
+        : wordsHtml(this.targetWords, view, this.phase === "running", loadPreferences().highlightMode);
     // "Afficher toutes les lignes" (issue #67) lève le clip CSS : pas de fenêtre à faire
     // glisser (même logique que Race/Apprendre, qui n'en ont jamais eu besoin).
     if (!this.showAllLinesActive()) {
@@ -598,7 +600,7 @@ export class Practice {
       if (this.phase === "idle") return `<div class="loading">Zen · tape librement — Shift+Enter pour terminer.</div>`;
       return zenHtml(view, this.phase === "running");
     }
-    return wordsHtml(this.targetWords, view, this.phase === "running");
+    return wordsHtml(this.targetWords, view, this.phase === "running", loadPreferences().highlightMode);
   }
 
   /** Libellé du Redémarrage rapide (issue #65) configuré, `null` si désactivé — les
