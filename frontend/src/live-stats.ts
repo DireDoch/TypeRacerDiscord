@@ -46,3 +46,33 @@ export function liveWpmZen(view: InputView, elapsedMs: number): number {
   if (minutes <= 0) return 0;
   return Math.round(chars / 5 / minutes);
 }
+
+/**
+ * Précision live (issue #67) = frappes correctes cumulées ÷ total, en %. Backspace
+ * neutre (ni compté ni décompté) — même définition que l'ACC de scoreboard.ts. Aucune
+ * frappe encore : 100 (rien de faux pour l'instant), même convention que le Scoreboard
+ * pour `totalKeys === 0`.
+ */
+export function liveAccuracy(correctKeystrokes: number, totalKeystrokes: number): number {
+  if (totalKeystrokes === 0) return 100;
+  return Math.round((correctKeystrokes / totalKeystrokes) * 100);
+}
+
+/**
+ * Burst live (issue #67) = vitesse du mot EN COURS depuis sa première frappe — un
+ * ressenti "à quelle vitesse ce mot-ci part", pas un chiffre de record. `wordStartMs`
+ * (horloge du Run, `null` si aucune frappe encore sur ce mot) vient de l'écran, qui
+ * seul sait quand un nouveau mot a commencé (verrouillage/backspace-word).
+ */
+export function liveBurst(
+  view: InputView,
+  targetWords: string[],
+  wordStartMs: number | null,
+  elapsedMs: number,
+): number {
+  if (wordStartMs === null) return 0;
+  const correct = wordCorrect(view.typed, targetWords[view.wordIndex] ?? "");
+  const minutes = (elapsedMs - wordStartMs) / 60000;
+  if (minutes <= 0) return 0;
+  return Math.round(correct / 5 / minutes);
+}

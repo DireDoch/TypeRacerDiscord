@@ -81,6 +81,17 @@ export const TIME_WARNING_SECONDS: Record<TimeWarning, number | null> = {
   "10s": 10,
 };
 
+/** Style d'un indicateur live (issue #67) — "text" (défaut, valeur numérique visible)
+ *  ou "off" (masqué). Pas de variante visuelle inventée sans maquette : ces deux-là
+ *  couvrent le seul besoin réel, afficher ou pas. */
+export type LiveStatStyle = "text" | "off";
+export const LIVE_STAT_STYLES: LiveStatStyle[] = ["text", "off"];
+export const LIVE_STAT_STYLE_LABELS: Record<LiveStatStyle, string> = { text: "Texte", off: "Masqué" };
+
+/** Opacité du texte timer/live-stats (issue #67), en fraction directe (pas d'index). */
+export type TimerOpacity = 0.25 | 0.5 | 0.75 | 1;
+export const TIMER_OPACITIES: TimerOpacity[] = [0.25, 0.5, 0.75, 1];
+
 export interface Preferences {
   fontFamily: FontFamily;
   quickRestartKey: QuickRestartKey;
@@ -88,9 +99,14 @@ export interface Preferences {
   soundVolume: number;
   soundOnError: boolean;
   timeWarning: TimeWarning;
+  liveSpeedStyle: LiveStatStyle;
+  liveAccuracyStyle: LiveStatStyle;
+  liveBurstStyle: LiveStatStyle;
+  timerOpacity: TimerOpacity;
+  showAllLines: boolean;
 }
 
-/** Défaut + domaine de validité d'une clé. Les issues suivantes (#67-#70)
+/** Défaut + domaine de validité d'une clé. Les issues suivantes (#68-#70)
  *  ajoutent leurs clés ICI : c'est le seul endroit à toucher pour qu'une
  *  Preference soit typée, validée, persistée et réinitialisable. */
 const SPEC: { [K in keyof Preferences]: { default: Preferences[K]; valid: (v: unknown) => boolean } } = {
@@ -117,6 +133,26 @@ const SPEC: { [K in keyof Preferences]: { default: Preferences[K]; valid: (v: un
   timeWarning: {
     default: "off",
     valid: (v) => typeof v === "string" && (TIME_WARNING_VALUES as string[]).includes(v),
+  },
+  liveSpeedStyle: {
+    default: "text",
+    valid: (v) => typeof v === "string" && (LIVE_STAT_STYLES as string[]).includes(v),
+  },
+  liveAccuracyStyle: {
+    default: "text",
+    valid: (v) => typeof v === "string" && (LIVE_STAT_STYLES as string[]).includes(v),
+  },
+  liveBurstStyle: {
+    default: "text",
+    valid: (v) => typeof v === "string" && (LIVE_STAT_STYLES as string[]).includes(v),
+  },
+  timerOpacity: {
+    default: 1,
+    valid: (v) => typeof v === "number" && (TIMER_OPACITIES as number[]).includes(v),
+  },
+  showAllLines: {
+    default: false,
+    valid: (v) => typeof v === "boolean",
   },
 };
 

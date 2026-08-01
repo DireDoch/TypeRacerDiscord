@@ -24,7 +24,7 @@ import { playErrorSound, playTimeWarningSound } from "../core/sound";
 import { generateWithRng, initialWordCount } from "../core/text-gen";
 import { generateDrillText } from "../core/text-gen/drill";
 import { Rng } from "../core/text-gen/rng";
-import { liveWpm, liveWpmZen } from "../live-stats";
+import { liveAccuracy, liveBurst, liveWpm, liveWpmZen } from "../live-stats";
 import { submitRun, fetchQuote, fetchProfileAnalysis, isIdentityError, IDENTITY_ERROR_MESSAGE } from "../api";
 import { renderResults } from "./results";
 import { runReplay } from "./replay";
@@ -69,6 +69,14 @@ export class Practice {
   private failure: DifficultyFailure | null = null;
   /** Avertissement de fin (issue #66) : au plus une fois par Run. */
   private warningPlayed = false;
+  /** Précision live (issue #67) : frappes correctes / total, mêmes unités que l'ACC
+   *  autoritaire — comptées seulement sur ce qui entre réellement au log (stop-on-error
+   *  peut rejeter une frappe avant qu'elle n'y arrive). */
+  private correctKeystrokes = 0;
+  private totalKeystrokes = 0;
+  /** Instant (horloge du Run) de la 1re frappe du mot courant, pour le burst live —
+   *  `null` tant qu'aucune frappe n'a commencé le mot. */
+  private wordStartMs: number | null = null;
 
   private phase: RunPhase = "idle";
   private seed = 0;
@@ -136,6 +144,9 @@ export class Practice {
     this.quoteWikipediaUrl = undefined;
     this.failure = null;
     this.warningPlayed = false;
+    this.correctKeystrokes = 0;
+    this.totalKeystrokes = 0;
+    this.wordStartMs = null;
     this.loadError = false;
     this.loadErrorIsIdentity = false;
     this.drillNoProfile = false;
@@ -250,10 +261,29 @@ export class Practice {
     // Son sur erreur (issue #66) : évalué AVANT handleKey — stop-on-error (#65) peut
     // rejeter la frappe (buffer inchangé), le retour audio doit quand même se produire.
     const prefs = loadPreferences();
-    if (prefs.soundOnError && this.isWrongKeystroke(e.key)) playErrorSound(prefs.soundVolume);
+    const wrong = this.isWrongKeystroke(e.key);
+    if (prefs.soundOnError && wrong) playErrorSound(prefs.soundVolume);
 
-    const k: Keystroke | null = this.controller.handleKey(e.key, e.ctrlKey, this.clock.elapsed());
-    if (k) this.log.push(k);
+    const viewBefore = this.controller.view();
+    const now = this.clock.elapsed();
+    const k: Keystroke | null = this.controller.handleKey(e.key, e.ctrlKey, now);
+    if (k) {
+      this.log.push(k);
+      // Précision live (issue #67) : seulement ce qui entre RÉELLEMENT au log (une
+      // frappe bloquée par stop-on-error n'a jamais eu lieu de ce point de vue).
+      if (k.k.length > 0) {
+        this.totalKeystrokes++;
+        if (!wrong) this.correctKeystrokes++;
+      }
+    }
+    // Burst live (issue #67) : 1re frappe d'un mot neuf → départ du chrono du mot ;
+    // mot verrouillé ou vidé (backspace-word) → plus de mot en cours à mesurer.
+    const viewAfter = this.controller.view();
+    if (viewAfter.wordIndex !== viewBefore.wordIndex || viewAfter.typed.length === 0) {
+      this.wordStartMs = null;
+    } else if (viewBefore.typed.length === 0 && viewAfter.typed.length > 0) {
+      this.wordStartMs = now;
+    }
     // Difficulté (issue #64, ADR 0013) : évaluée sur le log free-input, indépendamment
     // du contrôleur — Zen n'a pas de texte cible, la Difficulté n'y a pas de sens.
     if (this.difficulty !== "normal" && this.config.mode !== "zen") {
@@ -415,10 +445,11 @@ export class Practice {
   // --- Rendu ------------------------------------------------------------------
 
   private render(): void {
+    const opacity = loadPreferences().timerOpacity;
     this.root.innerHTML = `
-      <section class="practice">
+      <section class="practice${this.showAllLinesActive() ? " show-all-lines" : ""}">
         ${this.configBarHtml()}
-        <div class="live-bar" id="liveBar">${this.liveBarHtml(0)}</div>
+        <div class="live-bar" id="liveBar" style="opacity:${opacity}">${this.liveBarHtml(0)}</div>
         <div class="words-wrap">
           <div class="words" id="words" tabindex="0">${this.wordsAreaHtml()}</div>
           <div class="caret-block"></div>
@@ -442,9 +473,23 @@ export class Practice {
     const view = this.controller.view();
     el.innerHTML =
       this.config.mode === "zen" ? zenHtml(view, this.phase === "running") : wordsHtml(this.targetWords, view, this.phase === "running");
-    // Zen : pas de cible, le mot actif (pour la fenêtre glissante) est le dernier tapé.
-    slideWindow(el, this.config.mode === "zen" ? view.lockedWords.length : view.wordIndex);
+    // "Afficher toutes les lignes" (issue #67) lève le clip CSS : pas de fenêtre à faire
+    // glisser (même logique que Race/Apprendre, qui n'en ont jamais eu besoin).
+    if (!this.showAllLinesActive()) {
+      // Zen : pas de cible, le mot actif (pour la fenêtre glissante) est le dernier tapé.
+      slideWindow(el, this.config.mode === "zen" ? view.lockedWords.length : view.wordIndex);
+    }
     placeCaret(el); // après slideWindow : la position du bloc dépend du scrollTop.
+  }
+
+  /** "Afficher toutes les lignes" (issue #67) : Solo uniquement, et seulement pour les
+   *  Modes à texte fixe déjà connu d'avance — words/quotes/Drill-like. Time et Zen ont
+   *  un flux potentiellement sans fin (retop / pas de cible) : rien à "afficher en entier". */
+  private showAllLinesActive(): boolean {
+    return (
+      loadPreferences().showAllLines &&
+      (this.config.mode === "words" || this.config.mode === "quotes" || this.isDrillLike())
+    );
   }
 
   /** POST /api/runs raté : le Run (this.log) reste en mémoire, "réessayer" relance finish(). */
@@ -487,13 +532,17 @@ export class Practice {
   }
 
   private liveBarHtml(elapsed: number): string {
+    const prefs = loadPreferences();
     let wpm = 0;
+    let burst = 0;
     if (this.phase === "running") {
       wpm =
         this.config.mode === "zen"
           ? liveWpmZen(this.controller.view(), elapsed)
           : liveWpm(this.targetWords, this.controller.view(), elapsed);
+      burst = liveBurst(this.controller.view(), this.targetWords, this.wordStartMs, elapsed);
     }
+    const accuracy = liveAccuracy(this.correctKeystrokes, this.totalKeystrokes);
     const elapsedS = Math.floor(elapsed / 1000);
     let progress = "";
     if (this.config.mode === "zen" || (this.config.mode === "time" && this.config.modeValue === 0)) {
@@ -509,7 +558,12 @@ export class Practice {
       const done = this.controller.view().wordIndex;
       progress = `<span class="timer">${done}/${this.targetWords.length}</span>`;
     }
-    return `${progress}<span class="live-wpm">${wpm} wpm</span>`;
+    // Styles live (issue #67) : "off" masque l'indicateur, rien d'autre — pas de
+    // variante visuelle inventée sans maquette.
+    const speed = prefs.liveSpeedStyle === "off" ? "" : `<span class="live-wpm">${wpm} wpm</span>`;
+    const acc = prefs.liveAccuracyStyle === "off" ? "" : `<span class="live-acc">${accuracy}%</span>`;
+    const burstHtml = prefs.liveBurstStyle === "off" ? "" : `<span class="live-burst">${burst} burst</span>`;
+    return `${progress}${speed}${acc}${burstHtml}`;
   }
 
   /** Contenu de la zone #words selon l'état (chargement Quote/Drill / erreur / mots). */

@@ -136,6 +136,12 @@ body {
   overflow: hidden;
   scroll-behavior: smooth;
 }
+/* "Afficher toutes les lignes" (issue #67, Preference) : même clip levé que Race/
+   Apprendre — le timer/les stats live peuvent alors être masqués sous un texte long,
+   c'est le compromis assumé du réglage. */
+.practice.show-all-lines .words {
+  max-height: none;
+}
 .word {
   display: inline-block;
 }
