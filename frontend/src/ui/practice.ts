@@ -14,10 +14,19 @@ import { RunClock } from "../core/clock";
 import { FreeInput } from "../core/input/free-input";
 import type { InputController } from "../core/input/controller";
 import { detectDifficultyFailure, type Difficulty, type DifficultyFailure } from "../core/difficulty";
+import {
+  QUICK_RESTART_DOM_KEY,
+  QUICK_RESTART_LABELS,
+  TIME_WARNING_SECONDS,
+  loadPreferences,
+} from "../core/preferences";
+import { playErrorSound, playTimeWarningSound } from "../core/sound";
+import { formatSpeed } from "../core/speed-unit";
+import { shouldRenderFrame } from "../core/fps";
 import { generateWithRng, initialWordCount } from "../core/text-gen";
 import { generateDrillText } from "../core/text-gen/drill";
 import { Rng } from "../core/text-gen/rng";
-import { liveWpm, liveWpmZen } from "../live-stats";
+import { liveAccuracy, liveBurst, liveWpm, liveWpmZen } from "../live-stats";
 import { submitRun, fetchQuote, fetchProfileAnalysis, isIdentityError, IDENTITY_ERROR_MESSAGE } from "../api";
 import { renderResults } from "./results";
 import { runReplay } from "./replay";
@@ -27,6 +36,7 @@ import { wordsHtml, zenHtml, slideWindow, placeCaret } from "./typing-zone";
 // 0 = Time infini (horloge désactivée, mots en flux continu, fin sur Shift+Enter).
 const TIME_VALUES = [15, 30, 60, 120, 0];
 const WORD_VALUES = [10, 25, 50];
+
 
 /** Difficulté (issue #64, ADR 0013) : hors `RunConfig` — ne définit PAS le Config
  *  bucket (aucun PB n'y est comparé), c'est un mode de jeu qui échoue le Run avant
@@ -59,6 +69,18 @@ export class Practice {
   private difficulty: Difficulty = "normal";
   /** Point d'échec Expert/Master du Run courant, `null` sinon. */
   private failure: DifficultyFailure | null = null;
+  /** Avertissement de fin (issue #66) : au plus une fois par Run. */
+  private warningPlayed = false;
+  /** Précision live (issue #67) : frappes correctes / total, mêmes unités que l'ACC
+   *  autoritaire — comptées seulement sur ce qui entre réellement au log (stop-on-error
+   *  peut rejeter une frappe avant qu'elle n'y arrive). */
+  private correctKeystrokes = 0;
+  private totalKeystrokes = 0;
+  /** Instant (horloge du Run) de la 1re frappe du mot courant, pour le burst live —
+   *  `null` tant qu'aucune frappe n'a commencé le mot. */
+  private wordStartMs: number | null = null;
+  /** Dernier rendu du bandeau live (`performance.now()`), pour le plafond FPS (issue #70). */
+  private lastFrameMs = 0;
 
   private phase: RunPhase = "idle";
   private seed = 0;
@@ -125,6 +147,10 @@ export class Practice {
     this.quoteAuthor = undefined;
     this.quoteWikipediaUrl = undefined;
     this.failure = null;
+    this.warningPlayed = false;
+    this.correctKeystrokes = 0;
+    this.totalKeystrokes = 0;
+    this.wordStartMs = null;
     this.loadError = false;
     this.loadErrorIsIdentity = false;
     this.drillNoProfile = false;
@@ -192,7 +218,7 @@ export class Practice {
       this.targetWords = [];
     }
 
-    this.controller = new FreeInput(this.targetWords);
+    this.controller = new FreeInput(this.targetWords, loadPreferences().stopOnError);
     this.render();
   }
 
@@ -236,8 +262,32 @@ export class Practice {
   }
 
   private handleTypingKey(e: KeyboardEvent): void {
-    const k: Keystroke | null = this.controller.handleKey(e.key, e.ctrlKey, this.clock.elapsed());
-    if (k) this.log.push(k);
+    // Son sur erreur (issue #66) : évalué AVANT handleKey — stop-on-error (#65) peut
+    // rejeter la frappe (buffer inchangé), le retour audio doit quand même se produire.
+    const prefs = loadPreferences();
+    const wrong = this.isWrongKeystroke(e.key);
+    if (prefs.soundOnError && wrong) playErrorSound(prefs.soundVolume);
+
+    const viewBefore = this.controller.view();
+    const now = this.clock.elapsed();
+    const k: Keystroke | null = this.controller.handleKey(e.key, e.ctrlKey, now);
+    if (k) {
+      this.log.push(k);
+      // Précision live (issue #67) : seulement ce qui entre RÉELLEMENT au log (une
+      // frappe bloquée par stop-on-error n'a jamais eu lieu de ce point de vue).
+      if (k.k.length > 0) {
+        this.totalKeystrokes++;
+        if (!wrong) this.correctKeystrokes++;
+      }
+    }
+    // Burst live (issue #67) : 1re frappe d'un mot neuf → départ du chrono du mot ;
+    // mot verrouillé ou vidé (backspace-word) → plus de mot en cours à mesurer.
+    const viewAfter = this.controller.view();
+    if (viewAfter.wordIndex !== viewBefore.wordIndex || viewAfter.typed.length === 0) {
+      this.wordStartMs = null;
+    } else if (viewBefore.typed.length === 0 && viewAfter.typed.length > 0) {
+      this.wordStartMs = now;
+    }
     // Difficulté (issue #64, ADR 0013) : évaluée sur le log free-input, indépendamment
     // du contrôleur — Zen n'a pas de texte cible, la Difficulté n'y a pas de sens.
     if (this.difficulty !== "normal" && this.config.mode !== "zen") {
@@ -254,6 +304,24 @@ export class Practice {
     this.retopIfNeeded(); // Time infini : réalimente si le curseur approche du bout.
     this.renderWords();
     this.updateLiveBar(this.clock.elapsed());
+  }
+
+  /**
+   * Une frappe est "fausse" pour le son d'erreur (issue #66) : un caractère qui ne
+   * correspond pas à la position courante, ou un espace prématuré (mot pas encore
+   * exact). Zen n'a pas de cible : rien n'y est jamais faux. Pure vis-à-vis de l'état
+   * AVANT la frappe (appelée avant `handleKey`).
+   */
+  private isWrongKeystroke(key: string): boolean {
+    if (this.config.mode === "zen") return false;
+    const view = this.controller.view();
+    const tgt = this.targetWords[view.wordIndex] ?? "";
+    if (key === " ") return view.typed.length > 0 && view.typed !== tgt;
+    if (key.length === 1) {
+      const pos = view.typed.length;
+      return !(pos < tgt.length && key === tgt[pos]);
+    }
+    return false;
   }
 
   /**
@@ -277,9 +345,29 @@ export class Practice {
       return;
     }
 
-    this.retopIfNeeded(); // Time infini : alimente le flux de mots.
-    this.updateLiveBar(elapsed);
+    this.maybePlayTimeWarning(elapsed);
+    this.retopIfNeeded(); // Time infini : alimente le flux de mots — jamais throttlé,
+    // c'est de la logique de jeu, pas de l'animation (issue #70 ne plafonne QUE le rendu).
+    const now = performance.now();
+    if (shouldRenderFrame(this.lastFrameMs, now, loadPreferences().fpsLimit)) {
+      this.lastFrameMs = now;
+      this.updateLiveBar(elapsed);
+    }
     this.rafId = requestAnimationFrame(() => this.loop());
+  }
+
+  /** Avertissement de fin (issue #66) : Time à durée fixe seulement, au plus une fois
+   *  par Run — sans quoi il rejouerait à chaque frame une fois le seuil franchi. */
+  private maybePlayTimeWarning(elapsed: number): void {
+    if (this.warningPlayed || this.config.mode !== "time" || this.config.modeValue <= 0) return;
+    const prefs = loadPreferences();
+    const warnAtS = TIME_WARNING_SECONDS[prefs.timeWarning];
+    if (warnAtS === null) return;
+    const remainingS = this.config.modeValue - elapsed / 1000;
+    if (remainingS <= warnAtS) {
+      this.warningPlayed = true;
+      playTimeWarningSound(prefs.soundVolume);
+    }
   }
 
   private async finish(): Promise<void> {
@@ -326,17 +414,17 @@ export class Practice {
   // --- Clavier ----------------------------------------------------------------
 
   private onKeyDown(e: KeyboardEvent): void {
-    // Tab = recommencer, depuis n'importe quel état.
-    if (e.key === "Tab") {
+    // Redémarrage rapide (issue #65) : depuis n'importe quel état. "off" (défaut) ne
+    // câble aucun raccourci — Tab redevient la navigation standard entre les contrôles,
+    // et le bouton "Rejouer" des résultats reste la seule voie.
+    const restartKey = QUICK_RESTART_DOM_KEY[loadPreferences().quickRestartKey];
+    if (restartKey !== null && e.key === restartKey && !e.shiftKey) {
       e.preventDefault();
       void this.reset();
       return;
     }
 
-    if (this.phase === "finished") {
-      if (e.key === "Enter") void this.reset();
-      return;
-    }
+    if (this.phase === "finished") return;
 
     const isTypingKey = e.key === "Backspace" || e.key === " " || e.key.length === 1;
 
@@ -366,10 +454,11 @@ export class Practice {
   // --- Rendu ------------------------------------------------------------------
 
   private render(): void {
+    const opacity = loadPreferences().timerOpacity;
     this.root.innerHTML = `
-      <section class="practice">
+      <section class="practice${this.showAllLinesActive() ? " show-all-lines" : ""}">
         ${this.configBarHtml()}
-        <div class="live-bar" id="liveBar">${this.liveBarHtml(0)}</div>
+        <div class="live-bar" id="liveBar" style="opacity:${opacity}">${this.liveBarHtml(0)}</div>
         <div class="words-wrap">
           <div class="words" id="words" tabindex="0">${this.wordsAreaHtml()}</div>
           <div class="caret-block"></div>
@@ -392,10 +481,26 @@ export class Practice {
     if (!el) return;
     const view = this.controller.view();
     el.innerHTML =
-      this.config.mode === "zen" ? zenHtml(view, this.phase === "running") : wordsHtml(this.targetWords, view, this.phase === "running");
-    // Zen : pas de cible, le mot actif (pour la fenêtre glissante) est le dernier tapé.
-    slideWindow(el, this.config.mode === "zen" ? view.lockedWords.length : view.wordIndex);
+      this.config.mode === "zen"
+        ? zenHtml(view, this.phase === "running")
+        : wordsHtml(this.targetWords, view, this.phase === "running", loadPreferences().highlightMode);
+    // "Afficher toutes les lignes" (issue #67) lève le clip CSS : pas de fenêtre à faire
+    // glisser (même logique que Race/Apprendre, qui n'en ont jamais eu besoin).
+    if (!this.showAllLinesActive()) {
+      // Zen : pas de cible, le mot actif (pour la fenêtre glissante) est le dernier tapé.
+      slideWindow(el, this.config.mode === "zen" ? view.lockedWords.length : view.wordIndex);
+    }
     placeCaret(el); // après slideWindow : la position du bloc dépend du scrollTop.
+  }
+
+  /** "Afficher toutes les lignes" (issue #67) : Solo uniquement, et seulement pour les
+   *  Modes à texte fixe déjà connu d'avance — words/quotes/Drill-like. Time et Zen ont
+   *  un flux potentiellement sans fin (retop / pas de cible) : rien à "afficher en entier". */
+  private showAllLinesActive(): boolean {
+    return (
+      loadPreferences().showAllLines &&
+      (this.config.mode === "words" || this.config.mode === "quotes" || this.isDrillLike())
+    );
   }
 
   /** POST /api/runs raté : le Run (this.log) reste en mémoire, "réessayer" relance finish(). */
@@ -438,13 +543,17 @@ export class Practice {
   }
 
   private liveBarHtml(elapsed: number): string {
+    const prefs = loadPreferences();
     let wpm = 0;
+    let burst = 0;
     if (this.phase === "running") {
       wpm =
         this.config.mode === "zen"
           ? liveWpmZen(this.controller.view(), elapsed)
           : liveWpm(this.targetWords, this.controller.view(), elapsed);
+      burst = liveBurst(this.controller.view(), this.targetWords, this.wordStartMs, elapsed);
     }
+    const accuracy = liveAccuracy(this.correctKeystrokes, this.totalKeystrokes);
     const elapsedS = Math.floor(elapsed / 1000);
     let progress = "";
     if (this.config.mode === "zen" || (this.config.mode === "time" && this.config.modeValue === 0)) {
@@ -460,7 +569,15 @@ export class Practice {
       const done = this.controller.view().wordIndex;
       progress = `<span class="timer">${done}/${this.targetWords.length}</span>`;
     }
-    return `${progress}<span class="live-wpm">${wpm} wpm</span>`;
+    // Styles live (issue #67) : "off" masque l'indicateur, rien d'autre — pas de
+    // variante visuelle inventée sans maquette. Unité (issue #69) : même conversion
+    // pure pour vitesse et burst — deux vitesses affichées dans deux unités différentes
+    // en même temps serait plus confus qu'utile.
+    const speed = prefs.liveSpeedStyle === "off" ? "" : `<span class="live-wpm">${formatSpeed(wpm, prefs.speedUnit)}</span>`;
+    const acc = prefs.liveAccuracyStyle === "off" ? "" : `<span class="live-acc">${accuracy}%</span>`;
+    const burstHtml =
+      prefs.liveBurstStyle === "off" ? "" : `<span class="live-burst">${formatSpeed(burst, prefs.speedUnit)} burst</span>`;
+    return `${progress}${speed}${acc}${burstHtml}`;
   }
 
   /** Contenu de la zone #words selon l'état (chargement Quote/Drill / erreur / mots). */
@@ -484,7 +601,10 @@ export class Practice {
         : drillLike
           ? "Impossible de charger ton profil."
           : "Impossible de charger la citation.";
-      return `<div class="loading">${base} Tab pour réessayer.</div>`;
+      // Redémarrage rapide (issue #65) peut être désactivé : la retentative reste
+      // toujours possible en re-cliquant un mode dans la barre de config.
+      const retry = this.quickRestartHint();
+      return `<div class="loading">${base} ${retry ? `${retry} pour réessayer.` : "Change de mode pour réessayer."}</div>`;
     }
     const view = this.controller.view();
     if (this.config.mode === "zen") {
@@ -492,22 +612,36 @@ export class Practice {
       if (this.phase === "idle") return `<div class="loading">Zen · tape librement — Shift+Enter pour terminer.</div>`;
       return zenHtml(view, this.phase === "running");
     }
-    return wordsHtml(this.targetWords, view, this.phase === "running");
+    return wordsHtml(this.targetWords, view, this.phase === "running", loadPreferences().highlightMode);
+  }
+
+  /** Libellé du Redémarrage rapide (issue #65) configuré, `null` si désactivé — les
+   *  indices clavier de `hintText` disparaissent alors, seuls les contrôles cliquables
+   *  (barre de config, bouton "Rejouer" des résultats) restent mentionnés. */
+  private quickRestartHint(): string | null {
+    const key = loadPreferences().quickRestartKey;
+    return key === "off" ? null : QUICK_RESTART_LABELS[key];
   }
 
   private hintText(): string {
+    const restartWord = this.quickRestartHint();
     if (this.phase === "idle") {
       if (this.config.mode === "zen") return "Clique ou tape pour démarrer · Shift+Enter pour terminer";
+      if (!restartWord) return "Clique ou tape pour démarrer";
       const regen =
         this.config.mode === "quotes"
-          ? "Tab pour une autre citation"
+          ? `${restartWord} pour une autre citation`
           : this.isDrillLike()
-            ? "Tab pour un autre texte"
-            : "Tab pour regénérer";
+            ? `${restartWord} pour un autre texte`
+            : `${restartWord} pour regénérer`;
       return `Clique ou tape pour démarrer · ${regen}`;
     }
     if (this.phase === "running") {
-      return this.isEndless() ? "Shift+Enter pour terminer · Tab pour recommencer" : "Tab pour recommencer";
+      const parts = [
+        this.isEndless() ? "Shift+Enter pour terminer" : "",
+        restartWord ? `${restartWord} pour recommencer` : "",
+      ].filter(Boolean);
+      return parts.join(" · ");
     }
     return "";
   }

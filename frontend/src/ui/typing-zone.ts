@@ -11,9 +11,39 @@
 // =============================================================================
 
 import type { InputView } from "../core/input/controller";
+import type { HighlightMode } from "../core/preferences";
 
-/** Rend un mot caractère par caractère (correct / incorrect / extra / untyped + curseur). */
-export function renderWord(target: string, typed: string, withCaret: boolean): string {
+/** Mots visibles PLEINEMENT nets après le mot courant (0 = seulement lui). `Infinity`
+ *  pour off/letter : rien n'est jamais assombri. */
+const HIGHLIGHT_AHEAD: Record<HighlightMode, number> = {
+  off: Infinity,
+  letter: Infinity,
+  word: 0,
+  "next-word": 1,
+  "next-two-words": 2,
+  "next-three-words": 3,
+};
+
+/** Le mot en cours contient-il une erreur non corrigée (frappe fausse, ou trop longue) ? */
+function hasError(typed: string, target: string): boolean {
+  if (typed.length > target.length) return true; // Extra
+  for (let i = 0; i < typed.length; i++) if (typed[i] !== target[i]) return true;
+  return false;
+}
+
+/**
+ * Rend un mot caractère par caractère (correct / incorrect / extra / untyped + curseur).
+ * `forceError` (issue #68, règle red-on-error) : le mot COURANT contenant une faute se
+ * rend ENTIÈREMENT en rouge, prefixe correct compris — pas seulement les caractères
+ * fautifs — pour que l'erreur saute aux yeux même en highlight multi-mots, SANS faire
+ * perdre leur surbrillance aux mots suivants (`dim` reste indépendant de `forceError`).
+ */
+export function renderWord(
+  target: string,
+  typed: string,
+  withCaret: boolean,
+  opts: { forceError?: boolean; dim?: boolean } = {},
+): string {
   const spans: string[] = [];
   const len = Math.max(target.length, typed.length);
   for (let i = 0; i < len; i++) {
@@ -21,7 +51,13 @@ export function renderWord(target: string, typed: string, withCaret: boolean): s
     // du fond sur le corail, 7:1) — c'est ce qui le garde lisible sous le bloc.
     const cur = withCaret && i === typed.length ? " at-cursor" : "";
     if (i < typed.length) {
-      const cls = i >= target.length ? "extra" : typed[i] === target[i] ? "correct" : "incorrect";
+      const cls = opts.forceError
+        ? "incorrect"
+        : i >= target.length
+          ? "extra"
+          : typed[i] === target[i]
+            ? "correct"
+            : "incorrect";
       spans.push(`<span class="${cls}${cur}">${escapeChar(typed[i])}</span>`);
     } else {
       spans.push(`<span class="untyped${cur}">${escapeChar(target[i])}</span>`);
@@ -30,19 +66,29 @@ export function renderWord(target: string, typed: string, withCaret: boolean): s
   // Curseur au-delà du dernier caractère : aucun glyphe à recouvrir, on laisse un
   // repère de largeur nulle (le bloc garde sa dernière largeur mesurée).
   if (withCaret && typed.length >= len) spans.push(`<span class="caret"></span>`);
-  return `<span class="word">${spans.join("")}</span> `;
+  const wordClass = opts.dim ? "word dim" : "word";
+  return `<span class="${wordClass}">${spans.join("")}</span> `;
 }
 
 /**
  * Rendu mot-à-mot standard (Practice/Race/Apprendre/Replay hors Zen) : mots
- * verrouillés, mot courant (curseur si `active`), mots pas encore atteints.
+ * verrouillés, mot courant (curseur si `active`, rouge entier si fautif), mots pas
+ * encore atteints (assombris au-delà de la fenêtre de `highlightMode`).
  */
-export function wordsHtml(targetWords: string[], view: InputView, active: boolean): string {
+export function wordsHtml(
+  targetWords: string[],
+  view: InputView,
+  active: boolean,
+  highlightMode: HighlightMode = "letter",
+): string {
+  const ahead = HIGHLIGHT_AHEAD[highlightMode];
   return targetWords
     .map((target, i) => {
       if (i < view.lockedWords.length) return renderWord(target, view.lockedWords[i], false);
-      if (i === view.wordIndex) return renderWord(target, view.typed, active);
-      return renderWord(target, "", false);
+      if (i === view.wordIndex) {
+        return renderWord(target, view.typed, active, { forceError: active && hasError(view.typed, target) });
+      }
+      return renderWord(target, "", false, { dim: i > view.wordIndex + ahead });
     })
     .join("");
 }

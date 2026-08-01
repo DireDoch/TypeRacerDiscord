@@ -136,6 +136,12 @@ body {
   overflow: hidden;
   scroll-behavior: smooth;
 }
+/* "Afficher toutes les lignes" (issue #67, Preference) : même clip levé que Race/
+   Apprendre — le timer/les stats live peuvent alors être masqués sous un texte long,
+   c'est le compromis assumé du réglage. */
+.practice.show-all-lines .words {
+  max-height: none;
+}
 .word {
   display: inline-block;
 }
@@ -155,6 +161,11 @@ body {
   color: var(--error);
   background: var(--error-bg);
   border-radius: 2px;
+}
+/* Highlight mode (issue #68) : mots hors de la fenêtre mise en avant — assombris pour
+   faire ressortir le mot courant et ceux qui le suivent de près. */
+.word.dim .untyped {
+  color: var(--sub);
 }
 
 /* --- Curseur bloc glissant ------------------------------------------------
@@ -887,6 +898,15 @@ button.primary:hover {
   font-size: 1rem;
   color: var(--text);
 }
+/* Info-bulle native (issue #69) : `title` fait tout le travail, ceci ne fait que la
+   rendre repérable/cliquable (souris ET clavier, `tabindex="0"`). */
+.set-info {
+  display: inline-block;
+  margin-left: 0.4em;
+  color: var(--sub);
+  cursor: help;
+  font-size: 0.85em;
+}
 .set-desc {
   margin: 0.3rem 0 0;
   max-width: 48ch;
@@ -897,6 +917,19 @@ button.primary:hover {
 .set-control {
   justify-self: end;
   width: 100%;
+}
+
+/* Zone à risque (issue #70) : bouton destructeur et erreur d'import — mêmes couleurs
+   de faute que la zone de frappe (--error/--error-bg), rien de nouveau à inventer. */
+.danger {
+  color: var(--error);
+  border-color: var(--error);
+}
+.set-error {
+  color: var(--error);
+  background: var(--error-bg);
+  border-radius: 4px;
+  padding: 0.5rem 0.7rem;
 }
 
 /* Contrôle segmenté : le choix actif est corail (texte, filet et fond sourd),

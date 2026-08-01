@@ -17,6 +17,8 @@ import {
 } from "chart.js";
 import type { AnalysisResponse, PerSecondPoint, SubmitRunResponse } from "../core/types";
 import { AUTHORITATIVE_BACKEND, fetchAnalysis, isIdentityError, IDENTITY_ERROR_MESSAGE } from "../api";
+import { loadPreferences } from "../core/preferences";
+import { roundSpeed, SPEED_UNIT_LABELS } from "../core/speed-unit";
 import { escapeText } from "./typing-zone";
 import { analysisHtml } from "./weak-spots";
 
@@ -45,6 +47,8 @@ export function renderResults(
 ): void {
   const sb = res.scoreboard;
   const c = sb.characters;
+  const unit = loadPreferences().speedUnit; // issue #69 : même unité partout où le WPM s'affiche
+  const unitLabel = SPEED_UNIT_LABELS[unit];
 
   const attribution = quote
     ? `<p class="quote-author">— ${escapeText(quote.author)}${
@@ -58,8 +62,8 @@ export function renderResults(
     <section class="results">
       <div class="headline">
         <div class="big-stat">
-          <span class="label">wpm</span>
-          <span class="value">${sb.wpm}</span>
+          <span class="label">${unitLabel}</span>
+          <span class="value">${roundSpeed(sb.wpm, unit)}</span>
         </div>
         <div class="big-stat">
           <span class="label">acc</span>
@@ -72,7 +76,7 @@ export function renderResults(
       <div class="chart-wrap"><canvas id="resultChart"></canvas></div>
 
       <div class="sub-stats">
-        <div><span class="label">raw</span><span class="value">${sb.raw}</span></div>
+        <div><span class="label">raw (${unitLabel})</span><span class="value">${roundSpeed(sb.raw, unit)}</span></div>
         <div><span class="label">characters</span><span class="value">${c.correct}/${c.incorrect}/${c.extra}/${c.missed}</span></div>
         <div><span class="label">duration</span><span class="value">${(sb.durationMs / 1000).toFixed(1)}s</span></div>
         <div><span class="label">pb</span><span class="value">${pbLabel(res)}</span></div>
@@ -82,7 +86,7 @@ export function renderResults(
 
       <div class="analysis" id="analysis"></div>
 
-      <button id="restart" class="primary">Rejouer (Tab / Entrée)</button>
+      <button id="restart" class="primary">Rejouer</button>
       ${onReplay ? `<button id="replayBtn">Replay</button>` : ""}
       <button id="analyzeBtn">Analyser</button>
     </section>

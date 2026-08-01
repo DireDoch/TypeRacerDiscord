@@ -44,6 +44,43 @@ describe("rowHtml — libellé et explication à gauche, contrôle à droite", (
   });
 });
 
+describe("rowHtml — contrôles slider et toggle (issue #66)", () => {
+  it("rend un curseur natif avec bornes et valeur", () => {
+    const html = rowHtml({
+      key: "soundVolume",
+      label: "Volume",
+      description: "Volume des effets sonores.",
+      control: { kind: "slider", value: 0.5, min: 0, max: 1, step: 0.05 },
+    });
+    expect(html).toContain('type="range"');
+    expect(html).toContain('data-setting="soundVolume"');
+    expect(html).toContain('min="0"');
+    expect(html).toContain('max="1"');
+    expect(html).toContain('value="0.5"');
+  });
+
+  it("rend une case à cocher, cochée si la valeur est vraie", () => {
+    const html = rowHtml({
+      key: "soundOnError",
+      label: "Son sur erreur",
+      description: "Joue un son sur une frappe fausse.",
+      control: { kind: "toggle", value: true },
+    });
+    expect(html).toContain('type="checkbox"');
+    expect(html).toContain("checked");
+  });
+
+  it("case à cocher décochée : pas de mot-clé checked", () => {
+    const html = rowHtml({
+      key: "soundOnError",
+      label: "Son sur erreur",
+      description: "Joue un son sur une frappe fausse.",
+      control: { kind: "toggle", value: false },
+    });
+    expect(html).not.toContain("checked");
+  });
+});
+
 describe("sectionHtml", () => {
   it("numérote la section sur deux chiffres et porte son rang pour la révélation décalée", () => {
     const html = sectionHtml({ title: "Apparence", rows: [row] }, 0);
@@ -67,5 +104,64 @@ describe("sections — déclaration des réglages", () => {
         expect(r.description).not.toBe("");
       }
     }
+  });
+
+  it("la section Solo (issue #65) reflète quickRestartKey et stopOnError", () => {
+    const solo = sections({ ...defaultPreferences(), quickRestartKey: "esc", stopOnError: "word" }).find(
+      (s) => s.title === "Solo",
+    );
+    expect(solo?.rows.find((r) => r.key === "quickRestartKey")?.control.value).toBe("esc");
+    expect(solo?.rows.find((r) => r.key === "stopOnError")?.control.value).toBe("word");
+  });
+
+  it("la section Apparence (issue #67) reflète les styles live, l'opacité et show-all-lines", () => {
+    const prefs = {
+      ...defaultPreferences(),
+      liveAccuracyStyle: "off" as const,
+      timerOpacity: 0.5 as const,
+      showAllLines: true,
+    };
+    const apparence = sections(prefs).find((s) => s.title === "Apparence");
+    expect(apparence?.rows.find((r) => r.key === "liveAccuracyStyle")?.control.value).toBe("off");
+    expect(apparence?.rows.find((r) => r.key === "timerOpacity")?.control.value).toBe(0.5);
+    expect(apparence?.rows.find((r) => r.key === "showAllLines")?.control.value).toBe(true);
+  });
+
+  it("la section Apparence (issue #68) reflète highlightMode", () => {
+    const apparence = sections({ ...defaultPreferences(), highlightMode: "next-word" }).find(
+      (s) => s.title === "Apparence",
+    );
+    expect(apparence?.rows.find((r) => r.key === "highlightMode")?.control.value).toBe("next-word");
+  });
+
+  it("la ligne speedUnit (issue #69) reflète la préférence et porte une info-bulle", () => {
+    const apparence = sections({ ...defaultPreferences(), speedUnit: "cpm" }).find(
+      (s) => s.title === "Apparence",
+    );
+    const row = apparence?.rows.find((r) => r.key === "speedUnit");
+    expect(row?.control.value).toBe("cpm");
+    expect(row?.tooltip).toBeTruthy();
+  });
+});
+
+describe("rowHtml — info-bulle (issue #69)", () => {
+  it("rend un (i) avec l'explication en `title`, absent sans tooltip", () => {
+    const withTip = rowHtml({
+      key: "speedUnit",
+      label: "Unité de vitesse",
+      description: "…",
+      tooltip: "CPM = WPM × 5",
+      control: { kind: "segmented", value: "wpm", options: [{ value: "wpm", label: "wpm" }] },
+    });
+    expect(withTip).toContain('class="set-info"');
+    expect(withTip).toContain("CPM = WPM × 5");
+
+    const without = rowHtml({
+      key: "fontFamily",
+      label: "Police",
+      description: "…",
+      control: { kind: "segmented", value: "jetbrains", options: [] },
+    });
+    expect(without).not.toContain("set-info");
   });
 });

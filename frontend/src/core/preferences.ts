@@ -16,6 +16,9 @@
 //  global à invalider (et à réinitialiser entre deux tests).
 // =============================================================================
 
+import { SPEED_UNITS, type SpeedUnit } from "./speed-unit";
+export type { SpeedUnit };
+
 /** Polices proposées à la frappe. Aucune n'exige de fichier supplémentaire :
  *  JetBrains Mono et Inter sont déjà auto-hébergées (la CSP des Activities
  *  interdit Google Fonts), les deux autres sont des piles système. Guillemets
@@ -31,17 +34,169 @@ export type FontFamily = keyof typeof FONT_STACKS;
 
 export const FONT_KEYS = Object.keys(FONT_STACKS) as FontFamily[];
 
+/** Redémarrage rapide (issue #65) : la touche qui redémarre depuis n'importe quel état
+ *  de Practice. "off" laisse Tab au comportement standard (navigation) — un bouton
+ *  cliquable (résultats) reste toujours disponible. */
+export type QuickRestartKey = "off" | "tab" | "esc" | "enter";
+export const QUICK_RESTART_KEYS: QuickRestartKey[] = ["off", "tab", "esc", "enter"];
+export const QUICK_RESTART_LABELS: Record<QuickRestartKey, string> = {
+  off: "Désactivé",
+  tab: "Tab",
+  esc: "Échap",
+  enter: "Entrée",
+};
+/** `KeyboardEvent.key` DOM associée à chaque valeur, `null` = aucun raccourci câblé. */
+export const QUICK_RESTART_DOM_KEY: Record<QuickRestartKey, string | null> = {
+  off: null,
+  tab: "Tab",
+  esc: "Escape",
+  enter: "Enter",
+};
+
+/** Stop on error (issue #65) : granularité du blocage en Practice — jamais en Race
+ *  (Solo only). "letter" bloque toute frappe fausse ; "word" bloque l'espace tant que
+ *  le mot courant n'est pas exact. */
+export type StopOnError = "off" | "letter" | "word";
+export const STOP_ON_ERROR_VALUES: StopOnError[] = ["off", "letter", "word"];
+export const STOP_ON_ERROR_LABELS: Record<StopOnError, string> = {
+  off: "Désactivé",
+  letter: "Lettre",
+  word: "Mot",
+};
+
+/** Avertissement sonore avant la fin d'un test chronométré (issue #66) — Time
+ *  uniquement, `off` par défaut (aucun bruit non demandé). */
+export type TimeWarning = "off" | "1s" | "3s" | "5s" | "10s";
+export const TIME_WARNING_VALUES: TimeWarning[] = ["off", "1s", "3s", "5s", "10s"];
+export const TIME_WARNING_LABELS: Record<TimeWarning, string> = {
+  off: "Désactivé",
+  "1s": "1 s",
+  "3s": "3 s",
+  "5s": "5 s",
+  "10s": "10 s",
+};
+/** Secondes restantes déclenchant l'avertissement, `null` si désactivé. */
+export const TIME_WARNING_SECONDS: Record<TimeWarning, number | null> = {
+  off: null,
+  "1s": 1,
+  "3s": 3,
+  "5s": 5,
+  "10s": 10,
+};
+
+/** Style d'un indicateur live (issue #67) — "text" (défaut, valeur numérique visible)
+ *  ou "off" (masqué). Pas de variante visuelle inventée sans maquette : ces deux-là
+ *  couvrent le seul besoin réel, afficher ou pas. */
+export type LiveStatStyle = "text" | "off";
+export const LIVE_STAT_STYLES: LiveStatStyle[] = ["text", "off"];
+export const LIVE_STAT_STYLE_LABELS: Record<LiveStatStyle, string> = { text: "Texte", off: "Masqué" };
+
+/** Opacité du texte timer/live-stats (issue #67), en fraction directe (pas d'index). */
+export type TimerOpacity = 0.25 | 0.5 | 0.75 | 1;
+export const TIMER_OPACITIES: TimerOpacity[] = [0.25, 0.5, 0.75, 1];
+
+/**
+ * Highlight mode (issue #68) : ce qui est mis en avant AU-DELÀ du mot courant dans la
+ * zone de frappe. "off"/"letter" ne mettent rien en avant en plus de la lettre sous le
+ * curseur (déjà portée par le curseur bloc) — le texte à venir reste uniformément net,
+ * comportement d'origine. "word"/"next-*-words" éclaircissent une fenêtre de N mots
+ * après le courant et assombrissent tout le reste pour la faire ressortir.
+ */
+export type HighlightMode = "off" | "letter" | "word" | "next-word" | "next-two-words" | "next-three-words";
+export const HIGHLIGHT_MODES: HighlightMode[] = [
+  "off",
+  "letter",
+  "word",
+  "next-word",
+  "next-two-words",
+  "next-three-words",
+];
+export const HIGHLIGHT_MODE_LABELS: Record<HighlightMode, string> = {
+  off: "Désactivé",
+  letter: "Lettre",
+  word: "Mot",
+  "next-word": "Mot suivant",
+  "next-two-words": "2 mots suivants",
+  "next-three-words": "3 mots suivants",
+};
+
 export interface Preferences {
   fontFamily: FontFamily;
+  quickRestartKey: QuickRestartKey;
+  stopOnError: StopOnError;
+  soundVolume: number;
+  soundOnError: boolean;
+  timeWarning: TimeWarning;
+  liveSpeedStyle: LiveStatStyle;
+  liveAccuracyStyle: LiveStatStyle;
+  liveBurstStyle: LiveStatStyle;
+  timerOpacity: TimerOpacity;
+  showAllLines: boolean;
+  highlightMode: HighlightMode;
+  speedUnit: SpeedUnit;
+  /** Plafond d'images/s de l'animation live (issue #70). `0` = natif, illimité —
+   *  n'importe quel entier positif est un plafond personnalisé valide. */
+  fpsLimit: number;
 }
 
-/** Défaut + domaine de validité d'une clé. Les issues suivantes (#65-#70)
- *  ajoutent leurs clés ICI : c'est le seul endroit à toucher pour qu'une
+/** Défaut + domaine de validité d'une clé : le seul endroit à toucher pour qu'une
  *  Preference soit typée, validée, persistée et réinitialisable. */
 const SPEC: { [K in keyof Preferences]: { default: Preferences[K]; valid: (v: unknown) => boolean } } = {
   fontFamily: {
     default: "jetbrains",
     valid: (v) => typeof v === "string" && v in FONT_STACKS,
+  },
+  quickRestartKey: {
+    default: "off",
+    valid: (v) => typeof v === "string" && (QUICK_RESTART_KEYS as string[]).includes(v),
+  },
+  stopOnError: {
+    default: "off",
+    valid: (v) => typeof v === "string" && (STOP_ON_ERROR_VALUES as string[]).includes(v),
+  },
+  soundVolume: {
+    default: 0.5,
+    valid: (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1,
+  },
+  soundOnError: {
+    default: false,
+    valid: (v) => typeof v === "boolean",
+  },
+  timeWarning: {
+    default: "off",
+    valid: (v) => typeof v === "string" && (TIME_WARNING_VALUES as string[]).includes(v),
+  },
+  liveSpeedStyle: {
+    default: "text",
+    valid: (v) => typeof v === "string" && (LIVE_STAT_STYLES as string[]).includes(v),
+  },
+  liveAccuracyStyle: {
+    default: "text",
+    valid: (v) => typeof v === "string" && (LIVE_STAT_STYLES as string[]).includes(v),
+  },
+  liveBurstStyle: {
+    default: "text",
+    valid: (v) => typeof v === "string" && (LIVE_STAT_STYLES as string[]).includes(v),
+  },
+  timerOpacity: {
+    default: 1,
+    valid: (v) => typeof v === "number" && (TIMER_OPACITIES as number[]).includes(v),
+  },
+  showAllLines: {
+    default: false,
+    valid: (v) => typeof v === "boolean",
+  },
+  highlightMode: {
+    default: "letter",
+    valid: (v) => typeof v === "string" && (HIGHLIGHT_MODES as string[]).includes(v),
+  },
+  speedUnit: {
+    default: "wpm",
+    valid: (v) => typeof v === "string" && (SPEED_UNITS as string[]).includes(v),
+  },
+  fpsLimit: {
+    default: 0,
+    valid: (v) => typeof v === "number" && Number.isFinite(v) && v >= 0,
   },
 };
 
@@ -122,4 +277,28 @@ export function resetPreferences(): Preferences {
  *  depuis toujours, une seule police à choisir plutôt que deux. */
 export function applyPreferences(prefs: Preferences = loadPreferences()): void {
   document.documentElement.style.setProperty("--font-mono", FONT_STACKS[prefs.fontFamily].stack);
+}
+
+/** Sérialise les Preferences courantes pour l'export JSON (issue #70). Lisible pour
+ *  un humain qui l'ouvrirait par curiosité, pas seulement pour la machine. */
+export function exportPreferences(): string {
+  return JSON.stringify(loadPreferences(), null, 2);
+}
+
+/**
+ * Import JSON (issue #70) : `null` = rejeté (pas du JSON, ou pas un objet — l'écran
+ * affiche une erreur visible) ; sinon reconstruit via `parsePreferences`, qui reste
+ * volontairement TOLÉRANT clé par clé (une valeur individuelle hors domaine retombe
+ * sur son défaut plutôt que de faire échouer tout l'import — même philosophie que le
+ * reste du module). N'écrit RIEN ici : l'appelant confirme avant `savePreferences`.
+ */
+export function importPreferences(raw: string): Preferences | null {
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!json || typeof json !== "object") return null;
+  return parsePreferences(json);
 }
