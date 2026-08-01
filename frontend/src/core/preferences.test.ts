@@ -7,6 +7,8 @@ import {
   setPreference,
   resetPreferences,
   applyPreferences,
+  exportPreferences,
+  importPreferences,
   FONT_STACKS,
 } from "./preferences";
 
@@ -133,5 +135,51 @@ describe("applyPreferences", () => {
     for (const { stack } of Object.values(FONT_STACKS)) {
       expect(stack).not.toContain('"');
     }
+  });
+});
+
+describe("fpsLimit (issue #70)", () => {
+  it("défaut natif (0)", () => {
+    expect(defaultPreferences().fpsLimit).toBe(0);
+  });
+
+  it("accepte tout entier positif — plafond personnalisé", () => {
+    expect(setPreference("fpsLimit", 144).fpsLimit).toBe(144);
+  });
+
+  it("refuse un nombre négatif", () => {
+    setPreference("fpsLimit", 60);
+    expect(setPreference("fpsLimit", -1).fpsLimit).toBe(60);
+  });
+});
+
+describe("exportPreferences / importPreferences (issue #70)", () => {
+  it("aller-retour : ce qui est exporté se réimporte à l'identique", () => {
+    setPreference("fontFamily", "inter");
+    setPreference("fpsLimit", 30);
+    const json = exportPreferences();
+    expect(importPreferences(json)).toEqual(loadPreferences());
+  });
+
+  it("JSON cassé : rejeté (null), jamais un import silencieux aux défauts", () => {
+    expect(importPreferences("{pas du json")).toBeNull();
+  });
+
+  it("JSON valide mais pas un objet : rejeté", () => {
+    expect(importPreferences("42")).toBeNull();
+    expect(importPreferences("null")).toBeNull();
+    expect(importPreferences('"une chaîne"')).toBeNull();
+  });
+
+  it("objet avec une clé hors domaine : tolérant clé par clé, pas un rejet global", () => {
+    const result = importPreferences(JSON.stringify({ fontFamily: "inter", soundVolume: 99 }));
+    expect(result?.fontFamily).toBe("inter"); // valide : conservée
+    expect(result?.soundVolume).toBe(defaultPreferences().soundVolume); // hors domaine : défaut
+  });
+
+  it("importPreferences n'écrit rien tout seul (l'appelant confirme avant de sauver)", () => {
+    setPreference("fontFamily", "courier");
+    importPreferences(JSON.stringify({ fontFamily: "inter" }));
+    expect(loadPreferences().fontFamily).toBe("courier"); // inchangé
   });
 });

@@ -134,10 +134,12 @@ export interface Preferences {
   showAllLines: boolean;
   highlightMode: HighlightMode;
   speedUnit: SpeedUnit;
+  /** Plafond d'images/s de l'animation live (issue #70). `0` = natif, illimité —
+   *  n'importe quel entier positif est un plafond personnalisé valide. */
+  fpsLimit: number;
 }
 
-/** Défaut + domaine de validité d'une clé. L'issue suivante (#70)
- *  ajoutent leurs clés ICI : c'est le seul endroit à toucher pour qu'une
+/** Défaut + domaine de validité d'une clé : le seul endroit à toucher pour qu'une
  *  Preference soit typée, validée, persistée et réinitialisable. */
 const SPEC: { [K in keyof Preferences]: { default: Preferences[K]; valid: (v: unknown) => boolean } } = {
   fontFamily: {
@@ -191,6 +193,10 @@ const SPEC: { [K in keyof Preferences]: { default: Preferences[K]; valid: (v: un
   speedUnit: {
     default: "wpm",
     valid: (v) => typeof v === "string" && (SPEED_UNITS as string[]).includes(v),
+  },
+  fpsLimit: {
+    default: 0,
+    valid: (v) => typeof v === "number" && Number.isFinite(v) && v >= 0,
   },
 };
 
@@ -271,4 +277,28 @@ export function resetPreferences(): Preferences {
  *  depuis toujours, une seule police à choisir plutôt que deux. */
 export function applyPreferences(prefs: Preferences = loadPreferences()): void {
   document.documentElement.style.setProperty("--font-mono", FONT_STACKS[prefs.fontFamily].stack);
+}
+
+/** Sérialise les Preferences courantes pour l'export JSON (issue #70). Lisible pour
+ *  un humain qui l'ouvrirait par curiosité, pas seulement pour la machine. */
+export function exportPreferences(): string {
+  return JSON.stringify(loadPreferences(), null, 2);
+}
+
+/**
+ * Import JSON (issue #70) : `null` = rejeté (pas du JSON, ou pas un objet — l'écran
+ * affiche une erreur visible) ; sinon reconstruit via `parsePreferences`, qui reste
+ * volontairement TOLÉRANT clé par clé (une valeur individuelle hors domaine retombe
+ * sur son défaut plutôt que de faire échouer tout l'import — même philosophie que le
+ * reste du module). N'écrit RIEN ici : l'appelant confirme avant `savePreferences`.
+ */
+export function importPreferences(raw: string): Preferences | null {
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!json || typeof json !== "object") return null;
+  return parsePreferences(json);
 }
