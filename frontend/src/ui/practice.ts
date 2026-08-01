@@ -21,6 +21,7 @@ import {
   loadPreferences,
 } from "../core/preferences";
 import { playErrorSound, playTimeWarningSound } from "../core/sound";
+import { formatSpeed } from "../core/speed-unit";
 import { generateWithRng, initialWordCount } from "../core/text-gen";
 import { generateDrillText } from "../core/text-gen/drill";
 import { Rng } from "../core/text-gen/rng";
@@ -561,10 +562,13 @@ export class Practice {
       progress = `<span class="timer">${done}/${this.targetWords.length}</span>`;
     }
     // Styles live (issue #67) : "off" masque l'indicateur, rien d'autre — pas de
-    // variante visuelle inventée sans maquette.
-    const speed = prefs.liveSpeedStyle === "off" ? "" : `<span class="live-wpm">${wpm} wpm</span>`;
+    // variante visuelle inventée sans maquette. Unité (issue #69) : même conversion
+    // pure pour vitesse et burst — deux vitesses affichées dans deux unités différentes
+    // en même temps serait plus confus qu'utile.
+    const speed = prefs.liveSpeedStyle === "off" ? "" : `<span class="live-wpm">${formatSpeed(wpm, prefs.speedUnit)}</span>`;
     const acc = prefs.liveAccuracyStyle === "off" ? "" : `<span class="live-acc">${accuracy}%</span>`;
-    const burstHtml = prefs.liveBurstStyle === "off" ? "" : `<span class="live-burst">${burst} burst</span>`;
+    const burstHtml =
+      prefs.liveBurstStyle === "off" ? "" : `<span class="live-burst">${formatSpeed(burst, prefs.speedUnit)} burst</span>`;
     return `${progress}${speed}${acc}${burstHtml}`;
   }
 

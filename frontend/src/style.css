@@ -898,6 +898,15 @@ button.primary:hover {
   font-size: 1rem;
   color: var(--text);
 }
+/* Info-bulle native (issue #69) : `title` fait tout le travail, ceci ne fait que la
+   rendre repérable/cliquable (souris ET clavier, `tabindex="0"`). */
+.set-info {
+  display: inline-block;
+  margin-left: 0.4em;
+  color: var(--sub);
+  cursor: help;
+  font-size: 0.85em;
+}
 .set-desc {
   margin: 0.3rem 0 0;
   max-width: 48ch;

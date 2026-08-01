@@ -133,4 +133,35 @@ describe("sections — déclaration des réglages", () => {
     );
     expect(apparence?.rows.find((r) => r.key === "highlightMode")?.control.value).toBe("next-word");
   });
+
+  it("la ligne speedUnit (issue #69) reflète la préférence et porte une info-bulle", () => {
+    const apparence = sections({ ...defaultPreferences(), speedUnit: "cpm" }).find(
+      (s) => s.title === "Apparence",
+    );
+    const row = apparence?.rows.find((r) => r.key === "speedUnit");
+    expect(row?.control.value).toBe("cpm");
+    expect(row?.tooltip).toBeTruthy();
+  });
+});
+
+describe("rowHtml — info-bulle (issue #69)", () => {
+  it("rend un (i) avec l'explication en `title`, absent sans tooltip", () => {
+    const withTip = rowHtml({
+      key: "speedUnit",
+      label: "Unité de vitesse",
+      description: "…",
+      tooltip: "CPM = WPM × 5",
+      control: { kind: "segmented", value: "wpm", options: [{ value: "wpm", label: "wpm" }] },
+    });
+    expect(withTip).toContain('class="set-info"');
+    expect(withTip).toContain("CPM = WPM × 5");
+
+    const without = rowHtml({
+      key: "fontFamily",
+      label: "Police",
+      description: "…",
+      control: { kind: "segmented", value: "jetbrains", options: [] },
+    });
+    expect(without).not.toContain("set-info");
+  });
 });

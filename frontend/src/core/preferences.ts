@@ -16,6 +16,9 @@
 //  global à invalider (et à réinitialiser entre deux tests).
 // =============================================================================
 
+import { SPEED_UNITS, type SpeedUnit } from "./speed-unit";
+export type { SpeedUnit };
+
 /** Polices proposées à la frappe. Aucune n'exige de fichier supplémentaire :
  *  JetBrains Mono et Inter sont déjà auto-hébergées (la CSP des Activities
  *  interdit Google Fonts), les deux autres sont des piles système. Guillemets
@@ -130,9 +133,10 @@ export interface Preferences {
   timerOpacity: TimerOpacity;
   showAllLines: boolean;
   highlightMode: HighlightMode;
+  speedUnit: SpeedUnit;
 }
 
-/** Défaut + domaine de validité d'une clé. Les issues suivantes (#69-#70)
+/** Défaut + domaine de validité d'une clé. L'issue suivante (#70)
  *  ajoutent leurs clés ICI : c'est le seul endroit à toucher pour qu'une
  *  Preference soit typée, validée, persistée et réinitialisable. */
 const SPEC: { [K in keyof Preferences]: { default: Preferences[K]; valid: (v: unknown) => boolean } } = {
@@ -183,6 +187,10 @@ const SPEC: { [K in keyof Preferences]: { default: Preferences[K]; valid: (v: un
   highlightMode: {
     default: "letter",
     valid: (v) => typeof v === "string" && (HIGHLIGHT_MODES as string[]).includes(v),
+  },
+  speedUnit: {
+    default: "wpm",
+    valid: (v) => typeof v === "string" && (SPEED_UNITS as string[]).includes(v),
   },
 };
 

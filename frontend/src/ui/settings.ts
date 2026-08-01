@@ -30,6 +30,8 @@ import {
   setPreference,
   type Preferences,
 } from "../core/preferences";
+import { SPEED_UNITS, SPEED_UNIT_EXPLANATIONS, SPEED_UNIT_LABELS } from "../core/speed-unit";
+import { escapeText } from "./typing-zone";
 
 const REPO = "https://github.com/DireDoch/TypeRacerDiscord";
 
@@ -67,6 +69,9 @@ export interface SettingRow {
   label: string;
   description: string;
   control: Control;
+  /** Info-bulle native (issue #69) — hover sur un (i), pour un détail trop long pour la
+   *  description toujours visible (ex. formule de chaque unité de vitesse). */
+  tooltip?: string;
 }
 
 export interface SettingSection {
@@ -146,6 +151,17 @@ export function sections(prefs: Preferences): SettingSection[] {
             kind: "segmented",
             value: prefs.highlightMode,
             options: HIGHLIGHT_MODES.map((key) => ({ value: key, label: HIGHLIGHT_MODE_LABELS[key] })),
+          },
+        },
+        {
+          key: "speedUnit",
+          label: "Unité de vitesse",
+          description: "L'unité utilisée partout où une vitesse de frappe est affichée.",
+          tooltip: SPEED_UNITS.map((u) => `${SPEED_UNIT_LABELS[u]} — ${SPEED_UNIT_EXPLANATIONS[u]}`).join("\n"),
+          control: {
+            kind: "segmented",
+            value: prefs.speedUnit,
+            options: SPEED_UNITS.map((key) => ({ value: key, label: SPEED_UNIT_LABELS[key] })),
           },
         },
       ],
@@ -239,11 +255,17 @@ function controlHtml(row: SettingRow): string {
   }
 }
 
+/** `title` natif : hover ET focus clavier donnent la bulle sans une ligne de JS. */
+function tooltipHtml(row: SettingRow): string {
+  if (!row.tooltip) return "";
+  return `<span class="set-info" tabindex="0" title="${escapeText(row.tooltip)}" aria-label="${escapeText(row.tooltip)}">ⓘ</span>`;
+}
+
 export function rowHtml(row: SettingRow): string {
   return `
     <div class="set-row">
       <div class="set-text">
-        <span class="set-label" id="lbl-${row.key}">${row.label}</span>
+        <span class="set-label" id="lbl-${row.key}">${row.label}${tooltipHtml(row)}</span>
         <p class="set-desc">${row.description}</p>
       </div>
       <div class="set-control">${controlHtml(row)}</div>
