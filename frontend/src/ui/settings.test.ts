@@ -44,6 +44,43 @@ describe("rowHtml — libellé et explication à gauche, contrôle à droite", (
   });
 });
 
+describe("rowHtml — contrôles slider et toggle (issue #66)", () => {
+  it("rend un curseur natif avec bornes et valeur", () => {
+    const html = rowHtml({
+      key: "soundVolume",
+      label: "Volume",
+      description: "Volume des effets sonores.",
+      control: { kind: "slider", value: 0.5, min: 0, max: 1, step: 0.05 },
+    });
+    expect(html).toContain('type="range"');
+    expect(html).toContain('data-setting="soundVolume"');
+    expect(html).toContain('min="0"');
+    expect(html).toContain('max="1"');
+    expect(html).toContain('value="0.5"');
+  });
+
+  it("rend une case à cocher, cochée si la valeur est vraie", () => {
+    const html = rowHtml({
+      key: "soundOnError",
+      label: "Son sur erreur",
+      description: "Joue un son sur une frappe fausse.",
+      control: { kind: "toggle", value: true },
+    });
+    expect(html).toContain('type="checkbox"');
+    expect(html).toContain("checked");
+  });
+
+  it("case à cocher décochée : pas de mot-clé checked", () => {
+    const html = rowHtml({
+      key: "soundOnError",
+      label: "Son sur erreur",
+      description: "Joue un son sur une frappe fausse.",
+      control: { kind: "toggle", value: false },
+    });
+    expect(html).not.toContain("checked");
+  });
+});
+
 describe("sectionHtml", () => {
   it("numérote la section sur deux chiffres et porte son rang pour la révélation décalée", () => {
     const html = sectionHtml({ title: "Apparence", rows: [row] }, 0);
@@ -75,5 +112,18 @@ describe("sections — déclaration des réglages", () => {
     );
     expect(solo?.rows.find((r) => r.key === "quickRestartKey")?.control.value).toBe("esc");
     expect(solo?.rows.find((r) => r.key === "stopOnError")?.control.value).toBe("word");
+  });
+
+  it("la section Apparence (issue #67) reflète les styles live, l'opacité et show-all-lines", () => {
+    const prefs = {
+      ...defaultPreferences(),
+      liveAccuracyStyle: "off" as const,
+      timerOpacity: 0.5 as const,
+      showAllLines: true,
+    };
+    const apparence = sections(prefs).find((s) => s.title === "Apparence");
+    expect(apparence?.rows.find((r) => r.key === "liveAccuracyStyle")?.control.value).toBe("off");
+    expect(apparence?.rows.find((r) => r.key === "timerOpacity")?.control.value).toBe(0.5);
+    expect(apparence?.rows.find((r) => r.key === "showAllLines")?.control.value).toBe(true);
   });
 });

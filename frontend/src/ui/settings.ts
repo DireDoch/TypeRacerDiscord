@@ -16,6 +16,8 @@
 import {
   FONT_KEYS,
   FONT_STACKS,
+  LIVE_STAT_STYLES,
+  LIVE_STAT_STYLE_LABELS,
   QUICK_RESTART_KEYS,
   QUICK_RESTART_LABELS,
   STOP_ON_ERROR_LABELS,
@@ -89,6 +91,49 @@ export function sections(prefs: Preferences): SettingSection[] {
               font: FONT_STACKS[key].stack,
             })),
           },
+        },
+        {
+          key: "liveSpeedStyle",
+          label: "Style — vitesse live",
+          description: "Affiche ou masque le compteur de vitesse live pendant la frappe.",
+          control: {
+            kind: "segmented",
+            value: prefs.liveSpeedStyle,
+            options: LIVE_STAT_STYLES.map((key) => ({ value: key, label: LIVE_STAT_STYLE_LABELS[key] })),
+          },
+        },
+        {
+          key: "liveAccuracyStyle",
+          label: "Style — précision live",
+          description: "Affiche ou masque la précision live pendant la frappe.",
+          control: {
+            kind: "segmented",
+            value: prefs.liveAccuracyStyle,
+            options: LIVE_STAT_STYLES.map((key) => ({ value: key, label: LIVE_STAT_STYLE_LABELS[key] })),
+          },
+        },
+        {
+          key: "liveBurstStyle",
+          label: "Style — burst live",
+          description: "Affiche ou masque la vitesse du mot en cours pendant la frappe.",
+          control: {
+            kind: "segmented",
+            value: prefs.liveBurstStyle,
+            options: LIVE_STAT_STYLES.map((key) => ({ value: key, label: LIVE_STAT_STYLE_LABELS[key] })),
+          },
+        },
+        {
+          key: "timerOpacity",
+          label: "Opacité du timer",
+          description: "Opacité du texte de progression, vitesse, précision et burst live (25/50/75/100 %).",
+          control: { kind: "slider", value: prefs.timerOpacity, min: 0.25, max: 1, step: 0.25 },
+        },
+        {
+          key: "showAllLines",
+          label: "Afficher toutes les lignes",
+          description:
+            "Solo uniquement (words/citations) : montre le texte entier au lieu de la fenêtre de 3 lignes. Peut masquer le timer/les stats live sous un long texte — c'est attendu.",
+          control: { kind: "toggle", value: prefs.showAllLines },
         },
       ],
     },
