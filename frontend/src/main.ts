@@ -16,7 +16,8 @@ import { History } from "./ui/history";
 import { Learn } from "./ui/learn";
 import { Settings } from "./ui/settings";
 import { applyPreferences } from "./core/preferences";
-import { getAuthToken } from "./discord";
+import { avatarUrl, getIdentity } from "./discord";
+import { escapeText } from "./ui/typing-zone";
 
 // --- Bandeau d'erreurs (debug in-iframe) -------------------------------------
 // Dans Discord la console est invisible : toute erreur JS ou promesse rejetée
@@ -32,11 +33,38 @@ function showError(msg: string): void {
   }
   el.textContent = `⚠ ${msg}`;
 }
+/** Le SDK Discord rejette certaines commandes avec un objet `{code, message}` brut
+ *  (pas une `Error`) — voir `pendingCommands.reject(parsed.data)` dans le SDK. Un
+ *  `${e}` direct sur cet objet affiche "[object Object]" : on extrait le message. */
+function describeError(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (e && typeof e === "object" && "message" in e) return String((e as { message: unknown }).message);
+  try {
+    return JSON.stringify(e);
+  } catch {
+    return String(e);
+  }
+}
 window.addEventListener("error", (e) => showError(e.message));
-window.addEventListener("unhandledrejection", (e) => showError(String(e.reason)));
+window.addEventListener("unhandledrejection", (e) => showError(describeError(e.reason)));
+
+/** Pastille d'avatar persistante en haut à gauche, sur TOUS les écrans (montée une
+ *  fois sur le body, jamais démontée) : preuve visuelle que l'identité Discord est
+ *  bien liée. Absente si le handshake échoue — le bandeau d'erreur l'explique déjà. */
+function showIdentityBadge(id: { displayName: string; playerId: string; avatarHash: string | null }): void {
+  const el = document.createElement("div");
+  el.id = "identity-badge";
+  el.title = id.displayName;
+  const initial = escapeText([...id.displayName][0]?.toUpperCase() ?? "?");
+  const src = escapeText(avatarUrl(id.playerId, id.avatarHash));
+  el.innerHTML = `${initial}<img src="${src}" alt="" loading="lazy">`;
+  document.body.appendChild(el);
+}
 
 // Amorce le handshake d'identité tôt (non bloquant).
-getAuthToken().catch((e) => showError(`Auth Discord échouée : ${e}`));
+getIdentity()
+  .then(showIdentityBadge)
+  .catch((e) => showError(`Auth Discord échouée : ${describeError(e)}`));
 
 // Preferences appliquées AVANT le premier écran : la police choisie doit être en
 // place au premier rendu, pas après un clignotement.
