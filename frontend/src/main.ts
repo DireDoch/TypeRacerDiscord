@@ -49,58 +49,59 @@ const appEl = document.querySelector<HTMLDivElement>("#app");
 const rootEl = document.querySelector<HTMLDivElement>("#screen");
 if (!appEl || !rootEl) throw new Error("#app / #screen introuvables dans index.html");
 const root: HTMLElement = rootEl;
+const app: HTMLElement = appEl;
 
-fitToViewport(appEl, rootEl);
+fitToViewport(app, root);
 void mountIdentityBadge().catch((e) => showError(`Badge d'identité : ${e}`));
 
 let screen: { destroy(): void } | null = null;
 
-function showMenu(): void {
+/**
+ * Bascule d'écran : démonte le précédent, monte le suivant, et remet le défilement en
+ * haut. Cette remise à zéro compte depuis #91 : `#app` est devenu le seul conteneur qui
+ * défile, et aucune scrollbar n'y est peinte. Sans elle, quitter un écran long (les
+ * Paramètres) pour un autre écran long (Apprendre) fait arriver au milieu de la liste,
+ * sans le moindre indice qu'il y a du contenu au-dessus.
+ */
+function swap<T extends { destroy(): void; mount(): unknown }>(make: () => T): void {
   screen?.destroy();
-  const m = new Menu(root, {
-    solo: showPractice,
-    multi: showRace,
-    history: showHistory,
-    learn: showLearn,
-    settings: showSettings,
-  });
-  screen = m;
-  m.mount();
+  const next = make();
+  screen = next;
+  app.scrollTop = 0;
+  void next.mount();
+}
+
+function showMenu(): void {
+  swap(
+    () =>
+      new Menu(root, {
+        solo: showPractice,
+        multi: showRace,
+        history: showHistory,
+        learn: showLearn,
+        settings: showSettings,
+      }),
+  );
 }
 
 function showSettings(): void {
-  screen?.destroy();
-  const s = new Settings(root, showMenu);
-  screen = s;
-  s.mount();
+  swap(() => new Settings(root, showMenu));
 }
 
 function showLearn(): void {
-  screen?.destroy();
-  const l = new Learn(root, showMenu);
-  screen = l;
-  l.mount();
+  swap(() => new Learn(root, showMenu));
 }
 
 function showHistory(): void {
-  screen?.destroy();
-  const h = new History(root, showMenu);
-  screen = h;
-  h.mount();
+  swap(() => new History(root, showMenu));
 }
 
 function showPractice(): void {
-  screen?.destroy();
-  const p = new Practice(root, showMenu);
-  screen = p;
-  p.mount();
+  swap(() => new Practice(root, showMenu));
 }
 
 function showRace(intent: RaceIntent = { kind: "channel" }): void {
-  screen?.destroy();
-  const r = new Race(root, showMenu, intent);
-  screen = r;
-  void r.mount();
+  swap(() => new Race(root, showMenu, intent));
 }
 
 // `?race` = raccourci dev (deux onglets au navigateur) : toujours la Room du salon,
