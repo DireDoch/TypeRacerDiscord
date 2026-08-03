@@ -103,7 +103,7 @@ export function runPlayOfTheGame(root: HTMLElement, opts: PlayOfTheGameOptions):
       <h2 class="potg-title">Play of the Game</h2>
       ${laneHtml(opts.playerA, "A")}
       ${laneHtml(opts.playerB, "B")}
-      <button id="potgBack" class="on">← podium</button>
+      <button id="potgBack" class="back-btn">← podium</button>
       <p class="hint" id="potgHint">Le duel le plus serré, au ralenti.</p>
     </section>`;
 

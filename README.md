@@ -1,6 +1,16 @@
 # TypeRacerDiscord
 A embedded game for playing with your friend in discord
 
+## Démarrage rapide
+
+```sh
+cd backend  && cargo run                          # terminal 1 — API sur :8080
+cd frontend && npm run dev                         # terminal 2 — front sur :5173
+cloudflared tunnel --url http://localhost:8080     # terminal 3 — pour tester dans Discord
+```
+
+Voir plus bas pour le détail (`.env`, build de prod, mise en place Discord).
+
 ## Mise en place (dev local)
 
 Prérequis : Rust (cargo) et Node (npm).

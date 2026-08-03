@@ -688,7 +688,7 @@ export class Practice {
         ${valueGroup}
         ${settingsGroup}
         ${difficultyGroup}
-        ${this.onExit ? `<div class="group"><button data-nav="menu">← menu</button></div>` : ""}
+        ${this.onExit ? `<button class="back-btn" data-nav="menu">← menu</button>` : ""}
       </div>
     `;
   }
