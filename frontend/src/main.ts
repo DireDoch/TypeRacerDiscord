@@ -46,6 +46,18 @@ const rootEl = document.querySelector<HTMLDivElement>("#app");
 if (!rootEl) throw new Error("#app introuvable dans index.html");
 const root: HTMLElement = rootEl;
 
+// Jamais de scrollbar (issue #91) : `#app` se réduit au lieu de déborder. Un seul
+// point générique pour tous les écrans — chacun remplace `root.innerHTML` sans
+// prévenir ce module, donc on observe la taille plutôt que d'appeler ça après coup.
+function fitToViewport(): void {
+  root.style.transform = "";
+  const natural = root.scrollHeight;
+  const avail = window.innerHeight;
+  if (natural > avail) root.style.transform = `scale(${avail / natural})`;
+}
+new ResizeObserver(fitToViewport).observe(root);
+window.addEventListener("resize", fitToViewport);
+
 let screen: { destroy(): void } | null = null;
 
 function showMenu(): void {
