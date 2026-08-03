@@ -1,7 +1,7 @@
 // =============================================================================
 //  main.ts — bootstrap de l'app frontend (point d'entrée Vite).
 //
-//  Écran d'arrivée : Menu (Solo / Multijoueur / Options / Quitter). Navigation par
+//  Écran d'arrivée : Menu (Solo / Multijoueur / Paramètres / Quitter). Navigation par
 //  boutons avec démontage propre (dans l'iframe Discord l'URL est figée par le
 //  mapping). `?race` reste le raccourci de dev (deux onglets au navigateur).
 //  L'identité Discord (Embedded App SDK) est amorcée en amont — le handshake OAuth
@@ -33,11 +33,30 @@ function showError(msg: string): void {
   }
   el.textContent = `⚠ ${msg}`;
 }
+/**
+ * Le SDK Discord rejette certaines commandes avec un objet `{code, message}` BRUT, pas
+ * une `Error` (voir `pendingCommands.reject(parsed.data)` dans le SDK). Un `String(e)`
+ * dessus affiche « [object Object] » : le bandeau annonçait alors une panne sans jamais
+ * dire laquelle — exactement quand on en a le plus besoin, la console étant invisible
+ * dans l'iframe Discord.
+ */
+function describeError(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (e && typeof e === "object" && "message" in e) {
+    return String((e as { message: unknown }).message);
+  }
+  try {
+    return JSON.stringify(e);
+  } catch {
+    return String(e);
+  }
+}
+
 window.addEventListener("error", (e) => showError(e.message));
-window.addEventListener("unhandledrejection", (e) => showError(String(e.reason)));
+window.addEventListener("unhandledrejection", (e) => showError(describeError(e.reason)));
 
 // Amorce le handshake d'identité tôt (non bloquant).
-getAuthToken().catch((e) => showError(`Auth Discord échouée : ${e}`));
+getAuthToken().catch((e) => showError(`Auth Discord échouée : ${describeError(e)}`));
 
 // Preferences appliquées AVANT le premier écran : la police choisie doit être en
 // place au premier rendu, pas après un clignotement.
@@ -52,7 +71,7 @@ const root: HTMLElement = rootEl;
 const app: HTMLElement = appEl;
 
 fitToViewport(app, root);
-void mountIdentityBadge().catch((e) => showError(`Badge d'identité : ${e}`));
+void mountIdentityBadge().catch((e) => showError(`Badge d'identité : ${describeError(e)}`));
 
 let screen: { destroy(): void } | null = null;
 

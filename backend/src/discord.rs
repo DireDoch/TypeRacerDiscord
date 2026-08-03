@@ -18,6 +18,13 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 const DISCORD_API: &str = "https://discord.com/api";
+/// Doit correspondre EXACTEMENT au Redirect enregistré dans le portail développeur
+/// (onglet OAuth2 → Redirects). Jamais navigué en vrai pour une Activity (le code
+/// vient de `sdk.commands.authorize`, pas d'un redirect HTTP) — mais Discord exige
+/// quand même ce paramètre sur `/oauth2/token`, et un portail sans Redirect enregistré
+/// fait déjà échouer `authorize()` côté client avec « invalid_request: Missing
+/// "redirect_uri" ». Voir README « Portail développeur ».
+const REDIRECT_URI: &str = "https://127.0.0.1";
 const TOKEN_TTL: Duration = Duration::from_secs(300); // cache court (5 min)
 
 /// Secrets Discord lus une fois au démarrage. `None` = mode dev.
@@ -76,6 +83,7 @@ impl Identity {
             ("client_secret", cfg.client_secret.as_str()),
             ("grant_type", "authorization_code"),
             ("code", code),
+            ("redirect_uri", REDIRECT_URI),
         ];
         let resp = self
             .http
@@ -85,8 +93,11 @@ impl Identity {
             .await
             .map_err(|_| AuthError::Upstream)?;
         if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            eprintln!("POST /oauth2/token → Discord a répondu {status} : {body}");
             // 4xx = code invalide → 401 ; 5xx = Discord en panne → 502.
-            return Err(if resp.status().is_client_error() {
+            return Err(if status.is_client_error() {
                 AuthError::Unauthorized
             } else {
                 AuthError::Upstream
