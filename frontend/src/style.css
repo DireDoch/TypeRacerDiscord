@@ -1097,23 +1097,6 @@ button.primary:hover {
   font-size: 1.9rem;
   letter-spacing: -0.01em;
 }
-.settings .ghost {
-  background: none;
-  border: 1px solid color-mix(in srgb, var(--sub) 45%, transparent);
-  color: var(--sub);
-  font-family: var(--font-ui);
-  font-size: 0.85rem;
-  cursor: pointer;
-  padding: 0.4rem 0.9rem;
-  border-radius: 0.4rem;
-  transition:
-    color 0.12s,
-    border-color 0.12s;
-}
-.settings .ghost:hover {
-  color: var(--main);
-  border-color: var(--main);
-}
 
 /* Section : un numéro en chasse fixe, un titre espacé, puis un filet qui court
    jusqu'au bord. Le numéro reprend la convention du reste de l'app (les chiffres
@@ -1311,8 +1294,7 @@ button.primary:hover {
   }
   .set-row,
   .set-row::before,
-  .seg button,
-  .settings .ghost {
+  .seg button {
     transition: none;
   }
 }
