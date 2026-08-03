@@ -6,7 +6,9 @@
     <title>TypeRacerDiscord</title>
   </head>
   <body>
-    <div id="app"></div>
+    <!-- #app = le cadre clippé à la fenêtre, #screen = le contenu à hauteur libre
+         qu'on met à l'échelle pour qu'il tienne (voir ui/chrome.ts). -->
+    <div id="app"><div id="screen"></div></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -95,6 +95,8 @@ export class Race {
   private controller = new FreeInput([]);
   private log: Keystroke[] = [];
   private doneLocal = false;
+  /** Nombre de mots verrouillés au dernier `Progress` diffusé (#94) — le seul déclencheur. */
+  private lastLockedSent = 0;
 
   /** charsDone diffusé par joueur (barres, non autoritaire). */
   private progress = new Map<string, number>();
@@ -262,6 +264,7 @@ export class Race {
     this.phase = "running";
     this.doneLocal = false;
     this.log = [];
+    this.lastLockedSent = 0; // revanche : sans ça, aucun Progress ne repartirait
     this.controller = new FreeInput(this.targetWords);
     this.clock.start(); // t=0 (pilotée par RaceStart, plus par un décompte local isolé)
     this.render();
@@ -307,7 +310,16 @@ export class Race {
       }
     }
 
-    this.socket?.send({ type: "Progress", charsDone: this.charsDone() });
+    // Progress ne part QU'AU verrouillage d'un mot (#94), plus à chaque frappe : les
+    // barres des autres avancent alors par sauts proportionnels à la longueur du mot
+    // fini, et le fil ne porte plus une trame par caractère. Ma propre barre, elle, ne
+    // change pas de rythme — elle lit `charsDone()` en local à chaque rendu et ignore
+    // complètement ce que ce protocole diffuse.
+    const locked = this.controller.view().lockedWords.length;
+    if (locked !== this.lastLockedSent) {
+      this.lastLockedSent = locked;
+      this.socket?.send({ type: "Progress", charsDone: this.charsDone() });
+    }
 
     // Fin de course : uniquement quand TOUT le texte est exact (flux jamais bloqué,
     // mais il faut avoir corrigé ses fautes pour terminer).
@@ -421,11 +433,15 @@ export class Race {
       case "lobby":
         return (
           this.codeHtml() +
-          this.sourceHtml() +
-          this.sizeHtml() +
-          this.countdownHtml() +
-          this.readyCheckHtml() +
-          this.difficultyHtml() +
+          // Les cinq Réglages de salon dans UNE grille (#95) : c'est le conteneur commun
+          // qui les aligne, pas cinq blocs qui se ressemblent de loin.
+          `<div class="lobby-settings">${
+            this.sourceHtml() +
+            this.sizeHtml() +
+            this.countdownHtml() +
+            this.readyCheckHtml() +
+            this.difficultyHtml()
+          }</div>` +
           this.cardsHtml() +
           this.readyBtnHtml() +
           this.startBtnHtml() +
@@ -437,7 +453,7 @@ export class Race {
       case "running":
         return `<div class="live-bar" id="liveBar"></div>
           <div class="words-wrap"><div class="words" id="words">${this.wordsAreaHtml()}</div><div class="caret-block"></div></div>
-          <div class="bars" id="bars">${this.barsHtml()}</div>
+          <div class="bars" id="bars" style="--n:${this.players.length}">${this.barsHtml()}</div>
           <p class="hint">${this.doneLocal ? "Terminé — en attente des autres…" : "Tape le texte ; corrige tes fautes pour finir"}</p>
           ${this.forfeitBtnHtml()}`;
       case "over":
@@ -467,22 +483,24 @@ export class Race {
   private sourceHtml(): string {
     const src = this.textSource;
     if (this.me !== this.owner) {
-      return `<p class="hint">Texte : ${sourceLabel(src)}</p>`;
+      return lobbyRow("Texte", LOBBY_TIPS.source, lobbyValue(sourceLabel(src)));
     }
     const on = (active: boolean) => (active ? ' class="on"' : "");
     const lengths =
       src.kind === "words"
-        ? WORDS_LENGTHS.map(
+        ? `<div class="lobby-seg">${WORDS_LENGTHS.map(
             (n, i) =>
               `<button data-len="${n}"${on(src.count === n)}>${LENGTH_LABELS[i]} ${n}</button>`,
-          ).join("")
+          ).join("")}</div>`
         : "";
-    return `<div class="race-settings">
-      <span class="hint">Texte</span>
-      <button data-src="quote"${on(src.kind === "quote")}>Citation</button>
-      <button data-src="words"${on(src.kind === "words")}>Mots</button>
-      ${lengths}
-    </div>`;
+    return lobbyRow(
+      "Texte",
+      LOBBY_TIPS.source,
+      `<div class="lobby-seg">
+        <button data-src="quote"${on(src.kind === "quote")}>Citation</button>
+        <button data-src="words"${on(src.kind === "words")}>Mots</button>
+      </div>${lengths}`,
+    );
   }
 
   /**
@@ -493,15 +511,18 @@ export class Race {
   private sizeHtml(): string {
     const taken = this.players.length;
     if (this.me !== this.owner) {
-      return `<p class="hint">Salon : ${taken}/${this.maxPlayers} joueurs</p>`;
+      return lobbyRow("Salon", LOBBY_TIPS.size, lobbyValue(`${taken}/${this.maxPlayers} joueurs`));
     }
     const opts = ROOM_SIZES.map(
-      (n) => `<option value="${n}"${n === this.maxPlayers ? " selected" : ""}>${n}</option>`,
+      (n) =>
+        `<option value="${n}"${n === this.maxPlayers ? " selected" : ""}>${n} joueurs</option>`,
     ).join("");
-    return `<div class="race-settings">
-      <label class="hint" for="maxPlayers">Salon (${taken} présents)</label>
-      <select id="maxPlayers">${opts}</select>
-    </div>`;
+    return lobbyRow(
+      "Salon",
+      LOBBY_TIPS.size,
+      `<select id="maxPlayers">${opts}</select><span class="lobby-note">${taken} présents</span>`,
+      "maxPlayers",
+    );
   }
 
   /**
@@ -510,15 +531,17 @@ export class Race {
    */
   private countdownHtml(): string {
     if (this.me !== this.owner) {
-      return `<p class="hint">Décompte : ${this.countdownS} s</p>`;
+      return lobbyRow("Décompte", LOBBY_TIPS.countdown, lobbyValue(`${this.countdownS} s`));
     }
     const opts = COUNTDOWN_VALUES.map(
       (n) => `<option value="${n}"${n === this.countdownS ? " selected" : ""}>${n} s</option>`,
     ).join("");
-    return `<div class="race-settings">
-      <label class="hint" for="raceCountdown">Décompte</label>
-      <select id="raceCountdown">${opts}</select>
-    </div>`;
+    return lobbyRow(
+      "Décompte",
+      LOBBY_TIPS.countdown,
+      `<select id="raceCountdown">${opts}</select>`,
+      "raceCountdown",
+    );
   }
 
   /**
@@ -527,11 +550,23 @@ export class Race {
    */
   private readyCheckHtml(): string {
     if (this.me !== this.owner) {
-      return `<p class="hint">Ready-check : ${this.readyCheck ? "activé" : "désactivé"}</p>`;
+      return lobbyRow(
+        "Ready-check",
+        LOBBY_TIPS.ready,
+        lobbyValue(this.readyCheck ? "Activé" : "Désactivé"),
+      );
     }
-    return `<label class="hint" for="readyCheck">
-      <input type="checkbox" id="readyCheck"${this.readyCheck ? " checked" : ""}> Ready-check
-    </label>`;
+    // La case n'est plus une checkbox nue : `.lobby-check` lui donne la même bordure et
+    // le même fond que les `select` voisins (#95). L'input reste natif dessous — clavier
+    // et lecteur d'écran inchangés, seule la peinture change.
+    return lobbyRow(
+      "Ready-check",
+      LOBBY_TIPS.ready,
+      `<label class="lobby-check">
+        <input type="checkbox" id="readyCheck"${this.readyCheck ? " checked" : ""}>
+        <span>${this.readyCheck ? "Activé" : "Désactivé"}</span>
+      </label>`,
+    );
   }
 
   /** Bouton pour se marquer prêt/pas prêt — seulement visible quand le réglage est actif. */
@@ -548,15 +583,21 @@ export class Race {
    */
   private difficultyHtml(): string {
     if (this.me !== this.owner) {
-      return `<p class="hint">Difficulté : ${DIFFICULTY_LABELS[this.difficulty]}</p>`;
+      return lobbyRow(
+        "Difficulté",
+        LOBBY_TIPS.difficulty,
+        lobbyValue(DIFFICULTY_LABELS[this.difficulty]),
+      );
     }
     const opts = ROOM_DIFFICULTIES.map(
       (d) => `<option value="${d}"${d === this.difficulty ? " selected" : ""}>${DIFFICULTY_LABELS[d]}</option>`,
     ).join("");
-    return `<div class="race-settings">
-      <label class="hint" for="raceDifficulty">Difficulté</label>
-      <select id="raceDifficulty">${opts}</select>
-    </div>`;
+    return lobbyRow(
+      "Difficulté",
+      LOBBY_TIPS.difficulty,
+      `<select id="raceDifficulty">${opts}</select>`,
+      "raceDifficulty",
+    );
   }
 
   /** Cartes de présence empilées (owner en tête, moi souligné). */
@@ -584,7 +625,7 @@ export class Race {
   }
 
   private exitBtnHtml(): string {
-    return this.onExit ? `<button id="exitRace" class="on">← menu</button>` : "";
+    return this.onExit ? `<button id="exitRace" class="back-btn">← menu</button>` : "";
   }
 
   /**
@@ -608,7 +649,13 @@ export class Race {
 
   private renderBars(): void {
     const bars = this.root.querySelector<HTMLElement>("#bars");
-    if (bars) bars.innerHTML = this.barsHtml();
+    if (bars) {
+      // `--n` = le nombre de pistes à faire tenir (#96) : c'est lui qui décide de la
+      // hauteur des jauges. Il est reposé ici parce qu'un joueur peut quitter la Room
+      // en pleine course, et que la piste doit alors se ré-agrandir.
+      bars.style.setProperty("--n", String(this.players.length));
+      bars.innerHTML = this.barsHtml();
+    }
     const live = this.root.querySelector<HTMLElement>("#liveBar");
     if (live) {
       const wpm = this.doneLocal ? 0 : liveWpm(this.targetWords, this.controller.view(), this.clock.elapsed());
@@ -627,8 +674,11 @@ export class Race {
       .map((p) => {
         const isMe = p.playerId === this.me;
         const done = isMe ? this.charsDone() : this.progress.get(p.playerId) ?? 0;
-        const pct = Math.min(100, Math.round((done / total) * 100));
         const final = this.finished.get(p.playerId);
+        // Une arrivée remplit la piste, quoi qu'ait dit le dernier Progress : depuis #94
+        // le dernier mot n'est pas verrouillé si on finit sans taper d'espace derrière,
+        // la voiture s'arrêterait donc à un mot de la ligne d'arrivée.
+        const pct = final !== undefined ? 100 : Math.min(100, Math.round((done / total) * 100));
         const label = trackLabel(
           this.forfeited.has(p.playerId),
           this.failedPercents.get(p.playerId),
@@ -730,6 +780,53 @@ export function trackLabel(
 
 /** Libellés des trois longueurs, dans l'ordre de `WORDS_LENGTHS`. */
 const LENGTH_LABELS = ["Court", "Normal", "Long"] as const;
+
+/**
+ * Explications des cinq Réglages de salon (#95), servies par l'icône « i ». Elles vivent
+ * ici, à côté des méthodes qui dessinent les réglages, pour qu'ajouter un réglage sans son
+ * explication saute aux yeux.
+ */
+const LOBBY_TIPS = {
+  source:
+    "Le texte à taper pendant la course : une Citation (longueur aléatoire) ou des Mots générés (Court 15 / Normal 30 / Long 50).",
+  size: "Nombre maximum de joueurs admis dans ce salon, de 2 à 8. Une fois atteint, la Room affiche complet.",
+  countdown:
+    "Durée du compte à rebours (3, 5, 7 ou 10 s) entre « Démarrer la course » et le premier mot à taper.",
+  ready:
+    "Quand activé, chaque joueur doit se déclarer prêt avant que l'hôte puisse démarrer la course.",
+  difficulty:
+    "Normal : aucune contrainte. Master : la course s'arrête au tout premier caractère mal tapé (avant toute correction possible) — le joueur est classé échec, la course se débloque immédiatement pour les autres.",
+} as const;
+
+/**
+ * Une ligne de Réglage de salon (#95) : libellé + icône « i » à gauche, contrôle à droite.
+ * Ce patron unique est ce qui ALIGNE les cinq réglages — avant, chacun réutilisait `.hint`
+ * (pensée pour un paragraphe centré isolé) et retombait où il pouvait.
+ *
+ * Les non-hôtes reçoivent la valeur en lecture seule dans la même colonne, à la même
+ * place, avec la même explication : ils subissent le réglage, ils doivent le comprendre.
+ *
+ * `forId` relie le libellé à son contrôle quand celui-ci est un `select` ; le Ready-check
+ * s'en passe, son `<label>` enveloppe déjà sa case.
+ */
+function lobbyRow(label: string, tip: string, control: string, forId?: string): string {
+  const name = forId
+    ? `<label for="${forId}">${escapeText(label)}</label>`
+    : `<span>${escapeText(label)}</span>`;
+  // L'explication est un <button> et non un <span> : c'est ce qui la rend atteignable au
+  // TAP (le focus l'ouvre) et au clavier, sans une ligne de JS. Le survol la donne à la
+  // souris, le focus au doigt — deux pseudo-classes, aucun écouteur.
+  return `<div class="lobby-row">
+    <div class="lobby-key">${name}<button type="button" class="info"
+      aria-label="Explication : ${escapeText(label)}">i<span class="tip" role="tooltip">${escapeText(tip)}</span></button></div>
+    <div class="lobby-ctl">${control}</div>
+  </div>`;
+}
+
+/** Valeur d'un réglage en lecture seule (vue des non-hôtes) — même colonne, même ligne. */
+function lobbyValue(v: string): string {
+  return `<span class="lobby-value">${escapeText(v)}</span>`;
+}
 
 /** Libellés de Difficulté (issue #71) — Expert n'apparaît dans aucun `select` de Room,
  *  mais reste couvert ici : `this.difficulty` a le type `Difficulty` au complet. */

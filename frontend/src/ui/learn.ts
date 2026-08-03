@@ -199,7 +199,7 @@ export class Learn {
       <h2>Apprendre</h2>
       <p class="hint">Le cursus de dactylographie, leçon par leçon. Réussis l'exercice pour débloquer la suivante.</p>
       <div class="lesson-list">${items}</div>
-      <button data-nav="menu">← menu</button>
+      <button class="back-btn" data-nav="menu">← menu</button>
     `;
   }
 
@@ -217,7 +217,7 @@ export class Learn {
         <div class="caret-block"></div>
       </div>
       ${this.result ? this.resultHtml() : `<p class="hint">Tape pour commencer · Tab pour un autre exercice</p>`}
-      <button data-nav="list">← leçons</button>
+      <button class="back-btn" data-nav="list">← leçons</button>
     `;
   }
 

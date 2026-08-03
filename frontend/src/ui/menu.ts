@@ -79,7 +79,7 @@ export class Menu {
                maxlength="${CODE_LEN}" placeholder="Code de partie" aria-label="Code de partie" />
         <button data-menu="multi-join" disabled>Rejoindre</button>
       </div>
-      <button data-menu="back">← Retour</button>
+      <button class="back-btn" data-menu="back">← Retour</button>
     `;
   }
 

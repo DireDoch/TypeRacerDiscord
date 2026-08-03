@@ -16,6 +16,7 @@ import { History } from "./ui/history";
 import { Learn } from "./ui/learn";
 import { Settings } from "./ui/settings";
 import { applyPreferences } from "./core/preferences";
+import { fitToViewport, mountIdentityBadge } from "./ui/chrome";
 import { getAuthToken } from "./discord";
 
 // --- Bandeau d'erreurs (debug in-iframe) -------------------------------------
@@ -42,9 +43,15 @@ getAuthToken().catch((e) => showError(`Auth Discord échouée : ${e}`));
 // place au premier rendu, pas après un clignotement.
 applyPreferences();
 
-const rootEl = document.querySelector<HTMLDivElement>("#app");
-if (!rootEl) throw new Error("#app introuvable dans index.html");
+// Les écrans se montent dans #screen (hauteur libre) ; #app est le cadre clippé à la
+// fenêtre qui le met à l'échelle. Le badge d'identité, lui, est posé sur <body>.
+const appEl = document.querySelector<HTMLDivElement>("#app");
+const rootEl = document.querySelector<HTMLDivElement>("#screen");
+if (!appEl || !rootEl) throw new Error("#app / #screen introuvables dans index.html");
 const root: HTMLElement = rootEl;
+
+fitToViewport(appEl, rootEl);
+void mountIdentityBadge().catch((e) => showError(`Badge d'identité : ${e}`));
 
 let screen: { destroy(): void } | null = null;
 

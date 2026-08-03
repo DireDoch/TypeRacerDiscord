@@ -43,12 +43,25 @@
   box-sizing: border-box;
 }
 
+/* Échelle de base de TOUTE l'app. Le socle du rem monte de 16 à 19 px : chaque
+   taille exprimée en rem grossit d'un coup, sans toucher une seule règle. C'est
+   sûr parce que #91 garantit désormais que rien ne peut déborder — le contenu
+   trop haut est mis à l'échelle, pas scrollé. */
+html {
+  font-size: 19px;
+}
+
+/* --- Plein écran, jamais de scrollbar (#91) --------------------------------
+   La fenêtre est le cadre, point. `overflow: hidden` ici est le filet ; ce qui
+   fait tenir le contenu, c'est le `zoom` posé sur #app par ui/chrome.ts. */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   margin: 0;
-  min-height: 100vh;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-ui);
@@ -58,10 +71,37 @@ body {
   font-feature-settings: "liga" 0, "calt" 0;
 }
 
+/* Le contenu est mis à l'échelle pour tenir (ui/chrome.ts). Reste le cas des écrans
+   qui sont des LISTES longues par nature — Paramètres, Apprendre — : sur une fenêtre
+   basse, les réduire assez pour tout montrer les rendrait illisibles. Là, le plancher
+   de lisibilité gagne et le reste se rejoint à la molette / au doigt — mais AUCUNE
+   scrollbar n'est peinte, ni barre ni gouttière, sur aucun moteur (#91). C'est la
+   seule façon d'avoir à la fois « jamais de scrollbar » et « jamais de contenu
+   inaccessible » : les deux critères de l'issue tirent en sens inverse au-delà d'un
+   certain rapport contenu/fenêtre. */
 #app {
-  width: min(1000px, 92vw);
-  padding: 6vh 0;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none; /* Firefox */
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
 }
+#app::-webkit-scrollbar {
+  display: none; /* Chromium, WebKit — dont l'iframe Discord */
+}
+
+/* Padding en rem (pas en vh) : il doit suivre la mise à l'échelle comme le reste,
+   sinon il resterait à taille fixe pendant que le contenu rétrécit sous lui.
+   Le padding-top dégage la bande où flottent le bouton retour et le badge. */
+#screen {
+  width: min(1100px, 94vw);
+  padding: 4.4rem 0 1.5rem;
+}
+
+/* Le HUD (bouton retour + badge d'identité) est en FIN de fichier : ses sélecteurs
+   doivent battre les règles `button` de chaque écran, et l'ordre source tranche. */
 
 /* --- Barre de config ------------------------------------------------------ */
 .config {
@@ -482,20 +522,212 @@ button.primary:hover {
   color: var(--text);
 }
 
-/* Réglages du lobby (Source de texte, taille du salon) : une seule ligne, l'hôte y
-   clique, les autres la lisent. */
-.race-settings {
+/* --- Réglages de salon (#95) ----------------------------------------------
+   Les cinq réglages partagent UNE grille : libellé (+ son « i ») à gauche, contrôle
+   à droite, colonne de droite de largeur fixe. C'est cette arête verticale qui fait
+   qu'on descend la liste sans rechercher le contrôle à chaque ligne — même parti pris
+   que l'écran Paramètres. Avant, chacun réutilisait `.hint` et son `margin-top: 2rem`,
+   pensé pour un paragraphe centré isolé : rien ne s'alignait. */
+.lobby-settings {
+  width: min(640px, 100%);
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sub) 16%, transparent);
+  border-radius: 0.7rem;
+  padding: 0.3rem 1rem;
+}
+.lobby-row {
+  display: grid;
+  grid-template-columns: 1fr minmax(0, 19rem);
+  align-items: center;
+  gap: 0.5rem 1.2rem;
+  padding: 0.72rem 0;
+}
+.lobby-row + .lobby-row {
+  border-top: 1px solid color-mix(in srgb, var(--sub) 14%, transparent);
+}
+.lobby-key {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 1rem;
+  color: var(--text);
+  white-space: nowrap; /* « Ready-check » est un nom de réglage, il ne se coupe pas */
+}
+.lobby-ctl {
+  justify-self: end;
   display: flex;
   align-items: center;
   gap: 0.4rem;
   flex-wrap: wrap;
+  justify-content: flex-end;
+  width: 100%;
 }
-.race-settings select {
-  padding: 0.2rem 0.4rem;
-  border-radius: 0.4rem;
-  border: 1px solid var(--sub);
+.lobby-value {
+  color: var(--sub);
+  font-size: 0.95rem;
+}
+.lobby-note {
+  color: var(--sub);
+  font-size: 0.82rem;
+}
+
+/* Les `select` du lobby et la case Ready-check portent la MÊME peinture : c'était
+   l'écart le plus visible du lot (une checkbox nue du navigateur au milieu de selects
+   bordés). L'input reste natif dessous — clavier et lecteur d'écran intacts. */
+.lobby-ctl select,
+.lobby-check {
   background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--sub) 45%, transparent);
+  border-radius: 0.4rem;
   color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 0.95rem;
+  padding: 0.45rem 0.7rem;
+  cursor: pointer;
+}
+.lobby-ctl select:hover,
+.lobby-check:hover {
+  border-color: var(--main);
+}
+.lobby-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  user-select: none;
+}
+/* La case elle-même : un carré dessiné à la main, coché par un ::after corail.
+   `appearance: none` ne retire QUE la peinture du navigateur, pas le comportement. */
+.lobby-check input {
+  appearance: none;
+  margin: 0;
+  width: 1.1rem;
+  height: 1.1rem;
+  border: 1px solid var(--sub);
+  border-radius: 0.25rem;
+  background: var(--bg);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.lobby-check input:checked {
+  background: var(--main);
+  border-color: var(--main);
+}
+.lobby-check input:checked::after {
+  content: "✓";
+  color: var(--bg);
+  font-size: 0.8rem;
+  line-height: 1;
+  font-weight: 700;
+}
+
+/* Segments (Source de texte) : le choix actif est corail, les autres en --sub. */
+.lobby-seg {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.22rem;
+  background: var(--panel);
+  border-radius: 0.45rem;
+}
+.race .lobby-seg button {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--sub);
+  font-family: var(--font-ui);
+  font-size: 0.88rem;
+  cursor: pointer;
+  padding: 0.32rem 0.7rem;
+  border-radius: 0.35rem;
+  white-space: nowrap; /* « Court 15 » est une étiquette, pas deux lignes */
+  transition:
+    color 0.12s,
+    background 0.12s,
+    border-color 0.12s;
+}
+.race .lobby-seg button:hover {
+  color: var(--text);
+  background: none;
+}
+.race .lobby-seg button.on {
+  color: var(--main);
+  border-color: color-mix(in srgb, var(--main) 45%, transparent);
+  background: color-mix(in srgb, var(--main) 12%, transparent);
+}
+
+/* Icône « i » : un bouton, pas un span — c'est ce qui rend la bulle atteignable au TAP
+   (le focus l'ouvre) et au clavier, sans une ligne de JS. */
+.info {
+  flex: none;
+  position: relative;
+  width: 1.15rem;
+  height: 1.15rem;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--sub) 55%, transparent);
+  border-radius: 50%;
+  background: none;
+  color: var(--sub);
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  font-style: italic;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+}
+.info:hover,
+.info:focus-visible {
+  color: var(--main);
+  border-color: var(--main);
+}
+.info .tip {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: -0.5rem;
+  z-index: 30;
+  width: max-content;
+  max-width: min(26rem, 66vw);
+  padding: 0.6rem 0.8rem;
+  background: var(--bg);
+  border: 1px solid color-mix(in srgb, var(--main) 40%, transparent);
+  border-radius: 0.45rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  color: var(--text);
+  font-size: 0.82rem;
+  font-style: normal;
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: left;
+  white-space: normal;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.14s,
+    visibility 0.14s;
+}
+/* Survol pour la souris, focus pour le doigt et le clavier. `:focus` et pas seulement
+   `:focus-visible` : un tap sur mobile ne déclenche pas `:focus-visible`. */
+.info:hover .tip,
+.info:focus .tip {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Panneau étroit : le contrôle passe SOUS son libellé plutôt que d'écraser les deux
+   colonnes — même repli que l'écran Paramètres. */
+@media (max-width: 34rem) {
+  .lobby-row {
+    grid-template-columns: 1fr;
+  }
+  .lobby-ctl {
+    justify-self: start;
+    justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .info .tip,
+  .race .lobby-seg button {
+    transition: none;
+  }
 }
 
 /* Cartes de présence empilées. */
@@ -506,11 +738,29 @@ button.primary:hover {
   width: min(420px, 100%);
 }
 .card {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
   background: var(--panel);
   border-left: 3px solid var(--sub);
   border-radius: 0.4rem;
   padding: 0.6rem 0.9rem;
-  font-size: 0.95rem;
+  font-size: 1rem;
+}
+/* `cardsHtml` réutilise la pastille `.car` de la piste, mais une carte n'est pas une
+   piste : sans ancêtre positionné, l'`absolute` de `.car` allait se caler sur la
+   fenêtre et la pastille partait flotter dans un coin de l'écran. Dans une carte, elle
+   est simplement dans le flux, à gauche du nom. */
+.card .car {
+  /* `relative` et non `static` : la pastille rentre dans le flux, MAIS reste un bloc
+     conteneur pour son `<img>` en `absolute; inset: 0` — en `static` l'image se cale
+     sur la fenêtre et recouvre tout l'écran. */
+  position: relative;
+  width: 1.8rem;
+  height: 1.8rem;
+  font-size: 0.9rem;
+  transform: none;
+  flex: none;
 }
 .card.owner {
   border-left-color: var(--main);
@@ -532,6 +782,23 @@ button.primary:hover {
 .race button.on:hover {
   background: var(--panel);
 }
+/* « Abandonner » n'a pas de classe : sans règle il restait un bouton natif blanc au
+   milieu d'un écran sombre. Discret par nature — on ne met pas en avant le bouton qui
+   fait renoncer. */
+.race button#forfeitRace {
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--sub) 35%, transparent);
+  color: var(--sub);
+  font-family: var(--font-ui);
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0.45rem 1.1rem;
+  border-radius: 0.4rem;
+}
+.race button#forfeitRace:hover {
+  border-color: var(--error);
+  color: var(--error);
+}
 
 /* Piste de course : une ligne par joueur. Ce sont les anciennes barres de progression,
    recostumées — la piste EST la barre, la voiture EST la tête du remplissage. Aucun
@@ -540,16 +807,31 @@ button.primary:hover {
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
+
+  /* Hauteur d'une jauge (#96), en une seule expression :
+       plafond  3.2rem — le double de l'ancienne taille, quand la place le permet ;
+       plancher 1.6rem — l'ancienne taille, jamais moins, même à 8 joueurs ;
+       entre les deux, ce qui reste de la fenêtre divisé par le nombre de pistes.
+     `--n` est posé par ui/race.ts (le nombre de joueurs est une donnée, pas du CSS) ;
+     les 24rem retranchés sont le reste de l'écran de course (HUD, zone de texte, barre
+     live, hint, bouton). `svh` plutôt que `vh` : sur mobile la barre d'URL ne doit pas
+     faire osciller la piste.
+
+     ponytail: cette estimation à 24rem est volontairement grossière — la GARANTIE
+     « aucun scroll » ne vient pas d'elle mais du fit global de #91, qui met toute la
+     page à l'échelle si le compte tombe faux. Ici on ne cherche qu'à laisser les
+     jauges respirer quand il y a de la place. */
+  --track: clamp(1.6rem, calc((100svh - 24rem) / var(--n, 2) - 0.55rem), 3.2rem);
 }
 .bar {
   display: grid;
   /* nom | piste | wpm à la ligne d'arrivée */
-  grid-template-columns: minmax(4rem, 7rem) 1fr minmax(4.5rem, auto);
+  grid-template-columns: minmax(5rem, 9rem) 1fr minmax(5.5rem, auto);
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.7rem;
 }
 .bar-label {
-  font-size: 0.85rem;
+  font-size: 1rem;
   color: var(--sub);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -560,8 +842,8 @@ button.primary:hover {
 }
 .bar-track {
   background: var(--panel);
-  border-radius: 0.3rem;
-  height: 1.6rem;
+  border-radius: 0.35rem;
+  height: var(--track, 1.6rem);
   position: relative;
   /* Ligne d'arrivée : le bord droit de la piste, pas un élément de plus. */
   border-right: 3px solid var(--main);
@@ -574,21 +856,24 @@ button.primary:hover {
   /* La voiture est la TÊTE du remplissage : elle suit la largeur, gratuitement. */
   position: relative;
 }
+/* La voiture est un disque du diamètre de la piste, centré sur la tête du
+   remplissage : elle suit `--track` sans qu'aucune valeur ne soit répétée. */
 .car {
   position: absolute;
-  right: -0.8rem;
+  right: calc(var(--track, 1.6rem) / -2);
   top: 50%;
   transform: translateY(-50%);
-  width: 1.6rem;
-  height: 1.6rem;
+  width: var(--track, 1.6rem);
+  height: var(--track, 1.6rem);
   border-radius: 50%;
   overflow: hidden;
   background: var(--main);
   color: var(--bg);
   display: grid;
   place-items: center;
-  font-size: 0.8rem;
+  font-size: calc(var(--track, 1.6rem) * 0.5);
   font-weight: 700;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--bg) 70%, transparent);
 }
 /* L'initiale est DERRIÈRE l'avatar : si l'image ne charge pas (CSP de l'iframe,
    compte sans avatar), elle reste visible d'elle-même. Aucun JS de repli. */
@@ -600,7 +885,7 @@ button.primary:hover {
   object-fit: cover;
 }
 .bar-wpm {
-  font-size: 0.85rem;
+  font-size: 1rem;
   color: var(--sub);
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -709,7 +994,10 @@ button.primary:hover {
   flex-direction: column;
   align-items: center;
   gap: 1rem;
-  padding-top: 14vh;
+  /* En rem, pas en vh : une longueur en vh ne suit PAS la mise à l'échelle de #app
+     (elle se mesure sur la fenêtre, pas sur le contenu), et le menu restait alors
+     trop haut d'un cran après réduction. */
+  padding-top: 6rem;
 }
 .menu h1 {
   color: var(--main);
@@ -808,23 +1096,6 @@ button.primary:hover {
   color: var(--main);
   font-size: 1.9rem;
   letter-spacing: -0.01em;
-}
-.settings .ghost {
-  background: none;
-  border: 1px solid color-mix(in srgb, var(--sub) 45%, transparent);
-  color: var(--sub);
-  font-family: var(--font-ui);
-  font-size: 0.85rem;
-  cursor: pointer;
-  padding: 0.4rem 0.9rem;
-  border-radius: 0.4rem;
-  transition:
-    color 0.12s,
-    border-color 0.12s;
-}
-.settings .ghost:hover {
-  color: var(--main);
-  border-color: var(--main);
 }
 
 /* Section : un numéro en chasse fixe, un titre espacé, puis un filet qui court
@@ -1023,8 +1294,111 @@ button.primary:hover {
   }
   .set-row,
   .set-row::before,
-  .seg button,
-  .settings .ghost {
+  .seg button {
+    transition: none;
+  }
+}
+
+/* =============================================================================
+   HUD — les deux repères FIXES de l'app.
+
+   Un cockpit a deux constantes : d'où l'on sort (en haut à gauche) et qui pilote
+   (en haut à droite). Les deux sont hors du flux, donc posés à l'identique sur
+   tous les écrans sans qu'aucun écran n'ait à s'en occuper.
+
+   Ce bloc est en fin de fichier À DESSEIN : `button.back-btn` doit l'emporter sur
+   les `.learn button` / `.menu button` / `.config button` de chaque écran, et à
+   spécificité égale (0,1,1) c'est l'ordre source qui tranche.
+   ============================================================================= */
+
+/* Bouton de retour unifié (#93) : un seul patron pour les neuf boutons de retour.
+   Libellé et action inchangés — seule la position l'est. Étant hors du flux, les
+   barres `.config` qui en contenaient un ne gardent aucun trou à leur place. */
+button.back-btn {
+  position: fixed;
+  top: 1.1rem;
+  left: 1.5rem;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sub) 30%, transparent);
+  border-radius: 2rem;
+  color: var(--sub);
+  font-family: var(--font-ui);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.62rem 1.15rem;
+  backdrop-filter: blur(6px);
+  transition:
+    color 0.14s,
+    border-color 0.14s,
+    transform 0.14s;
+}
+button.back-btn:hover {
+  color: var(--main);
+  border-color: var(--main);
+  transform: translateX(-2px);
+}
+button.back-btn:focus-visible {
+  outline: 2px solid var(--main);
+  outline-offset: 2px;
+}
+
+/* Badge d'identité (#92). Monté sur <body> par ui/chrome.ts : il survit à toute
+   navigation sans être redessiné, et le `zoom` de mise à l'échelle de #app ne
+   l'atteint pas — même taille sur tous les écrans, quelle que soit la densité. */
+.id-badge {
+  position: fixed;
+  top: 1.1rem;
+  right: 1.5rem;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.4rem 1.05rem 0.4rem 0.4rem;
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sub) 22%, transparent);
+  border-radius: 2rem;
+  backdrop-filter: blur(6px);
+  pointer-events: none; /* repère, pas commande : il ne vole jamais un clic */
+}
+.id-avatar {
+  position: relative;
+  width: 2.3rem;
+  height: 2.3rem;
+  border-radius: 50%;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--main);
+  color: var(--bg);
+  font-size: 1rem;
+  font-weight: 700;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--main) 55%, transparent);
+}
+.id-avatar img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.id-name {
+  max-width: 11rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button.back-btn {
     transition: none;
   }
 }

@@ -75,7 +75,7 @@ export class History {
             ${FILTERS.map(filterBtn).join("")}
           </div>
           <div class="group"><button data-profile class="${profileView ? "on" : ""}">mes faiblesses</button></div>
-          <div class="group"><button data-nav="menu">← menu</button></div>
+          <button class="back-btn" data-nav="menu">← menu</button>
         </div>
         ${body}
       </section>
