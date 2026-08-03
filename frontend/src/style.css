@@ -1319,6 +1319,13 @@ button.back-btn {
   top: 1.1rem;
   left: 1.5rem;
   z-index: 40;
+  /* Contre-échelle. Le bouton est rendu DANS `#screen`, donc dans le sous-arbre que
+     `#app` met à l'échelle ; le badge d'identité, lui, est sur <body> et y échappe.
+     Sans cette ligne les deux ancres du HUD — qui existent précisément pour être
+     identiques d'un écran à l'autre (#92/#93) — se mettent à diverger en taille et en
+     alignement dès que le fit s'engage. `zoom` se multiplie en descendant l'arbre :
+     k × (1/k) = 1. `--fit` est posé par ui/chrome.ts. */
+  zoom: calc(1 / var(--fit, 1));
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
