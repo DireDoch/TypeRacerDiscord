@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { raceComplete, sourceLabel, currentCount, liveWpmOf, trackLabel } from "./race";
+import {
+  raceComplete,
+  sourceLabel,
+  currentCount,
+  liveWpmOf,
+  trackLabel,
+  trackPercent,
+} from "./race";
 import { avatarUrl } from "../discord";
 import { WORDS_LENGTHS } from "../core/net";
 import type { InputView } from "../core/input/controller";
@@ -104,5 +111,35 @@ describe("avatarUrl — on reconstruit l'URL, on ne la transporte jamais", () =>
   it("en mode dev le playerId n'est pas numérique — pas de BigInt tenté", () => {
     expect(() => avatarUrl("dev-player-1", null)).not.toThrow();
     expect(avatarUrl("dev-player-1", null)).toContain("/embed/avatars/0.png");
+  });
+});
+
+describe("trackPercent — le remplissage de la piste", () => {
+  const running = { finished: false, forfeited: false, failed: false };
+
+  it("suit la progression tant qu'on court", () => {
+    expect(trackPercent(50, 200, running)).toBe(25);
+    expect(trackPercent(0, 200, running)).toBe(0);
+  });
+
+  it("remplit la piste à l'arrivée, même sans espace après le dernier mot", () => {
+    // Depuis #94, Progress ne part qu'au verrouillage d'un mot : `done` est en retard
+    // d'un mot quand on finit sans taper d'espace derrière.
+    expect(trackPercent(190, 200, { ...running, finished: true })).toBe(100);
+  });
+
+  it("laisse un abandon là où il s'est arrêté", () => {
+    // Un abandon arrive par le MÊME PlayerFinished qu'une arrivée : sans l'exclure, la
+    // voiture se téléporte sur la ligne pendant que l'étiquette dit « abandon ».
+    expect(trackPercent(20, 200, { finished: true, forfeited: true, failed: false })).toBe(10);
+  });
+
+  it("laisse un échec Master là où il s'est arrêté", () => {
+    expect(trackPercent(6, 200, { finished: true, forfeited: false, failed: true })).toBe(3);
+  });
+
+  it("ne dépasse jamais 100 % ni ne divise par zéro", () => {
+    expect(trackPercent(500, 200, running)).toBe(100);
+    expect(trackPercent(0, 0, running)).toBe(0);
   });
 });

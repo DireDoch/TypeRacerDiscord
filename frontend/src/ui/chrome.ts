@@ -64,14 +64,25 @@ export function fitToViewport(app: HTMLElement, screen: HTMLElement): void {
   // l'observateur : redimensionner pendant la livraison des notifications déclenche le
   // « ResizeObserver loop completed with undelivered notifications » du navigateur, que
   // le bandeau d'erreurs de main.ts affiche en plein écran (et qui bloque les clics).
-  // Depuis un rAF, le changement de taille est simplement la frame suivante.
+  //
+  // À être précis : le rAF déplace l'écriture hors de la fenêtre de livraison, il ne
+  // prouve pas à lui seul que la boucle se referme. Mesuré (Chrome, fenêtre 1100x620,
+  // écran où le fit est actif à 0,65) : 0 écriture de zoom sur 181 frames au repos —
+  // le zoom appliqué ne change pas la taille observée de #screen, l'arête de rétroaction
+  // ne se referme donc pas. Si ce comportement changeait, le symptôme serait un relayout
+  // forcé par frame : c'est ce compteur-là qu'il faudrait reprendre.
   const fit = (): void => {
     if (queued) return;
     queued = true;
     requestAnimationFrame(() => {
       queued = false;
       app.style.zoom = "1"; // mesurer le contenu à taille pleine, jamais à travers l'échelle précédente
-      app.style.zoom = String(fitScale(screen.scrollHeight, app.clientHeight));
+      const k = fitScale(screen.scrollHeight, app.clientHeight);
+      app.style.zoom = String(k);
+      // Exposé au CSS pour que le bouton de retour puisse se contre-mettre à l'échelle :
+      // il vit DANS ce sous-arbre zoomé alors que le badge d'identité est sur <body>, et
+      // les deux ancres du HUD doivent rester de la même taille (voir style.css).
+      app.style.setProperty("--fit", String(k));
     });
   };
   new ResizeObserver(fit).observe(screen); // le contenu a changé de taille

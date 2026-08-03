@@ -675,10 +675,11 @@ export class Race {
         const isMe = p.playerId === this.me;
         const done = isMe ? this.charsDone() : this.progress.get(p.playerId) ?? 0;
         const final = this.finished.get(p.playerId);
-        // Une arrivée remplit la piste, quoi qu'ait dit le dernier Progress : depuis #94
-        // le dernier mot n'est pas verrouillé si on finit sans taper d'espace derrière,
-        // la voiture s'arrêterait donc à un mot de la ligne d'arrivée.
-        const pct = final !== undefined ? 100 : Math.min(100, Math.round((done / total) * 100));
+        const pct = trackPercent(done, total, {
+          finished: final !== undefined,
+          forfeited: this.forfeited.has(p.playerId),
+          failed: this.failedPercents.has(p.playerId),
+        });
         const label = trackLabel(
           this.forfeited.has(p.playerId),
           this.failedPercents.get(p.playerId),
@@ -758,6 +759,27 @@ function avatarHtml(p: PlayerEntry, cls = "car"): string {
 export function liveWpmOf(charsDone: number, elapsedMs: number): number {
   if (elapsedMs <= 0) return 0;
   return Math.round(charsDone / 5 / (elapsedMs / 60000));
+}
+
+/**
+ * Remplissage de la piste, en pourcentage.
+ *
+ * Une VRAIE arrivée remplit la piste à fond quoi qu'ait dit le dernier `Progress` :
+ * depuis #94 le dernier mot n'est pas verrouillé quand on finit sans taper d'espace
+ * derrière, et la voiture s'arrêterait à un mot de la ligne d'arrivée.
+ *
+ * Mais un abandon et un échec Master arrivent par le MÊME `PlayerFinished` que l'arrivée.
+ * Sans les exclure, la voiture de celui qui renonce à 10 % se téléporte sur la ligne
+ * d'arrivée pendant que son étiquette dit « abandon ». Ils restent où ils se sont
+ * arrêtés — c'est exactement ce que la piste doit raconter. Pure.
+ */
+export function trackPercent(
+  done: number,
+  total: number,
+  state: { finished: boolean; forfeited: boolean; failed: boolean },
+): number {
+  if (state.finished && !state.forfeited && !state.failed) return 100;
+  return Math.min(100, Math.round((done / Math.max(1, total)) * 100));
 }
 
 /**
