@@ -192,7 +192,10 @@ async fn ws_handler(
 ) -> Response {
     let player_id = match state.identity.resolve_player_id(&q.token).await {
         Ok(id) => id,
-        Err(e) => return auth_status(e).into_response(),
+        Err(e) => {
+            eprintln!("GET /ws → auth refusée ({e:?}) — un DISCORD_CLIENT_ID/SECRET réel dans .env bloque les tokens de test (?token=alice) : voir mode dev dans le README.");
+            return auth_status(e).into_response();
+        }
     };
     // Un log de course fait quelques dizaines de Ko ; sans borne (64 Mio par défaut),
     // un Finish géant se recompute sous le verrou global des Rooms.
@@ -324,11 +327,10 @@ impl FromRequestParts<AppState> for AuthPlayer {
             .and_then(|v| v.strip_prefix("Bearer "))
             .filter(|t| !t.is_empty())
             .ok_or(StatusCode::UNAUTHORIZED)?;
-        let player_id = state
-            .identity
-            .resolve_player_id(token)
-            .await
-            .map_err(auth_status)?;
+        let player_id = state.identity.resolve_player_id(token).await.map_err(|e| {
+            eprintln!("{} {} → auth refusée ({e:?})", parts.method, parts.uri);
+            auth_status(e)
+        })?;
         Ok(AuthPlayer(player_id))
     }
 }
@@ -341,7 +343,8 @@ fn auth_status(e: AuthError) -> StatusCode {
     }
 }
 
-fn internal<E>(_e: E) -> StatusCode {
+fn internal<E: std::fmt::Debug>(e: E) -> StatusCode {
+    eprintln!("500 : {e:?}");
     StatusCode::INTERNAL_SERVER_ERROR
 }
 

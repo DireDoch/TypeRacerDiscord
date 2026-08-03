@@ -59,18 +59,21 @@ impl QuoteClient {
     /// Récupère une Quote aléatoire via API-Ninjas et la met au format du contrat.
     pub async fn fetch(&self) -> Result<QuoteResponse, QuoteError> {
         let key = self.key.as_ref().ok_or(QuoteError)?;
-        let resp = self
-            .http
-            .get(APININJAS_QUOTES)
-            .header("X-Api-Key", key)
-            .send()
-            .await
-            .map_err(|_| QuoteError)?;
+        let resp = self.http.get(APININJAS_QUOTES).header("X-Api-Key", key).send().await.map_err(
+            |e| {
+                eprintln!("GET /api/quote → requête API-Ninjas échouée : {e}");
+                QuoteError
+            },
+        )?;
         if !resp.status().is_success() {
+            eprintln!("GET /api/quote → API-Ninjas a répondu {}", resp.status());
             return Err(QuoteError);
         }
         // API-Ninjas renvoie un tableau (souvent d'un seul élément).
-        let quotes: Vec<NinjaQuote> = resp.json().await.map_err(|_| QuoteError)?;
+        let quotes: Vec<NinjaQuote> = resp.json().await.map_err(|e| {
+            eprintln!("GET /api/quote → réponse API-Ninjas illisible : {e}");
+            QuoteError
+        })?;
         let q = quotes.into_iter().next().ok_or(QuoteError)?;
 
         Ok(QuoteResponse {
