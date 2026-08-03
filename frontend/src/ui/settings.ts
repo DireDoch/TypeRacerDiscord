@@ -330,7 +330,7 @@ export class Settings {
       <section class="settings">
         <header class="settings-head">
           <h2>Paramètres</h2>
-          <button type="button" class="ghost" data-act="back">← Retour</button>
+          <button type="button" class="back-btn" data-act="back">← Retour</button>
         </header>
         ${body}
         ${this.dangerZoneHtml(secs.length)}

@@ -61,7 +61,7 @@ export function runReplay(root: HTMLElement, opts: ReplayOptions): () => void {
   root.innerHTML = `
     <section class="practice replay">
       <div class="config">
-        <div class="group"><button id="replayBack">← résultats</button></div>
+        <button class="back-btn" id="replayBack">← résultats</button>
         <div class="group"><button id="replayAgain">revoir</button></div>
       </div>
       <div class="live-bar" id="replayBar"></div>
