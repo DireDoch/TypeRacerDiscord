@@ -239,7 +239,8 @@ pub async fn handle_socket(
             }
             Ok(ClientEvent::LeaveRoom) => break,
             // Jointure en double : ignorée.
-            Ok(_) | Err(_) => {}
+            Ok(_) => {}
+            Err(e) => eprintln!("WS {player_id} : message illisible ({e}) : {text}"),
         }
     }
 
@@ -277,7 +278,11 @@ async fn await_join(
             Ok(ClientEvent::JoinCode { code, identity }) => {
                 join_code(rooms, &code, player_id, identity).map(|rx| (code, rx))
             }
-            _ => continue, // toute autre trame avant une jointure : ignorée
+            Ok(_) => continue, // toute autre trame avant une jointure : ignorée
+            Err(e) => {
+                eprintln!("WS {player_id} : trame de jointure illisible ({e}) : {text}");
+                continue;
+            }
         };
         match attempt {
             Ok((key, rx)) => return Some((key, socket, rx)),
