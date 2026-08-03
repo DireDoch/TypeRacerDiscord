@@ -1,7 +1,7 @@
 // =============================================================================
 //  main.ts — bootstrap de l'app frontend (point d'entrée Vite).
 //
-//  Écran d'arrivée : Menu (Solo / Multijoueur / Options / Quitter). Navigation par
+//  Écran d'arrivée : Menu (Solo / Multijoueur / Paramètres / Quitter). Navigation par
 //  boutons avec démontage propre (dans l'iframe Discord l'URL est figée par le
 //  mapping). `?race` reste le raccourci de dev (deux onglets au navigateur).
 //  L'identité Discord (Embedded App SDK) est amorcée en amont — le handshake OAuth

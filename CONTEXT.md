@@ -330,14 +330,16 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
   côté, le **Gap** en gros, clic sur un joueur → son graphe par seconde (`drawChart`
   réutilisé de `results.ts`) **sans aucune requête**. Tout vient de `RaceOver`. Écran **Menu** (`ui/menu.ts`) : hub
   d'arrivée. Navigation par boutons avec `destroy()`.
-- Écran **Paramètres** (`ui/settings.ts`, issue #60) : le socle des Preferences —
-  une ligne = libellé + explication à gauche, contrôle aligné à droite, groupées en
-  sections déclarées (`sections()`, c'est là que les prochaines Preferences s'ajoutent).
+- Écran **Paramètres** (`ui/settings.ts`, issues #60 puis #65–#70) : une ligne = libellé
+  + explication à gauche, contrôle aligné à droite, groupées en sections déclarées
+  (`sections()`, c'est là que les prochaines Preferences s'ajoutent).
   Le rendu est pur et testé sans DOM (`rowHtml` / `sectionHtml`, comme `wordsHtml`). Il a
   REMPLACÉ la vue Options du Menu, dont il reprend les liens légaux en pied de page.
-  Seul le contrôle `segmented` existe ; interrupteur et curseur viendront avec la
-  première Preference qui en aura besoin. Première ligne câblée : la **police de frappe**,
-  chaque option rendue dans sa propre police (l'aperçu est le contrôle).
+  Quatre types de contrôle : `segmented`, `slider`, `toggle`, `number` — chacun est né
+  avec la première Preference qui en avait besoin, aucun n'a été écrit d'avance.
+  Sections câblées : **Apparence** (dont la police de frappe, chaque option rendue dans sa
+  propre police — l'aperçu EST le contrôle), **Solo**, **Son**, et la **Zone à risque**
+  du compte (export / import / reset, issue #70).
   `core/preferences.ts` porte le schéma : défaut ET domaine de validité par clé,
   persistance **localStorage seule** — une Preference appartient à l'appareil, donc aucune
   table, aucun endpoint, rien vers le backend. Le stockage étant éditable à la main, toute
