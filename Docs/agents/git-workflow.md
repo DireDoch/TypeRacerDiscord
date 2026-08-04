@@ -31,8 +31,11 @@ touching `main`. Only an explicit release request does (e.g. "merge develop to m
 A release is versioned. The project ships `0.x` pre-releases (`v0.0.1` onwards); `1.0.0`
 is reserved for the first version declared stable. When the user does ask for one:
 
-1. **Bump `backend/Cargo.toml`.** That version is the single source of truth — the Rust
-   binary is the deliverable (it serves the frontend's `dist/`), and Cargo bakes the
+1. **Bump `backend/Cargo.toml`, then `backend/Cargo.lock` with it** (`cargo update -p
+   typeracer-discord-backend`, or edit the one `version =` under that package name — a
+   stale lockfile is silently rewritten today, but breaks the moment anyone adds
+   `--locked` to the release build). That version is the single source of truth — the
+   Rust binary is the deliverable (it serves the frontend's `dist/`), and Cargo bakes the
    number into it. `frontend/package.json`'s version is inert: the package is `private`
    and never published, so leave it alone.
 2. **Write the `CHANGELOG.md` section**, `## vX.Y.Z — short title`, aimed at a player
@@ -57,6 +60,18 @@ with `0.`.
 The job's guard is the version itself: if a release already exists for the version in
 `Cargo.toml`, it **skips silently** and CI stays green. That is what makes the section
 merges below safe — they move `main` without publishing anything.
+
+**The release build needs the `VITE_DISCORD_CLIENT_ID` repository variable.** Vite freezes
+`import.meta.env.VITE_*` at build time, and `.env` is gitignored, so without it the
+published bundle silently falls into dev mode — no Embedded App SDK handshake, every
+player becomes `dev-player-1`, and the deployer cannot fix it because the value is
+compiled in. The job refuses to build rather than ship that. The client id is public (it
+sits in cleartext in `frontend/.env.example`); only `DISCORD_CLIENT_SECRET` is a secret,
+and it stays backend-side. Set it once:
+
+```
+gh variable set VITE_DISCORD_CLIENT_ID --body <client id>
+```
 
 ### Standing exception: the parameter-issues batch (#59–71)
 

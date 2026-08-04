@@ -61,6 +61,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # poser le tag et créer la release
+    # Le build musl à froid dure plusieurs minutes. Sans ce verrou, un second push sur
+    # main pendant ce temps (merge de section, push de docs) relance un job dont la garde
+    # voit encore la release absente : les deux rebuildent et courent au même
+    # `gh release create`, le perdant échoue en rouge sur un push sans rapport.
+    concurrency:
+      group: release-main
+      cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -78,7 +85,16 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          # On LISTE les tags plutôt que d'interroger `gh release view v$version` : ce
+          # dernier renvoie un code non nul aussi bien pour un 404 que pour une panne
+          # réseau, un quota ou un souci d'auth — la garde basculerait alors sur
+          # « publier » et brûlerait un build complet avant de mourir sur « already
+          # exists ». Ici une erreur d'API fait échouer le job (set -e), honnêtement.
+          # L'appel est SORTI de la condition : dans un `if`, `set -e` est suspendu, et
+          # un `gh` en échec y serait lu comme « pas de release » → publication.
+          tags=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 \
+                   --json tagName --jq '.[].tagName')
+          if printf '%s\n' "$tags" | grep -qxF "v$version"; then
             echo "publish=false" >> "$GITHUB_OUTPUT"
             echo "\`v$version\` est déjà publiée — rien à faire." >> "$GITHUB_STEP_SUMMARY"
           else
@@ -111,9 +127,29 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      # Vite fige `import.meta.env.VITE_*` À LA COMPILATION. Sans cette variable, le
+      # bundle publié part en MODE DEV (discord.ts : `if (!clientId || …)`) : aucun
+      # handshake Embedded App SDK et tous les joueurs deviennent `dev-player-1`.
+      # L'archive serait inutilisable comme Activity, et le déployeur ne pourrait rien y
+      # faire — la valeur est compilée dedans. `.env` étant gitignoré, la CI ne l'a pas :
+      # elle vient d'une variable de dépôt. Le client id est PUBLIC (il est déjà en clair
+      # dans frontend/.env.example) — ce n'est pas un secret, seul le client_secret en est
+      # un et il reste côté backend.
+      - name: Le client id Discord est-il configuré ?
+        if: steps.gate.outputs.publish == 'true'
+        env:
+          VITE_DISCORD_CLIENT_ID: ${{ vars.VITE_DISCORD_CLIENT_ID }}
+        run: |
+          if [ -z "${VITE_DISCORD_CLIENT_ID:-}" ]; then
+            echo "::error::Variable de dépôt VITE_DISCORD_CLIENT_ID absente. Le bundle partirait en mode dev (tous les joueurs = dev-player-1) et l'archive serait inutilisable comme Activity. Corriger avec : gh variable set VITE_DISCORD_CLIENT_ID --body <client id>"
+            exit 1
+          fi
+
       - name: Build du frontend
         if: steps.gate.outputs.publish == 'true'
         working-directory: frontend
+        env:
+          VITE_DISCORD_CLIENT_ID: ${{ vars.VITE_DISCORD_CLIENT_ID }}
         run: |
           npm ci
           npm run build
@@ -166,13 +202,39 @@ jobs:
           STATIC_DIR=./dist ./typeracer-discord-backend
           ```
 
-          Écoute sur `:8080` (`PORT` pour changer) et sert le frontend depuis `./dist`.
-          La base SQLite est créée au premier démarrage (`DATABASE_URL`, par défaut
-          `sqlite:typeracer.db` dans le dossier courant) ; les migrations sont incluses
-          dans le binaire.
+          ## Il écoute sur la LOOPBACK, pas sur le réseau
 
-          Les secrets Discord se passent par l'environnement ou un `.env` à côté du
-          binaire — voir le README du dépôt.
+          L'adresse est `127.0.0.1:8080` (`PORT` change le port, **pas** l'adresse) :
+          le serveur est injoignable depuis une autre machine, volontairement. C'est ce
+          que veut le mode de déploiement du projet — un tunnel qui tourne sur le même
+          hôte et se connecte en local :
+
+          ```sh
+          cloudflared tunnel --url http://localhost:8080
+          ```
+
+          Puis l'URL du tunnel va dans **Discord → Activities → URL Mappings**. Pour
+          exposer directement sur Internet, mettez un reverse proxy devant (nginx,
+          Caddy) — le binaire ne s'en chargera pas.
+
+          ## Variables d'environnement
+
+          À passer dans l'environnement ou dans un `.env` à côté du binaire.
+
+          | Variable | Sans elle |
+          | --- | --- |
+          | `DISCORD_CLIENT_ID` | Mode dev : le Bearer sert de player_id, `POST /token` renvoie 503 |
+          | `DISCORD_CLIENT_SECRET` | idem — les deux vont ensemble |
+          | `APININJAS_API_KEY` | `GET /api/quote` renvoie 502 : **les courses en Citation échouent** |
+          | `STATIC_DIR` | Cherche `../frontend/dist` — à mettre à `./dist` ici |
+          | `DATABASE_URL` | Défaut `sqlite:typeracer.db` dans le dossier courant |
+          | `PORT` | Défaut 8080 |
+
+          Le client id Discord du frontend est déjà compilé dans `dist/` — il n'est pas
+          à fournir ici.
+
+          La base SQLite est créée au premier démarrage ; les migrations sont incluses
+          dans le binaire, il n'y a rien à appliquer à la main.
           DEPLOY
           tar -czf "$name.tar.gz" "$name"
           echo "asset=$name.tar.gz" >> "$GITHUB_OUTPUT"
@@ -180,20 +242,28 @@ jobs:
       # `gh release create` pose le tag lui-même sur ce commit : aucun `git tag` séparé,
       # donc aucune fenêtre où le tag existerait sans sa release. Une version en `0.` est
       # publiée en pre-release — le projet n'est pas déclaré stable avant `1.0.0`.
+      # Le titre passe par `env:`, jamais par `${{ }}` dans la commande : Actions
+      # interpole AVANT que le shell ne lise la ligne, donc un backquote ou un `$(…)`
+      # dans un titre de CHANGELOG s'exécuterait. Ce n'est pas théorique ici — le
+      # CHANGELOG donne lui-même en exemple un titre contenant un identifiant entre
+      # backquotes.
       - name: Publication
         if: steps.gate.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.gate.outputs.version }}
+          TITLE: ${{ steps.notes.outputs.title }}
+          ASSET: ${{ steps.pack.outputs.asset }}
         run: |
           set -euo pipefail
-          version="${{ steps.gate.outputs.version }}"
-          case "$version" in
+          case "$VERSION" in
             0.*) prerelease="--prerelease" ;;
             *) prerelease="" ;;
           esac
-          gh release create "v$version" \
+          gh release create "v$VERSION" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "${{ steps.notes.outputs.title }}" \
+            --title "$TITLE" \
             --notes-file RELEASE_NOTES.md \
             $prerelease \
-            "${{ steps.pack.outputs.asset }}"
-          echo "Publiée : ${{ steps.notes.outputs.title }}" >> "$GITHUB_STEP_SUMMARY"
+            "$ASSET"
+          echo "Publiée : $TITLE" >> "$GITHUB_STEP_SUMMARY"
