@@ -39,3 +39,161 @@ jobs:
       - run: rustup component add clippy
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test
+
+  # --- Release (issue #117) ---------------------------------------------------
+  # Publie une release GitHub quand la version de backend/Cargo.toml n'en a pas encore.
+  #
+  # `main` bouge pour DEUX raisons (Docs/agents/git-workflow.md) : de vraies releases,
+  # mais aussi des merges de section et des pushs de docs. Sur ces derniers la version
+  # n'a pas changé — le job sort alors en silence et la CI reste verte. Les faire
+  # échouer en rouge entraînerait à ignorer la CI.
+  #
+  # La garde lit le MANIFESTE, pas un tag : pousser une branche et pousser un tag sont
+  # deux événements GitHub distincts, sans ordre garanti entre eux. Une garde « un tag
+  # pointe sur ce commit » raterait la release une fois sur deux, silencieusement.
+  #
+  # `needs:` ne fonctionne qu'à l'intérieur d'un même workflow : c'est la raison pour
+  # laquelle ce job vit ici et non dans un release.yml séparé. Publier devient
+  # mécaniquement impossible tant qu'un test échoue, sans rejouer les tests deux fois.
+  release:
+    needs: [frontend, backend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # poser le tag et créer la release
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Faut-il publier ?
+        id: gate
+        run: |
+          set -euo pipefail
+          # Les dépendances déclarent `version` en ligne (`{ version = "0.7" }`), jamais
+          # en début de ligne : l'ancrage `^` suffit à ne cueillir que celle du paquet.
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' backend/Cargo.toml | head -1)
+          if [ -z "$version" ]; then
+            echo "::error::version introuvable dans backend/Cargo.toml"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "\`v$version\` est déjà publiée — rien à faire." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "Publication de **v$version**." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Les notes viennent du dépôt, pas des titres de commits : une release parle au
+      # joueur. Section absente ou vide → on échoue, bruyamment et avant tout build.
+      - name: Notes depuis CHANGELOG.md
+        if: steps.gate.outputs.publish == 'true'
+        id: notes
+        run: |
+          set -euo pipefail
+          tag="v${{ steps.gate.outputs.version }}"
+          awk -v t="$tag" '$1=="##" && $2==t {f=1; next} $1=="##" {f=0} f' \
+            CHANGELOG.md > RELEASE_NOTES.md
+          if ! grep -q '[^[:space:]]' RELEASE_NOTES.md; then
+            echo "::error::CHANGELOG.md n'a pas de section « ## $tag » (ou elle est vide). Écrire les notes est la condition pour publier."
+            exit 1
+          fi
+          # Le titre de la release est la ligne de titre du CHANGELOG, sans les `## `.
+          title=$(awk -v t="$tag" '$1=="##" && $2==t {sub(/^## /, ""); print; exit}' CHANGELOG.md)
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v5
+        if: steps.gate.outputs.publish == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build du frontend
+        if: steps.gate.outputs.publish == 'true'
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      # Cible musl = binaire ENTIÈREMENT statique. Compilé sur ubuntu-latest, un binaire
+      # glibc exigerait la glibc de cette image (2.39) et refuserait de démarrer sur un
+      # Debian 12 (2.36) ou un Ubuntu 22.04 (2.35) — panne visible seulement au
+      # déploiement. Le projet peut se le permettre : rustls plutôt qu'OpenSSL, et SQLite
+      # compilé en dur par libsqlite3-sys, donc aucune dépendance C système.
+      # `musl-tools` fournit musl-gcc, dont libsqlite3-sys a besoin pour compiler SQLite.
+      - name: Toolchain musl
+        if: steps.gate.outputs.publish == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          rustup target add x86_64-unknown-linux-musl
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.gate.outputs.publish == 'true'
+        with:
+          workspaces: backend
+          key: musl
+
+      - name: Build du backend (statique)
+        if: steps.gate.outputs.publish == 'true'
+        working-directory: backend
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+        run: cargo build --release --target x86_64-unknown-linux-musl
+
+      # Les migrations sont EMBARQUÉES dans le binaire (`sqlx::migrate!` les inclut à la
+      # compilation) : rien à copier. Le backend cherche en revanche le frontend via
+      # STATIC_DIR, d'où le rappel dans DEPLOY.md.
+      - name: Empaquetage
+        if: steps.gate.outputs.publish == 'true'
+        id: pack
+        run: |
+          set -euo pipefail
+          name="typeracer-discord-v${{ steps.gate.outputs.version }}-linux-x86_64"
+          mkdir "$name"
+          cp backend/target/x86_64-unknown-linux-musl/release/typeracer-discord-backend "$name/"
+          cp -r frontend/dist "$name/dist"
+          cat > "$name/DEPLOY.md" <<'DEPLOY'
+          # Déployer
+
+          Binaire statique : aucun toolchain Rust ni Node requis, aucune bibliothèque
+          système. N'importe quel Linux x86_64 suffit.
+
+          ```sh
+          STATIC_DIR=./dist ./typeracer-discord-backend
+          ```
+
+          Écoute sur `:8080` (`PORT` pour changer) et sert le frontend depuis `./dist`.
+          La base SQLite est créée au premier démarrage (`DATABASE_URL`, par défaut
+          `sqlite:typeracer.db` dans le dossier courant) ; les migrations sont incluses
+          dans le binaire.
+
+          Les secrets Discord se passent par l'environnement ou un `.env` à côté du
+          binaire — voir le README du dépôt.
+          DEPLOY
+          tar -czf "$name.tar.gz" "$name"
+          echo "asset=$name.tar.gz" >> "$GITHUB_OUTPUT"
+
+      # `gh release create` pose le tag lui-même sur ce commit : aucun `git tag` séparé,
+      # donc aucune fenêtre où le tag existerait sans sa release. Une version en `0.` est
+      # publiée en pre-release — le projet n'est pas déclaré stable avant `1.0.0`.
+      - name: Publication
+        if: steps.gate.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          version="${{ steps.gate.outputs.version }}"
+          case "$version" in
+            0.*) prerelease="--prerelease" ;;
+            *) prerelease="" ;;
+          esac
+          gh release create "v$version" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "${{ steps.notes.outputs.title }}" \
+            --notes-file RELEASE_NOTES.md \
+            $prerelease \
+            "${{ steps.pack.outputs.asset }}"
+          echo "Publiée : ${{ steps.notes.outputs.title }}" >> "$GITHUB_STEP_SUMMARY"
