@@ -86,3 +86,83 @@
     circle((x, 0.95), radius: 0.36, fill: nuit, stroke: none)
   }
 }
+
+/// Rangée de touches vue de dessus, à plat.
+///
+/// Occupe 10 unités de large — la largeur de `voiture()` — et pend SOUS `y = 0`,
+/// pile là où ses roues touchent. Les deux composants partagent donc la même
+/// ligne de sol et se superposent sans qu'aucune translation soit à écrire : la
+/// voiture roule littéralement sur les touches. C'est la métaphore du jeu, où
+/// taper est ce qui la fait avancer.
+///
+/// Vue de dessus et non de profil : un clavier de profil est une barre plate,
+/// illisible à 48 px. À plat, il reste des carrés à fort contraste — et aucune
+/// deuxième perspective ne vient contredire la voiture, strictement de profil.
+///
+/// `touches: 1` donne le capuchon unique dont l'icône « spam » (#115) aura
+/// besoin. Il n'y a donc pas de composant `touche()` séparé, et pas de touche
+/// mise en avant : #115 dira ce qu'elle veut quand son ADR sera écrit.
+#let clavier(couleur: sourd, touches: 5) = {
+  import cetz.draw: *
+
+  let ecart = 0.25
+  let largeur = (10 - ecart * (touches - 1)) / touches
+  let hauteur = 1.4
+
+  for i in range(touches) {
+    let x = i * (largeur + ecart)
+    // Deux rectangles emboîtés plutôt qu'un seul : le liseré sombre fait lire
+    // « capuchon » là où un aplat ferait lire « tuile ». Il reste à plat, aucun
+    // relief simulé.
+    rect((x, -hauteur), (x + largeur, 0), fill: couleur.darken(30%), stroke: none)
+    rect(
+      (x + 0.12, -hauteur + 0.12),
+      (x + largeur - 0.12, -0.12),
+      fill: couleur,
+      stroke: none,
+    )
+  }
+}
+
+// Boîte de la scène complète, sur l'axe vertical : du bas des touches au toit
+// de la voiture. Sert de référence de cadrage — voir `scene()`.
+#let _scene-bas = -1.4
+#let _scene-haut = 3.9
+#let _scene-centre = (_scene-bas + _scene-haut) / 2
+
+// Alias privés : dans `scene()`, les paramètres `voiture` et `clavier` masquent
+// les fonctions du même nom. Les capturer ici est ce qui permet de garder la
+// signature lisible (`scene(clavier: false)`) plutôt que de renommer les
+// paramètres en `avec-voiture` pour contourner l'ombrage.
+#let _voiture = voiture
+#let _clavier = clavier
+
+/// Compose voiture et clavier dans un cadrage unique.
+///
+/// Son travail n'est pas d'empiler deux appels — les composants partagent déjà
+/// leur ligne de sol, les empiler ne demanderait aucun code. Ce qu'elle fait,
+/// c'est RECENTRER l'élément solitaire sur la boîte de la scène complète : sans
+/// ça, « voiture seule » et « les deux » ne se cadrent pas pareil, et les quatre
+/// assets à venir (#112 à #115) divergent chacun de son côté.
+///
+/// Renvoie des éléments de dessin comme les composants qu'elle appelle : une
+/// scène reste elle-même composable.
+#let scene(voiture: true, clavier: true, couleur: corail) = {
+  import cetz.draw: *
+
+  // `group` cantonne la translation : elle ne fuit pas sur ce que l'appelant
+  // dessinerait ensuite.
+  if voiture {
+    group({
+      if not clavier { translate((0, _scene-centre - _scene-haut / 2)) }
+      _voiture(couleur: couleur)
+    })
+  }
+
+  if clavier {
+    group({
+      if not voiture { translate((0, _scene-centre - _scene-bas / 2)) }
+      _clavier()
+    })
+  }
+}
