@@ -1,0 +1,2 @@
+Les PNG exportés atterrissent ici. Ce fichier existe pour que le dossier survive
+à git : `typst compile` ne crée pas le dossier de destination et échouerait sans lui.
