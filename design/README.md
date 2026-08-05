@@ -13,15 +13,37 @@ fichiers, c'est cinq occasions de diverger. Ici, changer le corail dans
 
 | Fichier | Rôle |
 | --- | --- |
-| `composants.typ` | Palette + composants réutilisables (`voiture()`…). Ne rend rien seul. |
+| `composants.typ` | Palette + composants (`voiture()`, `clavier()`) + `scene()`. Ne rend rien seul. |
 | `voiture-1024.typ` | Un asset = un fichier : sa page, ses dimensions, sa composition. |
+| `composition-demo.typ` | Planche de contrôle des trois combinaisons. Pas un asset. |
 | `out/` | Les PNG exportés. **Commités** — voir plus bas. |
+
+## Le système de composants
+
+Deux règles, et tout le reste en découle :
+
+1. **Un composant dessine dans le repère cetz courant, il ne renvoie jamais un
+   `canvas()`.** Un canvas est du contenu opaque : deux canvas s'empilent comme
+   deux images au lieu de se composer dans un repère commun.
+2. **Voiture et clavier partagent la ligne de sol `y = 0`.** Les roues la
+   touchent par le dessus, les touches pendent dessous. Les superposer ne demande
+   donc aucune translation — la voiture roule sur les touches, ce qui est
+   exactement ce que le jeu raconte.
+
+`scene(voiture: true, clavier: true)` n'existe pas pour empiler ces deux appels,
+qui n'ont besoin de personne. Elle existe pour **recentrer l'élément solitaire sur
+la boîte de la scène complète** : sans elle, « voiture seule » et « les deux » ne
+se cadrent pas pareil, et chaque asset à venir calerait son visuel à sa façon.
+
+Aucun paramètre de taille nulle part : `scale` chez l'appelant fait déjà ce
+travail, le redéclarer réécrirait la transformation de cetz à la main.
 
 ## Exporter
 
 ```sh
 cd design
 typst compile --format png --ppi 72 voiture-1024.typ out/voiture-1024.png
+typst compile --format png --ppi 72 composition-demo.typ out/composition-demo.png
 ```
 
 Une page déclarée en `pt` exportée à **72 PPI** donne 1 pt = 1 px : `1024pt` de
