@@ -41,9 +41,37 @@ export function gapSeconds(results: RaceResult[], i: number): number | null {
   return (r.durationMs - winner.durationMs) / 1000;
 }
 
+/**
+ * Floor is lava se reconnaît à ses brûlés (ADR 0015), sans qu'aucun champ de mode n'ait à
+ * voyager jusqu'ici : dans ce mode il y a toujours au moins un Brûlé (la course s'arrête
+ * quand il ne reste qu'un vivant), et dans une Race normale il n'y en a jamais.
+ */
+export function isLava(results: RaceResult[]): boolean {
+  return results.some((r) => r.burnedAtMs !== null);
+}
+
+/**
+ * Le chiffre en tête d'affiche de floor is lava : le temps de SURVIE, pas le Gap — qui
+ * n'existe pas dans ce mode, personne ne franchissant la ligne (ADR 0015). Même règle
+ * qu'ailleurs : la grandeur qui décide du classement est celle qu'on affiche en grand.
+ *
+ * Le survivant a survécu jusqu'à la dernière élimination — c'est l'instant où il s'est
+ * retrouvé seul, donc où la course s'est arrêtée.
+ */
+export function survivalLabel(results: RaceResult[], i: number): string {
+  const r = results[i];
+  if (!r) return "abandon";
+  if (r.burnedAtMs !== null) return `brûlé à ${Math.round(r.burnedAtMs / 1000)} s`;
+  if (r.failedPercent !== null) return "échec";
+  if (r.forfeit) return "abandon";
+  const last = Math.max(0, ...results.map((x) => x.burnedAtMs ?? 0));
+  return `survécu ${Math.round(last / 1000)} s`;
+}
+
 /** `+1.4 s` ; le vainqueur n'a pas d'écart à afficher, il EST la référence. */
 export function gapLabel(results: RaceResult[], i: number): string {
   const r = results[i];
+  if (isLava(results)) return survivalLabel(results, i);
   if (r?.failedPercent !== null && r?.failedPercent !== undefined) return "échec";
   const g = gapSeconds(results, i);
   if (g === null) return "abandon";

@@ -27,6 +27,12 @@ export interface RaceResult {
    *  mêmes mécaniques par ailleurs. Pourcentage affiché (« failed (X%) »), jamais utilisé
    *  pour classer. `null` sinon, jamais en même temps que `forfeit`. */
   failedPercent: number | null;
+  /** Brûlé en floor is lava (ADR 0015) : instant du décès, en ms depuis t=0. C'est ce qui
+   *  CLASSE dans ce mode, et ce que le podium affiche en gros à la place du Gap — qui
+   *  n'existe pas ici, personne ne franchissant la ligne. `null` = pas brûlé, donc le
+   *  survivant ou n'importe quelle arrivée d'une Race normale. Un Brûlé porte un VRAI
+   *  score partiel, contrairement à un Abandon ou à un Échec Master. */
+  burnedAtMs: number | null;
   perSecond: PerSecondPoint[];
 }
 
@@ -62,6 +68,16 @@ export const ROOM_DIFFICULTIES: Difficulty[] = ["normal", "master"];
 
 /** Miroir de `ws/mod.rs` : durées de décompte réglables (ADR 0007). 7 = défaut. */
 export const COUNTDOWN_VALUES = [3, 5, 7, 10] as const;
+
+/**
+ * Comment une Race se GAGNE (ADR 0015). Ni un Mode (solo, décide du texte), ni une Source
+ * de texte, ni une Difficulté (condition d'échec INDIVIDUELLE — l'élimination, elle, est
+ * comparative). Un seul à la fois : ce sont des règles de victoire, elles ne se cumulent pas.
+ */
+export type GameMode = "normal" | "floorIsLava";
+
+/** Miroir de `ws/mod.rs` : intervalles d'élimination réglables. 10 = défaut. */
+export const LAVA_INTERVAL_VALUES = [5, 10, 15, 20] as const;
 
 /**
  * La Display identity annoncée à la Room. `playerId` reste la vérité durable (il possède
@@ -107,6 +123,10 @@ export type ClientEvent =
   // owner uniquement, hors course. Normal | Master seulement — Expert n'est pas un
   // Réglage de salon (ADR 0013), le serveur rejette toute autre valeur.
   | { type: "SetDifficulty"; difficulty: Difficulty }
+  // owner uniquement, hors course (ADR 0015). Bascule le texte : floor is lava impose le sien.
+  | { type: "SetGameMode"; mode: GameMode }
+  // owner uniquement, hors course, 5/10/15/20 (le serveur rejette le reste). Inerte en normal.
+  | { type: "SetLavaInterval"; seconds: number }
   | { type: "StartRace" } // owner uniquement (le serveur rejette les autres)
   | { type: "Progress"; charsDone: number }
   // Le serveur possède seed/texte/config : Finish n'envoie que le log + la durée.
@@ -139,12 +159,21 @@ export type ServerEvent =
       readyCheck: boolean;
       /** Difficulté de la Room (Normal | Master, issue #71, ADR 0013). */
       difficulty: Difficulty;
+      /** Mode de jeu de la Room (ADR 0015) — lu par TOUT le lobby : il décide comment on gagne. */
+      gameMode: GameMode;
+      /** Intervalle d'élimination de floor is lava, en secondes. Inerte en `normal`. */
+      lavaIntervalS: number;
     }
   | { type: "RaceStart"; startAtEpochMs: number }
   | { type: "PlayerProgress"; playerId: string; charsDone: number }
   // `forfeit` : abandon — la piste affiche « abandon » plutôt que « 0 wpm ». `failedPercent`
   // (ADR 0013) affiche « échec (X%) » à la place — jamais les deux en même temps.
   | { type: "PlayerFinished"; playerId: string; wpm: number; forfeit: boolean; failedPercent: number | null }
+  // Élimination floor is lava (ADR 0015). Diffusé AVANT que le log du brûlé n'arrive :
+  // c'est ce message qui le lui demande, en lui disant d'arrêter de taper. Plusieurs
+  // peuvent tomber sur le même tic (égalité : les deux brûlent). Le survivant n'a pas
+  // d'événement à lui — il déduit sa victoire de ce qu'il ne reste que lui de vivant.
+  | { type: "PlayerBurned"; playerId: string; atMs: number }
   // L'ORDRE DU TABLEAU EST LE CLASSEMENT — pas de champ d'ordre séparé (ADR 0010).
   // `playOfTheGame` porte les deux logs du duel le plus serré, ou `null` s'il n'y en a
   // pas eu (< 2 finisseurs, ou meilleur écart > 2 s) — le bouton est alors absent (ADR 0011).
