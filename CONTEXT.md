@@ -48,8 +48,12 @@ A lobby-only Room configuration set by the party leader and applied uniformly to
 _Avoid_: Room option, Lobby setting, Game setting.
 
 **Preference**:
-How a Player wants the game to look on **their own machine** — typing font, colour palette, and the Display identity override. A Preference belongs to the device, never leaves it, and is deliberately **not** a Setting: it never alters the generated text, never enters the Config bucket, and never affects a score. Two Players in the same Race may see different fonts and colours and still be racing the same text. Changing a Preference never invalidates a PB.
+How a Player wants the game to look on **their own machine** — typing font, colour palette, and the Display identity override. A Preference belongs to the device, never leaves it, and is deliberately **not** a Setting: it never alters the generated text, never enters the Config bucket, and never affects a score. Two Players in the same Race may see different fonts and colours and still be racing the same text. Changing a Preference never invalidates a PB. Being device-scoped and cosmetic, a Preference applies **everywhere the Player types** — Practice and Race alike — the same way font family already does; a Preference that only takes effect on one screen is an unfinished wire-up, not a deliberate boundary.
 _Avoid_: Setting, Option, Config, Theme.
+
+**Zone à risque (danger zone)**:
+The Settings section grouping account-level actions on Preferences themselves: export, import, reset. Confirmation gates only the **destructive** actions here — Import and Reset, which overwrite the Preferences already on the device — never Export (read-only) or a plain reversible Preference that happens to live in this section (e.g. the FPS limit). "Every action needs confirmation" means every action that can lose data, not literally every click in the section. No custom modal exists in this codebase for this — the platform's native `confirm()` does the job.
+_Avoid_: Advanced settings, Account settings.
 
 **Keystroke log**:
 The recorded timeline of a Player's keystrokes during a Run (what was typed and when). The raw input from which all stats are derived; sent once to the backend for the Authoritative scoreboard and **persisted with the Run** (migration `0002`) as the raw material for the upcoming replay/analysis features.
@@ -65,6 +69,10 @@ _Avoid_: Highlight, PotG, Replay, Duel.
 
 **Live stats**:
 Stats computed on the client during a Run for immediate UI feedback (the moving WPM counter, the graph filling in). Not authoritative.
+
+**Live stat style**:
+Whether a Live stat (speed, accuracy, burst) is shown or hidden during a Run — currently binary (`text` | `off`), one Preference per indicator. **Known gap**: richer visual variants (a gauge, a graph, color-coding) were named when this was requested but never specified anywhere — no mockup, nothing else in the codebase to match. Treat anything beyond `text`/`off` as unbuilt, not merely undocumented, until an actual design exists to build against.
+_Avoid_: Style, Theme, Display mode.
 
 **Authoritative scoreboard**:
 The final stats (WPM, Raw, Accuracy, character breakdown, per-second series) recomputed by the Rust backend from the Keystroke log at the end of a Run. The numbers of record. In multiplayer this is also the anti-cheat check.
@@ -312,6 +320,16 @@ Time infini. Race : AUCUNE fenêtre — texte entier visible dès le décompte.
 La console est invisible dans Discord : `main.ts` affiche un bandeau d'erreurs fixe
 (`window.error` + `unhandledrejection`, clic pour fermer). Pour une vraie console :
 ouvrir Discord AU NAVIGATEUR (discord.com/app) et lancer l'activité → F12.
+
+**Identité visuelle — wordmark "Typpe|Racer".**
+Le logo du jeu (`design/components.typ` → `logo()`) encode une faute de frappe corrigée :
+"Typ" + un 2e "p" fautif en `--error` + "e" + curseur `|` en `--main` + "Racer", tous en
+police monospace. Remplace l'ancien traitement "Type|Racer" (qui encodait une
+*progression* de frappe — "Type" déjà tapé en `--sub` terne, "Racer" à venir en `--text`
+clair, sans faute) : les deux métaphores étaient concurrentes, une seule reste. Le
+wordmark n'apparaît que dans `cover.typ` et `app-icon.typ` (seules surfaces où un texte de
+marque est exigé) ; les icônes Rich Presence par mode restent icon-only (voiture/clavier
+seuls), pour rester lisibles à la taille d'affichage réduite de Discord.
 
 ## État d'implémentation (avancement)
 
