@@ -50,3 +50,24 @@ describe("rampedAdvance — rampe d'accélération vers le ralenti (#55)", () =>
     expect(slope).toBeCloseTo(50, 5);
   });
 });
+
+describe("duelWindow — floor is lava s'arrête à la PREMIÈRE sortie (ADR 0015)", () => {
+  // Les deux sorties peuvent être séparées de trente secondes : la proximité s'y mesure
+  // en WPM, pas en temps. Aller jusqu'à la seconde montrerait le survivant taper seul.
+  const early = [{ t: 9_800, k: "a" }];
+  const late = [{ t: 40_000, k: "b" }];
+
+  it("normale : jusqu'à la seconde arrivée — on veut voir les deux franchir", () => {
+    expect(duelWindow(early, late)).toEqual({ start: 6_800, end: 40_000 });
+  });
+
+  it("lava : la fenêtre se termine sur les flammes du premier sorti", () => {
+    expect(duelWindow(early, late, true)).toEqual({ start: 6_800, end: 9_800 });
+  });
+
+  it("les deux étaient forcément vivants pendant la fenêtre", () => {
+    const w = duelWindow(early, late, true);
+    expect(w.start).toBeLessThan(w.end);
+    expect(w.end).toBeLessThanOrEqual(9_800);
+  });
+});

@@ -22,11 +22,13 @@ import { detectDifficultyFailure } from "../core/difficulty";
 import {
   RaceSocket,
   COUNTDOWN_VALUES,
+  LAVA_INTERVAL_VALUES,
   ROOM_DIFFICULTIES,
   ROOM_SIZES,
   WORDS_LENGTHS,
   type ClientEvent,
   type Difficulty,
+  type GameMode,
   type Identity,
   type PlayerEntry,
   type PlayOfTheGame,
@@ -88,6 +90,10 @@ export class Race {
   private readyCheck = false;
   /** Difficulté de la Room (réglage de l'hôte, issue #71, ADR 0013). */
   private difficulty: Difficulty = "normal";
+  /** Mode de jeu de la Room (réglage de l'hôte, ADR 0015) — comment la course se gagne. */
+  private gameMode: GameMode = "normal";
+  /** Intervalle d'élimination de floor is lava, en secondes. Inerte en `normal`. */
+  private lavaIntervalS = 10;
   /** Message affiché en phase "failed" (code inconnu, Room pleine). */
   private failure = "";
 
@@ -107,6 +113,9 @@ export class Race {
   /** Joueurs ayant ÉCHOUÉ (Master, ADR 0013), avec leur pourcentage — la piste affiche
    *  « échec (X%) », jamais « abandon » ni leur « 0 wpm ». */
   private failedPercents = new Map<string, number>();
+  /** Joueurs BRÛLÉS (ADR 0015) avec l'instant du décès en ms — la piste affiche
+   *  « brûlé à X s » et embrase leur ligne. Sert aussi à savoir qui est encore vivant. */
+  private burned = new Map<string, number>();
   /** Résultats complets de la dernière course, DANS L'ORDRE DU CLASSEMENT (ADR 0010). */
   private results: RaceResult[] = [];
   /** Le duel le plus serré (ADR 0011), ou `null` s'il n'y en a pas eu → bouton absent. */
@@ -182,6 +191,8 @@ export class Race {
         this.countdownS = e.countdownS;
         this.readyCheck = e.readyCheck;
         this.difficulty = e.difficulty;
+        this.gameMode = e.gameMode;
+        this.lavaIntervalS = e.lavaIntervalS;
         this.targetText = e.targetText;
         this.targetWords = e.targetText.split(" ").filter((w) => w.length > 0);
         // Duel à l'écran : on met à jour les données (join/leave du lobby d'après-course)
@@ -211,6 +222,9 @@ export class Race {
         if (e.failedPercent !== null) this.failedPercents.set(e.playerId, e.failedPercent);
         if (this.phase === "running") this.renderBars();
         break;
+      case "PlayerBurned":
+        this.onBurned(e.playerId, e.atMs);
+        break;
       case "RaceOver":
         this.results = e.results;
         this.playOfTheGame = e.playOfTheGame;
@@ -221,6 +235,39 @@ export class Race {
         this.render();
         break;
     }
+  }
+
+  /**
+   * Élimination floor is lava (ADR 0015). Le serveur a déjà décidé ; ce message dit au
+   * brûlé d'arrêter de taper et de renvoyer son log — d'où le `Finish`, qui veut déjà dire
+   * « voici mon log, j'ai fini ». Le survivant, lui, n'a pas de message à lui : il déduit
+   * sa victoire de ce qu'il ne reste que lui de vivant, et envoie le sien de la même façon.
+   * Sans ça, sa course ne se clôturerait qu'au watchdog.
+   */
+  private onBurned(playerId: string, atMs: number): void {
+    this.burned.set(playerId, atMs);
+    if (playerId === this.me) this.stopAndSubmit();
+    else if (this.isLastAlive()) this.stopAndSubmit();
+    if (this.phase === "running") this.renderBars();
+  }
+
+  /** Les vivants : présents ni brûlés ni déjà sortis (arrivée, abandon, échec). */
+  private alive(): PlayerEntry[] {
+    return this.players.filter(
+      (p) => !this.burned.has(p.playerId) && !this.finished.has(p.playerId),
+    );
+  }
+
+  private isLastAlive(): boolean {
+    const alive = this.alive();
+    return alive.length === 1 && alive[0].playerId === this.me;
+  }
+
+  /** Arrête ma saisie et livre mon log — brûlé ou vainqueur, c'est le même geste. */
+  private stopAndSubmit(): void {
+    if (this.doneLocal) return;
+    this.doneLocal = true;
+    this.socket?.send({ type: "Finish", keystrokes: this.log, endedAtMs: this.clock.elapsed() });
   }
 
   private fail(message: string): void {
@@ -243,6 +290,7 @@ export class Race {
     this.finished.clear();
     this.forfeited.clear();
     this.failedPercents.clear();
+    this.burned.clear();
     this.playOfTheGame = null;
     // Contrôleur neuf dès le décompte : le texte ENTIER s'affiche vierge (le joueur lit
     // le début pendant l'attente) — indispensable après une revanche (état stale).
@@ -392,6 +440,22 @@ export class Race {
           difficulty: (e.target as HTMLSelectElement).value as Difficulty,
         }),
       );
+    this.root
+      .querySelector<HTMLSelectElement>("#raceGameMode")
+      ?.addEventListener("change", (e) =>
+        this.socket?.send({
+          type: "SetGameMode",
+          mode: (e.target as HTMLSelectElement).value as GameMode,
+        }),
+      );
+    this.root
+      .querySelector<HTMLSelectElement>("#lavaInterval")
+      ?.addEventListener("change", (e) =>
+        this.socket?.send({
+          type: "SetLavaInterval",
+          seconds: Number((e.target as HTMLSelectElement).value),
+        }),
+      );
     if (this.phase === "over") {
       wirePodium(this.root, this.podiumOptions());
       this.root
@@ -435,8 +499,12 @@ export class Race {
           this.codeHtml() +
           // Les cinq Réglages de salon dans UNE grille (#95) : c'est le conteneur commun
           // qui les aligne, pas cinq blocs qui se ressemblent de loin.
+          // La Source est MASQUÉE en floor is lava : le mode impose son texte (ADR 0015),
+          // l'afficher laisserait croire qu'on peut encore le choisir.
           `<div class="lobby-settings">${
-            this.sourceHtml() +
+            this.gameModeHtml() +
+            this.lavaIntervalHtml() +
+            (this.gameMode === "floorIsLava" ? "" : this.sourceHtml()) +
             this.sizeHtml() +
             this.countdownHtml() +
             this.readyCheckHtml() +
@@ -600,6 +668,32 @@ export class Race {
     );
   }
 
+  /**
+   * Mode de jeu (ADR 0015) : comment la course se GAGNE. Même patron que les autres
+   * réglages — `select` pour l'hôte, mention pour les autres, qui le subissent.
+   */
+  private gameModeHtml(): string {
+    if (this.me !== this.owner) {
+      return lobbyRow("Mode de jeu", LOBBY_TIPS.gameMode, lobbyValue(GAME_MODE_LABELS[this.gameMode]));
+    }
+    const opts = GAME_MODES.map(
+      (m) => `<option value="${m}"${m === this.gameMode ? " selected" : ""}>${GAME_MODE_LABELS[m]}</option>`,
+    ).join("");
+    return lobbyRow("Mode de jeu", LOBBY_TIPS.gameMode, `<select id="raceGameMode">${opts}</select>`, "raceGameMode");
+  }
+
+  /** Intervalle d'élimination — n'apparaît QUE quand floor is lava est choisi. */
+  private lavaIntervalHtml(): string {
+    if (this.gameMode !== "floorIsLava") return "";
+    if (this.me !== this.owner) {
+      return lobbyRow("Élimination", LOBBY_TIPS.lava, lobbyValue(`toutes les ${this.lavaIntervalS} s`));
+    }
+    const opts = LAVA_INTERVAL_VALUES.map(
+      (n) => `<option value="${n}"${n === this.lavaIntervalS ? " selected" : ""}>toutes les ${n} s</option>`,
+    ).join("");
+    return lobbyRow("Élimination", LOBBY_TIPS.lava, `<select id="lavaInterval">${opts}</select>`, "lavaInterval");
+  }
+
   /** Cartes de présence empilées (owner en tête, moi souligné). */
   private cardsHtml(): string {
     const cards = this.players
@@ -619,6 +713,13 @@ export class Race {
 
   private startBtnHtml(): string {
     if (this.me === this.owner) {
+      // Floor is lava exige deux partants (ADR 0015) : seul, on est déjà le dernier
+      // vivant. Le serveur refuse en silence — le bouton doit donc dire pourquoi, sinon
+      // l'hôte clique dans le vide sans comprendre.
+      if (this.gameMode === "floorIsLava" && this.players.length < 2) {
+        return `<button id="startRace" disabled>Démarrer la course</button>
+          <p class="hint">Floor is lava demande au moins deux joueurs — seul, tu es déjà le dernier vivant.</p>`;
+      }
       return `<button id="startRace" class="on">Démarrer la course</button>`;
     }
     return `<p class="hint">En attente que l'hôte lance la course…</p>`;
@@ -659,7 +760,13 @@ export class Race {
     const live = this.root.querySelector<HTMLElement>("#liveBar");
     if (live) {
       const wpm = this.doneLocal ? 0 : liveWpm(this.targetWords, this.controller.view(), this.clock.elapsed());
-      live.innerHTML = `<span class="live-wpm">${wpm} wpm</span>`;
+      // Le décompte avant la prochaine brûlure : c'est lui qui rend le mode angoissant.
+      // Tant qu'il reste quelqu'un à éliminer — sinon la course est déjà jouée.
+      const lava =
+        this.gameMode === "floorIsLava" && this.alive().length > 1
+          ? `<span class="live-lava">🔥 ${nextBurnIn(this.clock.elapsed(), this.lavaIntervalS)} s</span>`
+          : "";
+      live.innerHTML = `<span class="live-wpm">${wpm} wpm</span>${lava}`;
     }
   }
 
@@ -670,11 +777,26 @@ export class Race {
   private barsHtml(): string {
     const total = Math.max(1, this.targetText.length);
     const elapsed = this.clock.elapsed();
+    // Le condamné en sursis (ADR 0015) : marqué EN PERMANENCE, pas seulement au tic.
+    // C'est ça, le mode — pas des morts surprises, mais quelques secondes à se voir
+    // dernier en tapant plus vite. Calculé en local sur la même règle que le serveur ;
+    // mon propre `charsDone` est plus frais que celui qu'il a reçu, donc c'est un
+    // avertissement, jamais un verdict.
+    const doomed =
+      this.gameMode === "floorIsLava" && this.phase === "running"
+        ? lastPlaced(
+            this.alive().map((p) => ({
+              playerId: p.playerId,
+              done: p.playerId === this.me ? this.charsDone() : this.progress.get(p.playerId) ?? 0,
+            })),
+          )
+        : new Set<string>();
     return this.players
       .map((p) => {
         const isMe = p.playerId === this.me;
         const done = isMe ? this.charsDone() : this.progress.get(p.playerId) ?? 0;
         const final = this.finished.get(p.playerId);
+        const burnedAt = this.burned.get(p.playerId);
         const pct = trackPercent(done, total, {
           finished: final !== undefined,
           forfeited: this.forfeited.has(p.playerId),
@@ -685,8 +807,20 @@ export class Race {
           this.failedPercents.get(p.playerId),
           final,
           liveWpmOf(done, elapsed),
+          burnedAt,
         );
-        return `<div class="bar ${isMe ? "me" : ""} ${final !== undefined ? "done" : ""}">
+        // La ligne d'un brûlé RESTE à l'écran, carbonisée : voir le cimetière se remplir
+        // fait partie du mode. `.burned` porte l'embrasement, `.doomed` le sursis.
+        const classes = [
+          "bar",
+          isMe ? "me" : "",
+          final !== undefined ? "done" : "",
+          burnedAt !== undefined ? "burned" : "",
+          doomed.has(p.playerId) ? "doomed" : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        return `<div class="${classes}">
           <span class="bar-label">${escapeText(isMe ? `${p.displayName} (toi)` : p.displayName)}</span>
           <div class="bar-track"><div class="bar-fill" style="width:${pct}%">${avatarHtml(p, "car")}</div></div>
           <span class="bar-wpm">${label}</span>
@@ -722,6 +856,7 @@ export class Race {
       };
     this.potgStop = runPlayOfTheGame(this.root, {
       racedWords: this.racedWords,
+      endAtFirst: this.gameMode === "floorIsLava",
       logA: potg.logA,
       playerA: entry(potg.a),
       logB: potg.logB,
@@ -793,11 +928,41 @@ export function trackLabel(
   failedPercent: number | undefined,
   finalWpm: number | undefined,
   liveWpm: number,
+  burnedAtMs?: number,
 ): string {
+  // Le brûlé passe AVANT l'arrivée : son log revient par `Finish` (ADR 0015), donc un
+  // `PlayerFinished` suit son décès — sans cette priorité, sa ligne redeviendrait
+  // « 32 wpm ✓ » une seconde après avoir pris feu.
+  if (burnedAtMs !== undefined) return `brûlé à ${Math.round(burnedAtMs / 1000)} s`;
   if (failedPercent !== undefined) return `échec (${failedPercent}%)`;
   if (forfeited) return "abandon";
   if (finalWpm !== undefined) return `${finalWpm} wpm ✓`;
   return `${liveWpm} wpm`;
+}
+
+/**
+ * Qui est en dernière position — donc qui brûlera au prochain tic (ADR 0015). Même règle
+ * que le serveur : le minimum de `charsDone`, et TOUS les ex æquo (une égalité les emporte
+ * tous les deux, aucun départage n'étant honnête). Vide si moins de deux vivants : il n'y
+ * a plus personne à condamner. Pure — c'est le test qui la garde alignée sur `lava_tick`.
+ */
+export function lastPlaced(alive: { playerId: string; done: number }[]): Set<string> {
+  if (alive.length < 2) return new Set();
+  const least = Math.min(...alive.map((a) => a.done));
+  return new Set(alive.filter((a) => a.done === least).map((a) => a.playerId));
+}
+
+/**
+ * Secondes avant la prochaine élimination (ADR 0015). Dérivé en local de
+ * `t=0 + n × intervalle` : le client connaît l'horaire depuis le départ, aucun événement
+ * serveur n'est nécessaire pour l'afficher. Toujours dans `1..=intervalle`.
+ */
+export function nextBurnIn(elapsedMs: number, intervalS: number): number {
+  const interval = Math.max(1, intervalS);
+  const remaining = interval - ((Math.max(0, elapsedMs) / 1000) % interval);
+  // `ceil` : on affiche « 1 s » pendant la dernière seconde, jamais « 0 s » — un zéro
+  // resterait affiché une seconde entière avant que le tic ne tombe vraiment.
+  return Math.max(1, Math.min(interval, Math.ceil(remaining)));
 }
 
 /** Libellés des trois longueurs, dans l'ordre de `WORDS_LENGTHS`. */
@@ -818,7 +983,19 @@ const LOBBY_TIPS = {
     "Quand activé, chaque joueur doit se déclarer prêt avant que l'hôte puisse démarrer la course.",
   difficulty:
     "Normal : aucune contrainte. Master : la course s'arrête au tout premier caractère mal tapé (avant toute correction possible) — le joueur est classé échec, la course se débloque immédiatement pour les autres.",
+  gameMode:
+    "Comment la course se gagne. Normal : le premier à taper tout le texte. Floor is lava : le joueur le moins avancé brûle à intervalle régulier, et le dernier vivant gagne — il n'y a pas de ligne d'arrivée, le texte est trop long pour être fini.",
+  lava:
+    "Toutes les combien de secondes le joueur le moins avancé est éliminé. La première élimination tombe au bout d'un intervalle complet, jamais avant.",
 } as const;
+
+/** Les Modes de jeu offerts (ADR 0015). Un seul à la fois : ils ne se cumulent pas. */
+const GAME_MODES: GameMode[] = ["normal", "floorIsLava"];
+
+const GAME_MODE_LABELS: Record<GameMode, string> = {
+  normal: "Normal",
+  floorIsLava: "Floor is lava",
+};
 
 /**
  * Une ligne de Réglage de salon (#95) : libellé + icône « i » à gauche, contrôle à droite.

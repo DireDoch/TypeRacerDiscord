@@ -39,8 +39,8 @@ use crate::domain::text_gen::{generate_text, GenSettings};
 use crate::domain::types::{Keystroke, Mode, RunConfig};
 use crate::quote::QuoteClient;
 use protocol::{
-    ClientEvent, Identity, PlayOfTheGame, PlayerEntry, PlayerId, RaceResult, RoomKey, ServerEvent,
-    TextSource,
+    ClientEvent, GameMode, Identity, PlayOfTheGame, PlayerEntry, PlayerId, RaceResult, RoomKey,
+    ServerEvent, TextSource,
 };
 
 /// Longueur d'un texte `Words` en Race — les trois seules valeurs acceptées (ADR 0009).
@@ -49,6 +49,16 @@ use protocol::{
 const WORDS_LENGTHS: [u32; 3] = [15, 30, 50];
 /// Longueur par défaut et de repli (échec du proxy de citations).
 const ROOM_WORD_COUNT: u32 = 30;
+/// Intervalles d'élimination proposés en floor is lava (ADR 0015). Jeu fixe, comme
+/// `COUNTDOWN_VALUES` : à 3 s la course devient illisible, à 60 s elle dure huit minutes.
+const LAVA_INTERVAL_VALUES: [u32; 4] = [5, 10, 15, 20];
+/// Intervalle par défaut.
+const LAVA_INTERVAL_DEFAULT: u32 = 10;
+/// Longueur du texte imposé par floor is lava (ADR 0015) : ~1 200 caractères, ~4 min à
+/// 60 WPM contre 70 s de course maximum à huit joueurs. C'est ce qui SUPPRIME la ligne
+/// d'arrivée — un mode qui se gagne à la survie ne doit pas offrir de victoire à
+/// l'arrivée. Toutes les Sources de texte du lobby en finiraient trop tôt (ADR 0015).
+const LAVA_WORD_COUNT: u32 = 200;
 /// Profondeur du canal de diffusion par Room (messages en vol tolérés).
 const BROADCAST_CAP: usize = 64;
 /// Plafond DUR de présents dans une Room, et taille par défaut. Porte sur `players`, donc
@@ -89,6 +99,18 @@ pub enum RaceState {
         racers: Vec<PlayerId>,
         finishers: Vec<RaceResult>,
         logs: HashMap<PlayerId, Vec<Keystroke>>,
+        /// Dernier `charsDone` connu de chaque partant (floor is lava, ADR 0015).
+        /// `relay_progress` rediffusait et OUBLIAIT ; le tic d'élimination a besoin de
+        /// comparer, donc le serveur retient. Déclaratif et arrondi au mot verrouillé
+        /// (issue #94) — les deux plafonds sont assumés dans l'ADR.
+        progress: HashMap<PlayerId, u32>,
+        /// Les brûlés DANS L'ORDRE DES DÉCÈS, avec l'instant (ms depuis t=0). Cet ordre
+        /// EST le classement du mode, inversé : le dernier brûlé est 2e. Plusieurs
+        /// entrées peuvent partager un instant (égalité au tic : les deux brûlent).
+        burned: Vec<(PlayerId, f64)>,
+        /// Nombre de tics d'élimination déjà joués. Compté plutôt que déduit de
+        /// `burned.len()`, que les égalités désynchroniseraient.
+        lava_ticks: u32,
     },
 }
 
@@ -134,6 +156,12 @@ pub struct Room {
     /// Difficulté de la Room (Normal | Master, issue #71, ADR 0013) — Expert n'est pas
     /// un Réglage de salon, sa condition de déclenchement y est inatteignable.
     pub difficulty: Difficulty,
+    /// Mode de jeu de la Room (ADR 0015) — comment la Race se gagne. Un axe à part,
+    /// orthogonal à la Difficulté (qui, elle, fait échouer sur SA propre faute).
+    pub game_mode: GameMode,
+    /// Intervalle d'élimination de floor is lava, en secondes. Inerte sous `Normal` —
+    /// gardé quand même, pour que rebasculer sur le mode retrouve le réglage choisi.
+    pub lava_interval_s: u32,
     pub state: RaceState,
     /// Diffusion des ServerEvent vers tous les sockets du salon.
     pub tx: broadcast::Sender<ServerEvent>,
@@ -214,6 +242,16 @@ pub async fn handle_socket(
             }
             Ok(ClientEvent::SetDifficulty { difficulty }) => {
                 set_difficulty(&rooms, &key, &player_id, difficulty);
+            }
+            Ok(ClientEvent::SetGameMode { mode }) => {
+                // Comme SetTextSource : le mode impose son texte (ADR 0015), il faut donc
+                // le regénérer — hors verrou, la Source peut demander un aller-retour.
+                if set_game_mode(&rooms, &key, &player_id, mode) {
+                    spawn_refresh_text(rooms.clone(), key.clone(), quotes.clone());
+                }
+            }
+            Ok(ClientEvent::SetLavaInterval { seconds }) => {
+                set_lava_interval(&rooms, &key, &player_id, seconds);
             }
             Ok(ClientEvent::StartRace) => start_race(&rooms, &key, &player_id),
             Ok(ClientEvent::Progress { chars_done }) => {
@@ -368,6 +406,8 @@ fn new_room(key: RoomKey, code: Option<String>, owner: &str) -> Room {
         ready_check: false,
         ready: HashSet::new(),
         difficulty: Difficulty::Normal,
+        game_mode: GameMode::default(),
+        lava_interval_s: LAVA_INTERVAL_DEFAULT,
         state: RaceState::Lobby,
         tx,
     }
@@ -430,7 +470,19 @@ fn spawn_refresh_text(rooms: Rooms, key: RoomKey, quotes: Arc<QuoteClient>) {
 fn pending_source(rooms: &Rooms, key: &str) -> Option<TextSource> {
     let guard = rooms.lock().unwrap();
     let room = guard.get(key)?;
-    (!room.state.is_racing()).then_some(room.text_source)
+    (!room.state.is_racing()).then(|| effective_source(room))
+}
+
+/// La Source RÉELLEMENT utilisée pour générer le texte. Floor is lava impose la sienne
+/// (ADR 0015) : sans ligne d'arrivée à atteindre, une citation de 150 caractères serait
+/// finie avant la deuxième élimination. La Source du lobby est gardée en l'état — elle
+/// reprend effet dès qu'on revient en `Normal` — mais elle est inerte, et c'est aussi ce
+/// qui évite d'appeler le proxy de citations pour rien.
+fn effective_source(room: &Room) -> TextSource {
+    match room.game_mode {
+        GameMode::FloorIsLava => TextSource::Words { count: LAVA_WORD_COUNT },
+        GameMode::Normal => room.text_source,
+    }
 }
 
 /// Ramène une citation à la forme que le reste du moteur attend : des mots séparés par
@@ -546,6 +598,38 @@ fn set_difficulty(rooms: &Rooms, key: &str, player_id: &str, difficulty: Difficu
     true
 }
 
+/// SetGameMode : accepté du seul owner, hors course (ADR 0015). Renvoie `true` si le
+/// réglage a été accepté — l'appelant regénère alors le texte HORS VERROU, comme après un
+/// changement de Source : basculer vers floor is lava impose un texte de 200 mots,
+/// en revenir rend la Source du lobby à nouveau effective.
+fn set_game_mode(rooms: &Rooms, key: &str, player_id: &str, mode: GameMode) -> bool {
+    let mut rooms = rooms.lock().unwrap();
+    let Some(room) = rooms.get_mut(key) else { return false };
+    if room.owner != player_id || room.state.is_racing() || room.game_mode == mode {
+        return false;
+    }
+    room.game_mode = mode;
+    let _ = room.tx.send(room_state(room));
+    true
+}
+
+/// SetLavaInterval : accepté du seul owner, hors course, parmi `LAVA_INTERVAL_VALUES`.
+/// Accepté même sous `Normal` — le réglage est simplement inerte, et le lobby peut le
+/// préparer avant de basculer. Ne touche pas au texte : seul le rythme change.
+fn set_lava_interval(rooms: &Rooms, key: &str, player_id: &str, seconds: u32) -> bool {
+    if !LAVA_INTERVAL_VALUES.contains(&seconds) {
+        return false;
+    }
+    let mut rooms = rooms.lock().unwrap();
+    let Some(room) = rooms.get_mut(key) else { return false };
+    if room.owner != player_id || room.state.is_racing() {
+        return false;
+    }
+    room.lava_interval_s = seconds;
+    let _ = room.tx.send(room_state(room));
+    true
+}
+
 /// Inscrit la présence, s'abonne à la diffusion, puis re-diffuse RoomState à tous. Le
 /// lock std n'est jamais tenu à travers un await (broadcast::send/subscribe sont
 /// synchrones). Rejoindre deux fois est idempotent et ne consomme pas de place.
@@ -647,9 +731,16 @@ fn close_race(room: &mut Room, require_absent: bool) {
     if require_absent && pending.iter().any(|r| room.players.contains(r)) {
         return; // au moins un partant présent n'a pas fini : la course continue
     }
-    if let RaceState::Racing { finishers, .. } = &mut room.state {
+    if let RaceState::Racing { finishers, burned, .. } = &mut room.state {
         for r in &pending {
-            finishers.push(RaceResult::forfeited(r));
+            // Un Brûlé dont le log n'est jamais revenu (client figé) est clos ici comme un
+            // abandon. Il garde quand même son `burned_at_ms` : le podium dira « brûlé à
+            // 32 s » plutôt que « abandon », ce qui est la vérité. Son RANG, lui, retombe
+            // en queue avec les abandons — sans log il n'a ni score ni série, et le sortir
+            // de la queue le ferait entrer dans le choix du duel avec un WPM fantôme à 0.
+            // Chemin rare (10 min de silence) : on préfère l'étiquette juste au rang juste.
+            let at = burned.iter().find(|(id, _)| id == r).map(|(_, at)| *at);
+            finishers.push(RaceResult { burned_at_ms: at, ..RaceResult::forfeited(r) });
         }
     }
     for r in &pending {
@@ -669,9 +760,13 @@ fn close_race(room: &mut Room, require_absent: bool) {
 /// Time infini n'existent pas en Race : 10 min est un plafond sûr pour le seul Mode
 /// actuel (Words) — à revoir si la Race gagne un Mode à durée libre.
 const RACE_MAX_DURATION_MS: i64 = 10 * 60 * 1000;
-/// Fréquence de la vérification watchdog — pas besoin d'être plus précis que ça pour
-/// un seuil de 10 minutes.
-const WATCHDOG_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+/// Fréquence de la boucle watchdog. Une seconde, pas trente : elle porte aussi le tic
+/// d'élimination de floor is lava (ADR 0015), dont l'intervalle descend à 5 s. Une boucle
+/// globale qui scanne les Rooms sans DB ni recompute coûte moins qu'un minuteur par Room —
+/// dont il faudrait gérer l'annulation à `end_race` ET à la destruction de la Room, et
+/// c'est là que vivent les bugs. Le seuil des 10 minutes ne souffre pas d'être vérifié
+/// trente fois plus souvent.
+const WATCHDOG_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Clôt les Rooms dont la course dépasse RACE_MAX_DURATION_MS. Horloge injectée (`now`)
 /// pour rester testable sans attendre 10 minutes en vrai (issue #24). Renvoie les clés
@@ -701,11 +796,85 @@ pub fn spawn_watchdog(rooms: Rooms, quotes: Arc<QuoteClient>) {
         let mut interval = tokio::time::interval(WATCHDOG_CHECK_INTERVAL);
         loop {
             interval.tick().await;
-            for key in close_overlong_races(&rooms, now_epoch_ms()) {
+            let now = now_epoch_ms();
+            lava_tick(&rooms, now);
+            for key in close_overlong_races(&rooms, now) {
                 spawn_refresh_text(rooms.clone(), key, quotes.clone());
             }
         }
     });
+}
+
+/// Le tic d'élimination de floor is lava (ADR 0015) : brûle le partant le moins avancé
+/// dans chaque Room concernée, une fois par intervalle écoulé. Horloge injectée (`now`)
+/// pour rester testable sans attendre en vrai, comme `close_overlong_races`.
+///
+/// Rattrape les tics manqués (boucle `while`) : la boucle peut avoir pris du retard, et
+/// un tic sauté ferait durer la course plus longtemps que le réglage annoncé. L'instant
+/// enregistré est l'instant LOGIQUE (`n × intervalle`), jamais celui du scan — le
+/// classement et l'affichage restent exacts même si l'annonce arrive avec du retard.
+///
+/// Ne clôt jamais la course lui-même : chaque brûlé renvoie son log via `Finish` et c'est
+/// l'arrivée du dernier log attendu qui déclenche `end_race`, exactement comme une Race
+/// normale. Le survivant fait pareil dès qu'il se voit seul.
+fn lava_tick(rooms: &Rooms, now: i64) {
+    let mut rooms = rooms.lock().unwrap();
+    for room in rooms.values_mut() {
+        if room.game_mode != GameMode::FloorIsLava {
+            continue;
+        }
+        // `max(1)` : une division par zéro paniquerait tout le watchdog. La valeur est
+        // validée à l'entrée, mais la garde coûte moins cher que la confiance.
+        let interval_ms = (room.lava_interval_s as i64).max(1) * 1000;
+        let mut announce: Vec<(PlayerId, f64)> = Vec::new();
+        if let RaceState::Racing {
+            start_at_epoch_ms, racers, finishers, progress, burned, lava_ticks, ..
+        } = &mut room.state
+        {
+            let due = ((now - *start_at_epoch_ms) / interval_ms).max(0) as u32;
+            while *lava_ticks < due {
+                *lava_ticks += 1;
+                // Vivant = partant qui n'est ni sorti (`finishers`) ni déjà condamné.
+                // Un abandon, un échec Master ou une déconnexion sortent donc des vivants
+                // sans règle supplémentaire — ils passent tous par `finishers`.
+                let alive: Vec<PlayerId> = racers
+                    .iter()
+                    .filter(|r| {
+                        !finishers.iter().any(|f| f.player_id == **r)
+                            && !burned.iter().any(|(id, _)| id == *r)
+                    })
+                    .cloned()
+                    .collect();
+                // « au plus un vivant » : plus rien à brûler. Zéro est atteignable — une
+                // égalité entre les deux derniers les emporte tous les deux et la course
+                // n'a pas de vainqueur (ADR 0015), un cas spécial de moins.
+                if alive.len() <= 1 {
+                    break;
+                }
+                let least = alive
+                    .iter()
+                    .map(|r| progress.get(r).copied().unwrap_or(0))
+                    .min()
+                    .unwrap_or(0);
+                let at_ms = (*lava_ticks as i64 * interval_ms) as f64;
+                // Égalité : TOUS les ex æquo brûlent. Départager sur l'ordre d'arrivée des
+                // paquets serait un tirage au sort invisible ; deux flammes d'un coup se
+                // voient et s'expliquent.
+                for id in alive
+                    .into_iter()
+                    .filter(|r| progress.get(r).copied().unwrap_or(0) == least)
+                {
+                    burned.push((id.clone(), at_ms));
+                    announce.push((id, at_ms));
+                }
+            }
+        }
+        // Diffusé hors de l'emprunt mutable de `state`. C'est ce message qui dit au brûlé
+        // d'arrêter de taper et de renvoyer son log ; les autres y lisent qui est mort.
+        for (player_id, at_ms) in announce {
+            let _ = room.tx.send(ServerEvent::PlayerBurned { player_id, at_ms });
+        }
+    }
 }
 
 /// StartRace : accepté du seul owner, hors course en cours, et seulement si le
@@ -717,12 +886,21 @@ fn start_race(rooms: &Rooms, key: &str, player_id: &str) {
         if room.owner != player_id || room.state.is_racing() || !all_present_ready(room) {
             return; // non-owner, course déjà lancée, ou ready-check pas encore satisfait
         }
+        // Floor is lava exige deux partants (ADR 0015) : seul, on est DÉJÀ le dernier
+        // vivant, la course serait finie à t=0. `StartRace` ne vérifiait jusqu'ici aucun
+        // effectif — une Race normale à un joueur est parfaitement jouable.
+        if room.game_mode == GameMode::FloorIsLava && room.players.len() < MIN_PLAYERS {
+            return;
+        }
         let start = now_epoch_ms();
         room.state = RaceState::Racing {
             start_at_epoch_ms: start,
             racers: room.players.clone(),
             finishers: Vec::new(),
             logs: HashMap::new(),
+            progress: HashMap::new(),
+            burned: Vec::new(),
+            lava_ticks: 0,
         };
         let _ = room.tx.send(ServerEvent::RaceStart { start_at_epoch_ms: start });
     }
@@ -730,8 +908,16 @@ fn start_race(rooms: &Rooms, key: &str, player_id: &str) {
 
 /// Relaie la progression d'un joueur aux autres (rendu des barres). Non autoritaire.
 fn relay_progress(rooms: &Rooms, key: &str, player_id: &str, chars_done: u32) {
-    let rooms = rooms.lock().unwrap();
-    if let Some(room) = rooms.get(key) {
+    let mut rooms = rooms.lock().unwrap();
+    if let Some(room) = rooms.get_mut(key) {
+        // Retenu pour le tic d'élimination (ADR 0015). Monotone : on ne garde que la
+        // valeur la plus haute reçue, sinon un `Progress` en retard remis dans le désordre
+        // ferait reculer un joueur juste avant un tic et le tuerait pour un artefact
+        // d'ordonnancement. La progression d'une Race ne recule jamais de toute façon.
+        if let RaceState::Racing { progress, .. } = &mut room.state {
+            let seen = progress.entry(player_id.to_string()).or_insert(0);
+            *seen = (*seen).max(chars_done);
+        }
         let _ = room.tx.send(ServerEvent::PlayerProgress {
             player_id: player_id.to_string(),
             chars_done,
@@ -758,7 +944,7 @@ enum FinishOutcome {
 /// ICI, sous le MÊME verrou que le `push` du finisher et que `end_race` : un abandon passe
 /// un log vide (jamais choisi pour un duel). Le stasher dans un verrou séparé ouvrirait
 /// une fenêtre où `end_race` clôturerait sans ce log.
-fn record_finish(rooms: &Rooms, key: &str, result: RaceResult, log: Vec<Keystroke>) -> FinishOutcome {
+fn record_finish(rooms: &Rooms, key: &str, mut result: RaceResult, log: Vec<Keystroke>) -> FinishOutcome {
     let mut rooms = rooms.lock().unwrap();
     let Some(room) = rooms.get_mut(key) else { return FinishOutcome::Rejected };
     let player_id = result.player_id.clone();
@@ -777,7 +963,14 @@ fn record_finish(rooms: &Rooms, key: &str, result: RaceResult, log: Vec<Keystrok
     let wpm = result.wpm;
     let forfeit = result.forfeit;
     let failed_percent = result.failed_percent;
-    let RaceState::Racing { finishers, logs, .. } = &mut room.state else { unreachable!("vérifié ci-dessus") };
+    let RaceState::Racing { finishers, logs, burned, .. } = &mut room.state else { unreachable!("vérifié ci-dessus") };
+    // Brûlé (ADR 0015) : le serveur SAIT qui il a condamné — c'est lui qui a décidé au
+    // tic — il ne le demande donc pas au client. Le log, lui, arrive par le `Finish`
+    // existant : « voici mon log, j'ai fini » veut déjà dire exactement ça. Le survivant
+    // envoie le sien pareil, et repart d'ici avec `burned_at_ms: None`.
+    if let Some((_, at)) = burned.iter().find(|(id, _)| *id == player_id) {
+        result.burned_at_ms = Some(*at);
+    }
     logs.insert(player_id.clone(), log);
     finishers.push(result);
     // PlayerFinished reste le signal LIVE « untel a fini » : le podium ne s'en nourrit
@@ -857,7 +1050,7 @@ fn finish_race(
 ) -> bool {
     // Vérif préliminaire, bref verrou : évite le recompute (coûteux) pour un partant déjà
     // rejeté d'office. `record_finish` refait l'authoritative check plus bas, verrou séparé.
-    let target_text = {
+    let (target_text, game_mode) = {
         let rooms = rooms.lock().unwrap();
         let Some(room) = rooms.get(key) else { return false };
         let eligible = match &room.state {
@@ -870,7 +1063,7 @@ fn finish_race(
         if !eligible {
             return false;
         }
-        room.target_text.clone()
+        (room.target_text.clone(), room.game_mode)
     };
 
     // Sérialisé avant le recompute (qui prend possession des keystrokes).
@@ -902,12 +1095,23 @@ fn finish_race(
             duration_ms: sb.duration_ms,
             forfeit: false,
             failed_percent: None,
+            // Renseigné par `record_finish`, qui est le seul à savoir qui a brûlé.
+            burned_at_ms: None,
             per_second: sb.per_second.clone(),
         },
         retained_log,
     );
     if outcome == FinishOutcome::Rejected {
         return false;
+    }
+
+    // Floor is lava ne persiste RIEN (ADR 0015) : texte imposé, jamais terminé, comparable
+    // à rien. La règle existante se lit « un Run est sauvegardé pour qui est arrivé » — et
+    // ici personne n'arrive. Le recompute a bien eu lieu, mais il reste en mémoire, pour le
+    // podium et le duel. C'est le seul `if` que la décision « rien n'est persisté » coûte :
+    // le log passant par `Finish`, ce chemin serait sinon emprunté par tout le monde.
+    if game_mode == GameMode::FloorIsLava {
+        return outcome == FinishOutcome::RaceOver;
     }
 
     // Persistance hors verrou (spawn) : l'échec ne casse pas la course, il se logue.
@@ -968,14 +1172,37 @@ fn end_race(room: &mut Room) {
     // entre finisseurs. Le tri est STABLE : deux entrées de queue gardent leur ordre
     // d'arrivée relatif, jamais départagées par le pourcentage d'échec.
     let mut results = finishers.clone();
-    results.sort_by(|a, b| {
-        is_tail(a)
-            .cmp(&is_tail(b))
-            .then(b.wpm.partial_cmp(&a.wpm).unwrap_or(std::cmp::Ordering::Equal))
-    });
+    match room.game_mode {
+        GameMode::Normal => results.sort_by(|a, b| {
+            is_tail(a)
+                .cmp(&is_tail(b))
+                .then(b.wpm.partial_cmp(&a.wpm).unwrap_or(std::cmp::Ordering::Equal))
+        }),
+        // Floor is lava classe à l'ORDRE DES DÉCÈS INVERSÉ (ADR 0015), jamais au WPM :
+        // classer au WPM remettrait devant un joueur qu'on vient d'éliminer, c'est-à-dire
+        // annulerait l'élimination qu'on vient de jouer. Le survivant (jamais brûlé) passe
+        // devant tout le monde ; abandons et échecs Master gardent leur rang de queue.
+        GameMode::FloorIsLava => results.sort_by(|a, b| {
+            is_tail(a)
+                .cmp(&is_tail(b))
+                .then(a.burned_at_ms.is_some().cmp(&b.burned_at_ms.is_some()))
+                .then(
+                    b.burned_at_ms
+                        .unwrap_or(0.0)
+                        .partial_cmp(&a.burned_at_ms.unwrap_or(0.0))
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                )
+        }),
+    }
     // Play of the Game (ADR 0011) : le serveur choisit le duel et n'expédie QUE ses deux
     // logs, jamais les huit. `None` = pas de duel → le bouton est absent du podium.
-    let play_of_the_game = duel(&results).map(|(i, j)| {
+    // En floor is lava la proximité se mesure en WPM (ADR 0015) — les décès tombant sur un
+    // métronome, leur écart ne dit rien de la proximité.
+    let pick = match room.game_mode {
+        GameMode::Normal => duel(&results),
+        GameMode::FloorIsLava => duel_by_wpm(&results),
+    };
+    let play_of_the_game = pick.map(|(i, j)| {
         let a = results[i].player_id.clone();
         let b = results[j].player_id.clone();
         PlayOfTheGame {
@@ -995,7 +1222,9 @@ fn end_race(room: &mut Room) {
     // aller-retour réseau (l'owner peut relancer dès l'écran RaceOver). Si la Source est
     // Quote, `spawn_refresh_text` remplace ce texte dès que la citation arrive — c'est
     // l'appelant qui le déclenche, une fois le verrou relâché.
-    let count = match room.text_source {
+    // `effective_source` : sous floor is lava la revanche repart sur 200 mots, pas sur la
+    // Source du lobby — sinon la manche suivante retrouverait une ligne d'arrivée.
+    let count = match effective_source(room) {
         TextSource::Words { count } => count,
         TextSource::Quote => ROOM_WORD_COUNT,
     };
@@ -1039,6 +1268,45 @@ fn duel(results: &[RaceResult]) -> Option<(usize, usize)> {
     best.filter(|(_, _, gap)| *gap <= DUEL_MAX_GAP_MS).map(|(i, j, _)| (i, j))
 }
 
+/// Écart maximal de WPM entre deux joueurs pour qu'ils forment un duel en floor is lava
+/// (ADR 0015). Même rôle que les 2 s d'ADR 0011 : on ne fabrique pas un duel qui n'a pas
+/// eu lieu. Réglage produit, ajustable sans ADR.
+const LAVA_DUEL_MAX_GAP_WPM: f64 = 2.0;
+
+/// Le duel de floor is lava (ADR 0015) : la paire au plus petit écart de **WPM**.
+///
+/// Porter `duel()` tel quel ne marcherait pas. Les décès tombent toutes les X secondes
+/// exactement : tous les écarts entre décès consécutifs valent X, il n'existe pas de paire
+/// « la plus serrée ». Et le survivant sort à l'instant du dernier décès — écart nul,
+/// systématiquement, le duel serait toujours le vainqueur contre sa dernière victime. Le
+/// WPM est la seule grandeur du mode qui ait de la variance.
+///
+/// Même forme que `duel()`, autre clé : trier, prendre la paire consécutive la plus
+/// serrée. `results` étant trié par ordre des décès et non par WPM, le tri est refait ici
+/// sur des indices. Le vainqueur est éligible. Abandons et échecs Master sont exclus (pas
+/// de log, pas de score). Égalité d'écart : la paire au plus haut WPM gagne.
+fn duel_by_wpm(results: &[RaceResult]) -> Option<(usize, usize)> {
+    let mut candidates: Vec<usize> = results
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| !is_tail(r))
+        .map(|(i, _)| i)
+        .collect();
+    candidates.sort_by(|&i, &j| {
+        results[j].wpm.partial_cmp(&results[i].wpm).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut best: Option<(usize, usize, f64)> = None;
+    for pair in candidates.windows(2) {
+        let (i, j) = (pair[0], pair[1]);
+        let gap = (results[i].wpm - results[j].wpm).abs();
+        // `<` strict : une égalité ne remplace pas → la première paire (le plus haut WPM).
+        if best.is_none_or(|(_, _, g)| gap < g) {
+            best = Some((i, j, gap));
+        }
+    }
+    best.filter(|(_, _, gap)| *gap <= LAVA_DUEL_MAX_GAP_WPM).map(|(i, j, _)| (i, j))
+}
+
 /// Projette la présence en entrées dessinables. Un présent sans identité connue retombe
 /// sur son snowflake : jamais joli, mais jamais vide non plus.
 fn room_state(room: &Room) -> ServerEvent {
@@ -1069,6 +1337,8 @@ fn room_state(room: &Room) -> ServerEvent {
         countdown_s: room.countdown_s,
         ready_check: room.ready_check,
         difficulty: room.difficulty,
+        game_mode: room.game_mode,
+        lava_interval_s: room.lava_interval_s,
     }
 }
 
@@ -1119,6 +1389,7 @@ mod tests {
             duration_ms: if wpm > 0.0 { 60_000.0 / wpm } else { 0.0 },
             forfeit: false,
             failed_percent: None,
+            burned_at_ms: None,
             per_second: Vec::new(),
         }
     }
@@ -1469,6 +1740,7 @@ mod tests {
             duration_ms,
             forfeit: false,
             failed_percent: None,
+            burned_at_ms: None,
             per_second: Vec::new(),
         }
     }
@@ -1623,6 +1895,267 @@ mod tests {
         // Room utilisable de nouveau (revanche).
         start_race(&rooms, "c1", "p1");
         assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    }
+
+    // --- Floor is lava (ADR 0015) --------------------------------------------------
+
+    /// Room en floor is lava, course lancée, avec la progression déclarée de chacun.
+    /// Renvoie la clé et le t=0 réel, pour piloter le tic à l'horloge injectée.
+    fn lava_race(rooms: &Rooms, players: &[&str], interval_s: u32, progress: &[(&str, u32)]) -> i64 {
+        for p in players {
+            join(rooms, "c1", p);
+        }
+        assert!(set_game_mode(rooms, "c1", players[0], GameMode::FloorIsLava));
+        assert!(set_lava_interval(rooms, "c1", players[0], interval_s));
+        start_race(rooms, "c1", players[0]);
+        for (p, chars) in progress {
+            relay_progress(rooms, "c1", p, *chars);
+        }
+        match &rooms.lock().unwrap().get("c1").unwrap().state {
+            RaceState::Racing { start_at_epoch_ms, .. } => *start_at_epoch_ms,
+            RaceState::Lobby => panic!("pas en course"),
+        }
+    }
+
+    fn burned_of(rooms: &Rooms, key: &str) -> Vec<(PlayerId, f64)> {
+        match &rooms.lock().unwrap().get(key).unwrap().state {
+            RaceState::Racing { burned, .. } => burned.clone(),
+            RaceState::Lobby => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn le_tic_brule_le_moins_avance_et_pas_avant_l_intervalle() {
+        let rooms = new_rooms();
+        let t0 = lava_race(&rooms, &["p1", "p2", "p3"], 10, &[("p1", 100), ("p2", 20), ("p3", 60)]);
+
+        // Avant le premier intervalle plein : personne. La première élimination tombe à
+        // t = intervalle, pas plus tôt (ADR 0015 : le classement doit avoir le temps de
+        // se former, la mesure est mauvaise dans les toutes premières secondes).
+        lava_tick(&rooms, t0 + 9_999);
+        assert!(burned_of(&rooms, "c1").is_empty());
+
+        lava_tick(&rooms, t0 + 10_000);
+        let burned = burned_of(&rooms, "c1");
+        assert_eq!(burned.len(), 1);
+        assert_eq!(burned[0].0, "p2"); // le moins avancé
+        assert_eq!(burned[0].1, 10_000.0); // instant LOGIQUE, pas celui du scan
+    }
+
+    #[test]
+    fn l_instant_de_deces_est_logique_meme_si_le_scan_est_en_retard() {
+        // La boucle watchdog peut prendre du retard : l'instant enregistré reste
+        // `n × intervalle`, sinon le classement et l'affichage dériveraient.
+        let rooms = new_rooms();
+        let t0 = lava_race(&rooms, &["p1", "p2"], 5, &[("p1", 100), ("p2", 10)]);
+        lava_tick(&rooms, t0 + 5_900); // scan 900 ms en retard
+        assert_eq!(burned_of(&rooms, "c1")[0].1, 5_000.0);
+    }
+
+    #[test]
+    fn les_tics_manques_sont_rattrapes() {
+        // Une boucle en retard ne doit pas allonger la course : les tics sautés se
+        // rattrapent d'un coup.
+        let rooms = new_rooms();
+        let t0 = lava_race(
+            &rooms,
+            &["p1", "p2", "p3", "p4"],
+            5,
+            &[("p1", 100), ("p2", 10), ("p3", 20), ("p4", 30)],
+        );
+        lava_tick(&rooms, t0 + 15_500); // 3 intervalles écoulés, aucun scan avant
+        let burned = burned_of(&rooms, "c1");
+        // Les trois tics dus sont joués d'affilée, du moins avancé au plus avancé, et
+        // chacun garde SON instant logique — pas celui du scan qui les a rattrapés.
+        assert_eq!(
+            burned.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            vec!["p2", "p3", "p4"]
+        );
+        assert_eq!(burned.iter().map(|(_, at)| *at).collect::<Vec<_>>(), vec![5_000.0, 10_000.0, 15_000.0]);
+    }
+
+    #[test]
+    fn egalite_au_tic_les_deux_brulent() {
+        let rooms = new_rooms();
+        let t0 = lava_race(&rooms, &["p1", "p2", "p3"], 10, &[("p1", 100), ("p2", 20), ("p3", 20)]);
+        lava_tick(&rooms, t0 + 10_000);
+        let burned = burned_of(&rooms, "c1");
+        assert_eq!(burned.len(), 2); // aucun départage honnête n'existe
+        assert_eq!(burned[0].1, burned[1].1); // même instant
+    }
+
+    #[test]
+    fn les_deux_derniers_ex_aequo_brulent_ensemble_et_personne_ne_gagne() {
+        let rooms = new_rooms();
+        let t0 = lava_race(&rooms, &["p1", "p2"], 10, &[("p1", 40), ("p2", 40)]);
+        lava_tick(&rooms, t0 + 10_000);
+        // « au plus un vivant », pas « exactement un » : zéro survivant est une fin légale.
+        assert_eq!(burned_of(&rooms, "c1").len(), 2);
+    }
+
+    #[test]
+    fn un_seul_vivant_arrete_les_eliminations() {
+        let rooms = new_rooms();
+        let t0 = lava_race(&rooms, &["p1", "p2"], 10, &[("p1", 100), ("p2", 20)]);
+        lava_tick(&rooms, t0 + 10_000);
+        lava_tick(&rooms, t0 + 60_000); // bien après cinq intervalles
+        assert_eq!(burned_of(&rooms, "c1").len(), 1); // le survivant n'est jamais brûlé
+    }
+
+    #[test]
+    fn la_progression_retenue_ne_recule_jamais() {
+        // Un `Progress` remis dans le désordre ferait reculer un joueur juste avant un tic
+        // et le tuerait pour un artefact d'ordonnancement.
+        let rooms = new_rooms();
+        let t0 = lava_race(&rooms, &["p1", "p2"], 10, &[("p1", 10), ("p2", 50)]);
+        relay_progress(&rooms, "c1", "p2", 5); // paquet en retard
+        lava_tick(&rooms, t0 + 10_000);
+        assert_eq!(burned_of(&rooms, "c1")[0].0, "p1");
+    }
+
+    #[test]
+    fn un_abandon_sort_des_vivants_sans_regle_supplementaire() {
+        let rooms = new_rooms();
+        let t0 = lava_race(&rooms, &["p1", "p2", "p3"], 10, &[("p1", 100), ("p2", 10), ("p3", 60)]);
+        forfeit_race(&rooms, "c1", "p2"); // le moins avancé s'en va de lui-même
+        lava_tick(&rooms, t0 + 10_000);
+        let burned = burned_of(&rooms, "c1");
+        assert_eq!(burned.len(), 1);
+        assert_eq!(burned[0].0, "p3"); // p2 n'est plus un vivant : il n'est pas re-tué
+    }
+
+    #[test]
+    fn floor_is_lava_refuse_de_partir_seul() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        assert!(set_game_mode(&rooms, "c1", "p1", GameMode::FloorIsLava));
+        start_race(&rooms, "c1", "p1");
+        // Seul = déjà dernier vivant = course finie à t=0.
+        assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+        join(&rooms, "c1", "p2");
+        start_race(&rooms, "c1", "p1");
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    }
+
+    #[test]
+    fn le_mode_impose_son_texte_et_rend_la_source_inerte() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        set_text_source(&rooms, "c1", "p1", TextSource::Words { count: 15 });
+        set_game_mode(&rooms, "c1", "p1", GameMode::FloorIsLava);
+        assert_eq!(
+            pending_source(&rooms, "c1"),
+            Some(TextSource::Words { count: LAVA_WORD_COUNT })
+        );
+        // La Source du lobby est gardée, pas écrasée : elle reprend effet au retour.
+        set_game_mode(&rooms, "c1", "p1", GameMode::Normal);
+        assert_eq!(pending_source(&rooms, "c1"), Some(TextSource::Words { count: 15 }));
+    }
+
+    #[test]
+    fn les_reglages_du_mode_sont_reserves_a_l_owner_et_hors_course() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p2");
+        assert!(!set_game_mode(&rooms, "c1", "p2", GameMode::FloorIsLava)); // non-owner
+        assert!(!set_lava_interval(&rooms, "c1", "p2", 5)); // non-owner
+        assert!(!set_lava_interval(&rooms, "c1", "p1", 7)); // hors du jeu de valeurs
+        assert!(set_lava_interval(&rooms, "c1", "p1", 5));
+        assert!(set_game_mode(&rooms, "c1", "p1", GameMode::FloorIsLava));
+        start_race(&rooms, "c1", "p1");
+        assert!(!set_game_mode(&rooms, "c1", "p1", GameMode::Normal)); // pendant la course
+        assert!(!set_lava_interval(&rooms, "c1", "p1", 20));
+    }
+
+    /// Un Brûlé : ce que `record_finish` produit une fois le log recompté.
+    fn burnt(id: &str, wpm: f64, at_ms: f64) -> RaceResult {
+        RaceResult { burned_at_ms: Some(at_ms), ..done(id, wpm) }
+    }
+
+    #[test]
+    fn le_classement_suit_l_ordre_des_deces_inverse_pas_le_wpm() {
+        // Le scénario de l'ADR : Alice brûle tôt en tapant vite, Bob brûle tard en tapant
+        // lentement. Classer au WPM remettrait Alice devant Bob — donc annulerait
+        // l'élimination qu'on vient de jouer.
+        let rooms = new_rooms();
+        join(&rooms, "c1", "alice");
+        join(&rooms, "c1", "bob");
+        join(&rooms, "c1", "carol");
+        set_game_mode(&rooms, "c1", "alice", GameMode::FloorIsLava);
+        start_race(&rooms, "c1", "alice");
+        let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
+
+        record(&rooms, "c1", burnt("alice", 40.0, 10_000.0));
+        record(&rooms, "c1", burnt("bob", 30.0, 20_000.0));
+        record(&rooms, "c1", done("carol", 35.0)); // survivante : jamais brûlée
+
+        assert_eq!(ranking_of(&mut rx), Some(s(&["carol", "bob", "alice"])));
+    }
+
+    #[test]
+    fn un_abandon_reste_derriere_les_brules() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p2");
+        join(&rooms, "c1", "p3");
+        set_game_mode(&rooms, "c1", "p1", GameMode::FloorIsLava);
+        start_race(&rooms, "c1", "p1");
+        let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
+
+        record(&rooms, "c1", RaceResult::forfeited("p3"));
+        record(&rooms, "c1", burnt("p2", 30.0, 10_000.0));
+        record(&rooms, "c1", done("p1", 50.0));
+
+        assert_eq!(ranking_of(&mut rx), Some(s(&["p1", "p2", "p3"])));
+    }
+
+    #[test]
+    fn record_finish_estampille_le_brule_depuis_l_etat_serveur() {
+        // Le client ne DIT jamais qu'il a brûlé : le serveur sait qui il a condamné, et il
+        // le pose lui-même sur le résultat qui revient par `Finish`.
+        let rooms = new_rooms();
+        let t0 = lava_race(&rooms, &["p1", "p2"], 10, &[("p1", 100), ("p2", 10)]);
+        lava_tick(&rooms, t0 + 10_000);
+        record(&rooms, "c1", done("p2", 25.0)); // le client renvoie juste son log
+        let burned_at = match &rooms.lock().unwrap().get("c1").unwrap().state {
+            RaceState::Racing { finishers, .. } => finishers[0].burned_at_ms,
+            RaceState::Lobby => panic!("course close trop tôt"),
+        };
+        assert_eq!(burned_at, Some(10_000.0));
+    }
+
+    #[test]
+    fn duel_wpm_choisit_la_paire_la_plus_serree_vainqueur_inclus() {
+        let results = vec![done("gagnant", 60.0), burnt("a", 59.5, 20_000.0), burnt("b", 40.0, 10_000.0)];
+        // 60 vs 59,5 est plus serré que 59,5 vs 40 — et le vainqueur est éligible.
+        assert_eq!(duel_by_wpm(&results), Some((0, 1)));
+    }
+
+    #[test]
+    fn duel_wpm_aucun_au_dela_du_seuil() {
+        let results = vec![done("a", 60.0), burnt("b", 50.0, 10_000.0)];
+        assert_eq!(duel_by_wpm(&results), None);
+        // Seuil inclusif, comme les 2 s d'ADR 0011.
+        let serres = vec![done("a", 60.0), burnt("b", 58.0, 10_000.0)];
+        assert_eq!(duel_by_wpm(&serres), Some((0, 1)));
+    }
+
+    #[test]
+    fn duel_wpm_ignore_abandons_et_echecs_et_exige_deux_candidats() {
+        let results = vec![done("a", 60.0), RaceResult::forfeited("b"), fail_res("c", 42)];
+        assert_eq!(duel_by_wpm(&results), None); // un seul candidat réel
+    }
+
+    #[test]
+    fn duel_wpm_ne_depend_pas_de_l_ordre_du_classement() {
+        // `results` est trié par ordre des décès, pas par WPM : la paire la plus serrée
+        // peut n'être PAS consécutive au classement.
+        let results = vec![
+            done("survivant", 45.0),
+            burnt("mort_tard", 70.0, 30_000.0),
+            burnt("mort_tot", 44.5, 10_000.0),
+        ];
+        assert_eq!(duel_by_wpm(&results), Some((0, 2)));
     }
 
     // --- Display identity (piste, podium) -----------------------------------------

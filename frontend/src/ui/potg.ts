@@ -41,6 +41,7 @@ function finishOf(log: KeystrokeLog): number {
 export function duelWindow(
   logA: KeystrokeLog,
   logB: KeystrokeLog,
+  endAtFirst = false,
 ): { start: number; end: number } {
   // ponytail: les deux logs ont chacun leur t=0 LOCAL (le décompte est côté client), soit
   // ~2 % de dérive inter-client sur la fenêtre — assumé pour un replay d'ambiance, jamais un
@@ -48,7 +49,12 @@ export function duelWindow(
   // comme origine commune plutôt que sur le t=0 local de chaque log.
   const first = Math.min(finishOf(logA), finishOf(logB));
   const second = Math.max(finishOf(logA), finishOf(logB));
-  return { start: Math.max(0, first - LEAD_MS), end: second };
+  // Floor is lava INVERSE la borne de fin (ADR 0015). En Race normale on va jusqu'à la
+  // seconde arrivée : on veut voir les deux franchir. Ici les deux sorties peuvent être
+  // séparées de trente secondes (la proximité se mesure en WPM, pas en temps) — aller
+  // jusqu'à la seconde montrerait le survivant taper seul. On s'arrête au premier sorti,
+  // et la fenêtre se termine donc sur les flammes.
+  return { start: Math.max(0, first - LEAD_MS), end: endAtFirst ? first : second };
 }
 
 /**
@@ -74,6 +80,8 @@ export interface PlayOfTheGameOptions {
   playerA: PlayerEntry;
   logB: KeystrokeLog;
   playerB: PlayerEntry;
+  /** Floor is lava : la fenêtre s'arrête à la PREMIÈRE sortie (ADR 0015). */
+  endAtFirst?: boolean;
   onBack: () => void;
 }
 
@@ -83,7 +91,7 @@ export interface PlayOfTheGameOptions {
  * course prime). Sans ça, le rAF continuerait d'écrire dans un DOM recyclé.
  */
 export function runPlayOfTheGame(root: HTMLElement, opts: PlayOfTheGameOptions): () => void {
-  const win = duelWindow(opts.logA, opts.logB);
+  const win = duelWindow(opts.logA, opts.logB, opts.endAtFirst ?? false);
   // La 2e voiture à couper la ligne = le log dont l'arrivée est la plus tardive. C'est
   // elle qu'on met en avant au freeze-frame (#55).
   const secondSuffix = finishOf(opts.logA) >= finishOf(opts.logB) ? "A" : "B";

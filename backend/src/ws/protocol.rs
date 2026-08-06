@@ -49,6 +49,25 @@ impl Default for TextSource {
     }
 }
 
+/// Comment une Race se GAGNE (ADR 0015) — un axe à part entière.
+///
+/// Ni un Mode (solo, décide du texte), ni une Source de texte (décide d'où vient le
+/// texte), ni une Difficulté (condition d'échec INDIVIDUELLE, évaluée sur le seul log du
+/// joueur — l'élimination, elle, est COMPARATIVE). Un seul à la fois : ce sont des règles
+/// de victoire, elles ne se cumulent pas.
+///
+/// Wire : `"normal"` | `"floorIsLava"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GameMode {
+    /// Le premier à taper tout le texte, exactement. Le comportement historique.
+    #[default]
+    Normal,
+    /// Élimination du moins avancé à intervalle régulier ; le dernier vivant gagne.
+    /// Pas de ligne d'arrivée : le mode impose un texte que personne ne peut finir.
+    FloorIsLava,
+}
+
 /// Longueur max d'un nom affiché. Ce n'est pas une règle Discord, c'est une protection
 /// de mise en page : un nom de 4 000 caractères casserait la piste des SEPT autres.
 const MAX_DISPLAY_NAME: usize = 32;
@@ -131,6 +150,16 @@ pub struct RaceResult {
     /// mêmes mécaniques par ailleurs. Pourcentage d'avancement au moment de la faute,
     /// affiché (« failed (X%) ») mais JAMAIS utilisé pour classer. `None` sinon.
     pub failed_percent: Option<i64>,
+    /// Brûlé en floor is lava (ADR 0015) : instant du décès, en ms depuis t=0. C'est ce
+    /// qui CLASSE dans ce mode (ordre des décès inversé) et ce que le podium affiche en
+    /// gros à la place du Gap, qui n'existe pas ici. `None` = pas brûlé — donc le
+    /// survivant, ou n'importe quelle arrivée d'une Race normale.
+    ///
+    /// Un Brûlé porte un VRAI score partiel (wpm/accuracy/per_second recomputés sur ce
+    /// qu'il a eu le temps de taper), contrairement à un Abandon ou à un Échec Master qui
+    /// sont construits en dur à zéro. Ce score ne le classe jamais : il l'affiche, et il
+    /// choisit le duel.
+    pub burned_at_ms: Option<f64>,
     pub per_second: Vec<PerSecondPoint>,
 }
 
@@ -145,6 +174,7 @@ impl RaceResult {
             duration_ms: 0.0,
             forfeit: true,
             failed_percent: None,
+            burned_at_ms: None,
             per_second: Vec::new(),
         }
     }
@@ -159,6 +189,7 @@ impl RaceResult {
             duration_ms: 0.0,
             forfeit: false,
             failed_percent: Some(percent),
+            burned_at_ms: None,
             per_second: Vec::new(),
         }
     }
@@ -214,6 +245,12 @@ pub enum ClientEvent {
     /// Régler la Difficulté de la Room (Normal | Master — Expert n'est pas un Réglage
     /// de salon, ADR 0013) — accepté du seul owner, et seulement hors course.
     SetDifficulty { difficulty: Difficulty },
+    /// Régler le Mode de jeu (ADR 0015) — accepté du seul owner, hors course. Basculer
+    /// vers/depuis floor is lava REGÉNÈRE le texte : le mode impose le sien.
+    SetGameMode { mode: GameMode },
+    /// Régler l'intervalle d'élimination de floor is lava, en secondes — accepté du seul
+    /// owner, hors course, parmi `LAVA_INTERVAL_VALUES`. Inerte sous `Normal`.
+    SetLavaInterval { seconds: u32 },
     /// Lancer la course — accepté du seul owner de la Room (ignoré sinon).
     StartRace,
     /// Progression de frappe (diffusée pour le rendu des "voitures"). Pas autoritaire.
@@ -265,6 +302,12 @@ pub enum ServerEvent {
         ready_check: bool,
         /// Difficulté de la Room (Normal | Master, issue #71, ADR 0013).
         difficulty: Difficulty,
+        /// Mode de jeu de la Room (ADR 0015). Lu par TOUT le lobby : il décide comment on
+        /// gagne, les non-hôtes le subissent autant que le décompte.
+        game_mode: GameMode,
+        /// Intervalle d'élimination de floor is lava, en secondes. Toujours transporté
+        /// (le lobby l'affiche dès que le mode est choisi), inerte sous `Normal`.
+        lava_interval_s: u32,
     },
     /// Top de départ partagé : t=0 pour TOUS les clients (cale les horloges locales).
     RaceStart { start_at_epoch_ms: i64 },
@@ -275,6 +318,14 @@ pub enum ServerEvent {
     /// que « 0 wpm » pendant la course (le podium, lui, lit RaceOver). `failed_percent`
     /// distingue un Échec Master (ADR 0013) — jamais les deux à la fois.
     PlayerFinished { player_id: PlayerId, wpm: f64, forfeit: bool, failed_percent: Option<i64> },
+    /// Élimination floor is lava (ADR 0015) : ce joueur vient de brûler, à `at_ms` depuis
+    /// t=0. Diffusé AVANT que son log n'arrive — c'est ce message qui le lui demande, en
+    /// lui disant d'arrêter de taper. `PlayerFinished` suivra quand le log sera recompté.
+    ///
+    /// Plusieurs `PlayerBurned` peuvent tomber sur le même tic (égalité : les deux
+    /// brûlent). Le survivant n'a pas d'événement à lui : il déduit qu'il a gagné en
+    /// voyant qu'il ne reste que lui de vivant — il connaît les partants et les brûlés.
+    PlayerBurned { player_id: PlayerId, at_ms: f64 },
     /// Fin de course : les résultats COMPLETS, dans l'ordre du classement (ADR 0010).
     /// L'ordre du tableau EST le classement — il n'y a pas de champ d'ordre séparé.
     /// `play_of_the_game` porte les deux logs du duel le plus serré (ADR 0011), ou

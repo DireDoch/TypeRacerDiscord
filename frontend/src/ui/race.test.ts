@@ -6,6 +6,8 @@ import {
   liveWpmOf,
   trackLabel,
   trackPercent,
+  lastPlaced,
+  nextBurnIn,
 } from "./race";
 import { avatarUrl } from "../discord";
 import { WORDS_LENGTHS } from "../core/net";
@@ -141,5 +143,68 @@ describe("trackPercent — le remplissage de la piste", () => {
   it("ne dépasse jamais 100 % ni ne divise par zéro", () => {
     expect(trackPercent(500, 200, running)).toBe(100);
     expect(trackPercent(0, 0, running)).toBe(0);
+  });
+});
+
+// --- Floor is lava (ADR 0015) -------------------------------------------------
+
+describe("trackLabel — un Brûlé passe avant tout le reste", () => {
+  it("affiche l'instant du décès, pas un WPM", () => {
+    expect(trackLabel(false, undefined, undefined, 55, 32_000)).toBe("brûlé à 32 s");
+  });
+
+  it("reste « brûlé » même après le PlayerFinished que son log déclenche", () => {
+    // Son log revient par `Finish` (ADR 0015) : un PlayerFinished SUIT toujours son
+    // décès. Sans cette priorité, sa ligne redeviendrait « 32 wpm ✓ » juste après
+    // avoir pris feu.
+    expect(trackLabel(false, undefined, 32, 0, 10_000)).toBe("brûlé à 10 s");
+  });
+
+  it("arrondit à la seconde", () => {
+    expect(trackLabel(false, undefined, undefined, 0, 7_600)).toBe("brûlé à 8 s");
+  });
+});
+
+describe("lastPlaced — qui brûlera au prochain tic", () => {
+  const a = (playerId: string, done: number) => ({ playerId, done });
+
+  it("désigne le moins avancé", () => {
+    expect([...lastPlaced([a("p1", 100), a("p2", 20), a("p3", 60)])]).toEqual(["p2"]);
+  });
+
+  it("désigne TOUS les ex æquo — aucun départage n'est honnête", () => {
+    const doomed = lastPlaced([a("p1", 100), a("p2", 20), a("p3", 20)]);
+    expect(doomed.size).toBe(2);
+    expect(doomed.has("p2") && doomed.has("p3")).toBe(true);
+  });
+
+  it("ne condamne personne quand il reste moins de deux vivants", () => {
+    expect(lastPlaced([a("p1", 0)]).size).toBe(0);
+    expect(lastPlaced([]).size).toBe(0);
+  });
+
+  it("traite le zéro comme une valeur — pas encore tapé, c'est bien le dernier", () => {
+    expect([...lastPlaced([a("p1", 0), a("p2", 5)])]).toEqual(["p1"]);
+  });
+});
+
+describe("nextBurnIn — le décompte avant la prochaine brûlure", () => {
+  it("part de l'intervalle plein au départ", () => {
+    expect(nextBurnIn(0, 10)).toBe(10);
+  });
+
+  it("décroît puis se réarme au tic suivant", () => {
+    expect(nextBurnIn(3_000, 10)).toBe(7);
+    expect(nextBurnIn(9_500, 10)).toBe(1);
+    expect(nextBurnIn(10_000, 10)).toBe(10);
+    expect(nextBurnIn(12_000, 10)).toBe(8);
+  });
+
+  it("n'affiche jamais zéro — un « 0 s » resterait figé une seconde entière", () => {
+    for (let ms = 0; ms < 40_000; ms += 137) {
+      const n = nextBurnIn(ms, 5);
+      expect(n).toBeGreaterThanOrEqual(1);
+      expect(n).toBeLessThanOrEqual(5);
+    }
   });
 });

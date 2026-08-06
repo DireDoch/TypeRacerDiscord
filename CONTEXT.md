@@ -28,16 +28,28 @@ _Avoid_: Hard mode, Strict mode, Challenge mode.
 The terminal state of a Race Run ended by a Difficulty fail condition (Master) — distinct from an Abandon (the Player's own choice to give up) even though it behaves like one in every other respect: the car stops at the exact point of the mistake, the Race unblocks immediately for everyone else, the Player stays in the lobby for the next Race, and no Run is ever persisted. Ranks in the same tail tier as Abandoned (ADR 0013). Displays a completion percentage (« failed (42%) ») that is never used to rank — it is not "almost finished," it is disqualified.
 _Avoid_: DNF, Disqualified, Eliminated.
 
+**Brûlé (burned)**:
+The terminal state of a Player eliminated by the Floor is lava Mode de jeu — the third one after Abandon and Failed, and the only one that comes neither from a choice nor from a mistake: it comes from being **compared to the others** and being last at the wrong moment. Unlike those two, a Brûlé carries a **real partial score** (WPM, accuracy, per-second series) recomputed over the portion they had time to type. That score never ranks them — only the instant of death ranks — it exists to be displayed and to pick the Play of the Game.
+_Avoid_: Éliminé, Mort, Failed, Abandon, DNF.
+
 **Gap (écart)**:
-How far a Player finished behind the winner of a Race, in seconds. It is the headline of the finish — the number that gets said out loud — while absolute WPM is secondary. Derived on the client from the durations carried by `RaceOver` (ADR 0010); the winner's own Gap is zero. Ranking by Gap and ranking by WPM are always the same order in a Race — everyone types the same text and only finishes at 100 % exact, so correct characters are identical across finishers.
+How far a Player finished behind the winner of a Race, in seconds. It is the headline of the finish — the number that gets said out loud — while absolute WPM is secondary. Derived on the client from the durations carried by `RaceOver` (ADR 0010); the winner's own Gap is zero. Ranking by Gap and ranking by WPM are always the same order in a Race — everyone types the same text and only finishes at 100 % exact, so correct characters are identical across finishers. **Floor is lava has no Gap** — nobody crosses the line — and the survival time takes its place as the headline.
 _Avoid_: Delta, Difference, Lag.
 
 **Mode**:
 The rule that decides what text is presented and when a Run ends — one of `Time`, `Words`, `Quotes`, `Zen`. Exactly one Mode per Run. **Solo only**: a Race has no Mode (its end rule is always "the whole text, exactly"), it has a Source de texte instead — ADR 0009.
 
 **Source de texte (Race)**:
-Where a Race's text comes from — `Quote` (default, via the existing quote proxy) or `Mots` (generated, length `Court 15` / `Normal 30` / `Long 50`). Chosen by the party leader in the lobby, out of race only. It decides the text, never the measure: the Authoritative scoreboard recomputes every Race as `Words` over the server's text regardless. Length is a `Mots`-only control — a Quote's length belongs to the quote.
+Where a Race's text comes from — `Quote` (default, via the existing quote proxy) or `Mots` (generated, length `Court 15` / `Normal 30` / `Long 50`). Chosen by the party leader in the lobby, out of race only. It decides the text, never the measure: the Authoritative scoreboard recomputes every Race as `Words` over the server's text regardless. Length is a `Mots`-only control — a Quote's length belongs to the quote. Inert under the Floor is lava Mode de jeu, which imposes its own text.
 _Avoid_: Mode, Race mode, Game mode.
+
+**Mode de jeu (Race)**:
+The rule that decides **how a Race is won** — `Normal` (first to type the whole text exactly) or `Floor is lava`. Its own axis, distinct from the Source de texte (which decides the text, never the victory) and from the Difficulté (an individual fail condition, evaluated on that Player's Keystroke log alone, never against the others). A Réglage de salon: chosen by the party leader, out of race only, imposed on everyone. **Exactly one at a time** — Modes de jeu never combine. Not to be confused with the Mode (`Time`/`Words`/`Quotes`/`Zen`), which is solo and decides the text and the end of a Run.
+_Avoid_: Mode, Variante, Ruleset, Game mode.
+
+**Floor is lava**:
+The first Mode de jeu: at a fixed interval, the least advanced Player is Brûlé. The Race stops the instant a single Player is left alive — the survivor wins **without having typed the whole text**, making it the only Race that ends with nobody crossing the line. Ranking is the order of deaths, reversed: surviving longer places better, typing faster does not. **It has no finish line at all**: the mode imposes its own generated text, long enough that no Player can reach its end within a Race, so the Source de texte is inert while Floor is lava is active. A mode won by surviving must not hand out a way to win by arriving.
+_Avoid_: Élimination, Battle royale, Survie, Lava, Last man standing.
 
 **Setting**:
 An independent, cumulable text modifier applied on top of a Mode — currently `Punctuation` and `Numbers`. Zero or more per Run.
@@ -60,7 +72,7 @@ The playback of a finished Run, re-rendered from its Keystroke log against the p
 _Avoid_: Review, Playback, Ghost.
 
 **Play of the Game**:
-The post-Race highlight: the two Players whose finishes were **closest together** — wherever they landed in the ranking — replayed side by side in slow motion over their last seconds. Chosen by the server (ADR 0011), and **omitted entirely** when no pair finished within 2 s: a race with no photo finish has no Play of the Game. It reuses the Replay machinery but is not a Replay: two Keystroke logs instead of one, a window instead of the whole Run, and a **single shared clock** for both — that shared clock is what makes it a duel rather than two unrelated playbacks.
+The post-Race highlight: the two Players whose finishes were **closest together** — wherever they landed in the ranking — replayed side by side in slow motion over their last seconds. Chosen by the server (ADR 0011), and **omitted entirely** when no pair finished within 2 s: a race with no photo finish has no Play of the Game. It reuses the Replay machinery but is not a Replay: two Keystroke logs instead of one, a window instead of the whole Run, and a **single shared clock** for both — that shared clock is what makes it a duel rather than two unrelated playbacks. **In Floor is lava the closeness is measured in WPM, not in seconds**: deaths land on a metronome, so the instant of death carries ranking but no closeness, and the window runs over the 3 s before the *earlier* of the two exits — it ends on the flames rather than on a second arrival.
 _Avoid_: Highlight, PotG, Replay, Duel.
 
 **Live stats**:

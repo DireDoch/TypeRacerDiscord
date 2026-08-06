@@ -894,6 +894,92 @@ button.primary:hover {
   color: var(--main);
 }
 
+/* --- Floor is lava (ADR 0015) ---------------------------------------------
+   Tout en CSS, comme le reste de la piste : aucun canvas, aucune image.
+
+   `.doomed` = le dernier au classement, marqué EN PERMANENCE et pas seulement au
+   moment du tic. C'est le mode : pas des morts surprises, mais quelques secondes à
+   se voir dernier en tapant plus vite. `.burned` = mort, et sa ligne RESTE — voir le
+   cimetière se remplir fait partie du jeu. */
+.bar.doomed .bar-track {
+  border-right-color: var(--error);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--error) 55%, transparent);
+}
+.bar.doomed .bar-fill {
+  background: color-mix(in srgb, var(--error) 26%, transparent);
+}
+.bar.doomed .bar-wpm {
+  color: var(--error);
+}
+/* Le sursis PULSE : c'est ce qui distingue « je suis dernier » d'un simple accent de
+   couleur qu'on cesse de voir au bout de dix secondes. */
+@media (prefers-reduced-motion: no-preference) {
+  .bar.doomed .bar-track {
+    animation: doomed-pulse 1s ease-in-out infinite;
+  }
+}
+@keyframes doomed-pulse {
+  50% {
+    box-shadow: 0 0 0.5rem 1px color-mix(in srgb, var(--error) 65%, transparent);
+  }
+}
+/* Le brûlé : piste carbonisée, remplissage en braises, voiture éteinte. Le dégradé
+   fait le feu à lui seul — trois arrêts de couleur, pas un sprite. */
+.bar.burned .bar-label,
+.bar.burned .bar-wpm {
+  color: var(--error);
+}
+.bar.burned .bar-track {
+  background: color-mix(in srgb, #000 45%, var(--panel));
+  border-right-color: color-mix(in srgb, var(--sub) 40%, transparent);
+}
+.bar.burned .bar-fill {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, #000 60%, var(--panel)) 0%,
+    color-mix(in srgb, var(--error) 45%, transparent) 70%,
+    color-mix(in srgb, #f5a623 75%, transparent) 100%
+  );
+  transition: none; /* la mort ne s'anime pas en largeur : elle est instantanée */
+}
+.bar.burned .car {
+  background: color-mix(in srgb, #000 55%, var(--panel));
+  filter: grayscale(1) brightness(0.7);
+}
+/* L'embrasement : une seule bouffée à l'apparition de la classe, pas une boucle —
+   la flamme dit « ça vient d'arriver », les braises disent « c'est arrivé ». */
+@media (prefers-reduced-motion: no-preference) {
+  .bar.burned .bar-fill::after {
+    content: "🔥";
+    position: absolute;
+    right: -0.2rem;
+    top: 50%;
+    font-size: calc(var(--track, 1.6rem) * 0.8);
+    transform: translateY(-50%);
+    animation: burn-flash 1.1s ease-out forwards;
+  }
+}
+@keyframes burn-flash {
+  0% {
+    opacity: 0;
+    transform: translateY(-50%) scale(0.4);
+  }
+  25% {
+    opacity: 1;
+    transform: translateY(-50%) scale(1.35);
+  }
+  100% {
+    opacity: 0.45;
+    transform: translateY(-50%) scale(1);
+  }
+}
+/* Le décompte avant la prochaine brûlure, à côté du WPM live. */
+.live-bar .live-lava {
+  margin-left: 0.8rem;
+  color: var(--error);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Podium : trois marches, le 1er au centre et plus haut. Le Gap est l'élément dominant
    de chaque place — c'est LE chiffre du glossaire, pas le WPM. */
 .podium {

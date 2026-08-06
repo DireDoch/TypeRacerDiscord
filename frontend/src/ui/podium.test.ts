@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { gapSeconds, gapLabel } from "./podium";
+import { gapSeconds, gapLabel, isLava, survivalLabel } from "./podium";
 import type { RaceResult } from "../core/net";
 
 const finished = (playerId: string, wpm: number, durationMs: number): RaceResult => ({
@@ -9,6 +9,7 @@ const finished = (playerId: string, wpm: number, durationMs: number): RaceResult
   durationMs,
   forfeit: false,
   failedPercent: null,
+  burnedAtMs: null,
   perSecond: [],
 });
 
@@ -19,6 +20,7 @@ const forfeited = (playerId: string): RaceResult => ({
   durationMs: 0,
   forfeit: true,
   failedPercent: null,
+  burnedAtMs: null,
   perSecond: [],
 });
 
@@ -29,6 +31,7 @@ const failed = (playerId: string, percent: number): RaceResult => ({
   durationMs: 0,
   forfeit: false,
   failedPercent: percent,
+  burnedAtMs: null,
   perSecond: [],
 });
 
@@ -88,5 +91,64 @@ describe("Gap — un Échec Master (ADR 0013) n'a pas d'écart, distinct d'un ab
     const odd = [failed("dave", 90), finished("alice", 92, 30_000), finished("bob", 78, 31_400)];
     expect(gapLabel(odd, 1)).toBe("vainqueur");
     expect(gapSeconds(odd, 2)).toBeCloseTo(1.4);
+  });
+});
+
+// --- Floor is lava (ADR 0015) -------------------------------------------------
+
+const burned = (playerId: string, wpm: number, burnedAtMs: number): RaceResult => ({
+  playerId,
+  wpm,
+  accuracy: 94,
+  durationMs: burnedAtMs,
+  forfeit: false,
+  failedPercent: null,
+  burnedAtMs,
+  perSecond: [],
+});
+
+describe("isLava — le mode se déduit des brûlés, aucun champ ne voyage", () => {
+  it("une Race normale n'a jamais de brûlé", () => {
+    expect(isLava(results)).toBe(false);
+  });
+
+  it("floor is lava en a toujours au moins un — la course s'arrête sur un décès", () => {
+    expect(isLava([finished("winner", 60, 40_000), burned("bob", 58, 30_000)])).toBe(true);
+  });
+});
+
+describe("survivalLabel — le temps de survie remplace le Gap (ADR 0015)", () => {
+  // Classement = ordre des décès inversé : le survivant, puis le dernier brûlé, etc.
+  const lava = [
+    finished("winner", 55, 31_000),
+    burned("bob", 30, 20_000),
+    burned("alice", 40, 10_000),
+  ];
+
+  it("le survivant a survécu jusqu'à la dernière élimination", () => {
+    expect(gapLabel(lava, 0)).toBe("survécu 20 s");
+    expect(survivalLabel(lava, 0)).toBe("survécu 20 s"); // gapLabel n'est qu'un aiguillage
+  });
+
+  it("un brûlé affiche l'instant de son décès, jamais un écart", () => {
+    expect(gapLabel(lava, 1)).toBe("brûlé à 20 s");
+    expect(gapLabel(lava, 2)).toBe("brûlé à 10 s");
+  });
+
+  it("le Gap ne s'affiche JAMAIS dans ce mode — personne ne franchit la ligne", () => {
+    expect(lava.map((_, i) => gapLabel(lava, i)).join(" ")).not.toContain("+");
+  });
+
+  it("un abandon reste un abandon, un échec reste un échec", () => {
+    const mixed = [finished("w", 50, 30_000), burned("b", 40, 10_000), forfeited("q"), failed("f", 12)];
+    expect(gapLabel(mixed, 2)).toBe("abandon");
+    expect(gapLabel(mixed, 3)).toBe("échec");
+  });
+
+  it("un brûlé garde un VRAI score, contrairement à un abandon", () => {
+    // C'est toute la différence du troisième état terminal (ADR 0015).
+    const b = burned("bob", 41, 10_000);
+    expect(b.wpm).toBeGreaterThan(0);
+    expect(b.forfeit).toBe(false);
   });
 });
