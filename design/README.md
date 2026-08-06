@@ -13,8 +13,10 @@ fichiers, c'est cinq occasions de diverger. Ici, changer le corail dans
 
 | Fichier | Rôle |
 | --- | --- |
-| `composants.typ` | Palette + composants (`voiture()`, `clavier()`) + `scene()`. Ne rend rien seul. |
+| `composants.typ` | Palette + composants (`logo()`, `voiture()`, `clavier()`) + `scene()`. Ne rend rien seul. |
 | `voiture-1024.typ` | Un asset = un fichier : sa page, ses dimensions, sa composition. |
+| `app-icon.typ` | Icône d'application Discord (#112), 1024 × 1024. Wordmark `logo()` seul — pas de scène, illisible à la taille d'affichage de l'étagère. |
+| `cover.typ` | Cover Discord (#113), 1024 × 576. `logo()` + `scene(clavier: false)`. |
 | `composition-demo.typ` | Planche de contrôle des trois combinaisons. Pas un asset. |
 | `out/` | Les PNG exportés. **Commités** — voir plus bas. |
 
@@ -43,6 +45,8 @@ travail, le redéclarer réécrirait la transformation de cetz à la main.
 ```sh
 cd design
 typst compile --format png --ppi 72 voiture-1024.typ out/voiture-1024.png
+typst compile --format png --ppi 72 app-icon.typ out/app-icon.png
+typst compile --format png --ppi 72 cover.typ out/cover.png
 typst compile --format png --ppi 72 composition-demo.typ out/composition-demo.png
 ```
 
@@ -85,6 +89,6 @@ Les six couleurs de `composants.typ` sont une **recopie manuelle** de
 n'est possible entre les deux. Toucher à la palette du jeu sans reporter ici fait
 diverger l'icône de l'écran qu'elle ouvre.
 
-`rouge` (`#ff4d6d`) est la couleur de la **faute de frappe** dans le jeu. Elle est
-listée pour être complète, pas pour décorer : l'employer comme accent sur un asset
-lui ferait dire quelque chose qu'il ne veut pas dire.
+`rouge` (`#ff4d6d`) est la couleur de la **faute de frappe** dans le jeu. Son seul
+emploi est le 2e « p » fautif de `logo()` — l'utiliser comme accent ailleurs lui
+ferait dire quelque chose qu'il ne veut pas dire.

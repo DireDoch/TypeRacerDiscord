@@ -19,6 +19,33 @@
 #let sourd = rgb("#96a0b5") // pneus, éléments secondaires
 #let rouge = rgb("#ff4d6d") // réservé à la FAUTE de frappe — ne pas décorer avec
 
+/// Wordmark "Typpe|Racer" : la faute de frappe porte la marque plutôt qu'une
+/// icône accolée au nom. Le 2e "p" — le doublon fautif — est seul en `rouge`,
+/// la couleur que ce fichier réserve à la faute ; le curseur `|` en `corail`
+/// (l'accent de l'identité) ; le reste en `texte`. `taille-texte` est le seul
+/// paramètre : un wordmark n'a pas de largeur propre à figer, `scale` chez
+/// l'appelant fait ce travail comme pour `voiture()`/`clavier()`.
+///
+/// Renvoie du CONTENU Typst (`stack`), pas un dessin cetz : un wordmark est du
+/// texte, pas une forme vectorielle composable dans le repère de `scene()`. Se
+/// place à côté d'un `canvas()`, jamais dedans.
+#let logo(taille-texte: 1.4cm) = {
+  set text(font: "JetBrainsMono NF", weight: "bold", size: taille-texte)
+  stack(
+    dir: ltr,
+    spacing: taille-texte * 0.12,
+    stack(
+      dir: ltr,
+      spacing: 0pt,
+      text(fill: texte)[Typ],
+      text(fill: rouge)[p],
+      text(fill: texte)[e],
+    ),
+    box(width: taille-texte * 0.16, height: taille-texte * 0.87, fill: corail, radius: taille-texte * 0.025),
+    text(fill: texte)[Racer],
+  )
+}
+
 /// Voiture de profil, nez à droite.
 ///
 /// Occupe environ 10 × 4 unités cetz, posée sur `y = 0` : l'appelant place et
@@ -40,17 +67,20 @@
   // rectangles. À 48 px dans l'étagère Discord, il ne reste que le contour —
   // un contour unique y survit, une pile de formes s'y brouille.
   //
-  // La face arrière est parfaitement verticale quand le nez, lui, est fuyant.
-  // Cette asymétrie est délibérée : c'est le curseur bloc de l'écran de frappe,
-  // la seule allusion au clavier que l'icône se permet à cette taille.
+  // La face arrière est parfaitement verticale quand le nez, lui, plonge
+  // jusqu'à toucher la ligne de sol. Cette asymétrie est délibérée : c'est le
+  // curseur bloc de l'écran de frappe, la seule allusion au clavier que
+  // l'icône se permet à cette taille. Le nez bas et pointu (contre l'ancien
+  // à-plat vertical, plus haut) porte seul l'agressivité du profil : bas de
+  // caisse et toit restent des lignes droites, la vitesse ne s'écrit qu'au nez.
   line(
     (0.2, 1.0),
     (0.2, 2.6),
-    (1.4, 2.6),
-    (2.9, 3.9),
-    (6.2, 3.9),
-    (7.9, 2.5),
-    (9.9, 2.0),
+    (1.3, 2.6),
+    (2.7, 3.5),
+    (4.6, 3.6),
+    (6.3, 3.1),
+    (8.2, 1.8),
     (9.9, 1.0),
     close: true,
     fill: couleur,
@@ -63,20 +93,27 @@
 
   // Aileron, débordant à l'arrière — le repère « voiture de course » le moins
   // cher en formes.
-  rect((-0.3, 2.55), (1.5, 2.95), fill: couleur.darken(22%), stroke: none)
+  rect((-0.3, 2.5), (1.4, 2.85), fill: couleur.darken(22%), stroke: none)
 
   // Vitre en `nuit` : elle vaut trou dans la carrosserie. Fixe et non dérivée
   // de `couleur`, elle doit rester la couleur du fond quelle que soit la teinte
   // de la voiture.
   line(
-    (1.75, 2.75),
-    (3.05, 3.6),
-    (5.85, 3.6),
-    (6.95, 2.75),
+    (1.6, 2.7),
+    (2.85, 3.3),
+    (4.75, 3.35),
+    (6.05, 2.5),
     close: true,
     fill: nuit,
     stroke: none,
   )
+
+  // Phare avant, en retrait de la pointe du nez plutôt qu'à son extrémité : une
+  // simple extension de la carrosserie ne se lirait pas comme un phare. Le
+  // rayon est calé pour couvrir exactement la pointe (aucun `couleur` ne doit
+  // dépasser du cercle) sans la noyer — assez grand pour se voir à 48 px, pas
+  // au point de dominer la roue.
+  circle((9.5, 1.15), radius: 0.5, fill: texte, stroke: none)
 
   // Roues par-dessus la carrosserie, pas dessous : pas d'arche à découper, et
   // la silhouette gagne deux ancrages francs. Pneu en `sourd` et non en `nuit`,
@@ -127,7 +164,7 @@
 // Boîte de la scène complète, sur l'axe vertical : du bas des touches au toit
 // de la voiture. Sert de référence de cadrage — voir `scene()`.
 #let _scene-bas = -1.4
-#let _scene-haut = 3.9
+#let _scene-haut = 3.6
 #let _scene-centre = (_scene-bas + _scene-haut) / 2
 
 // Alias privés : dans `scene()`, les paramètres `voiture` et `clavier` masquent
