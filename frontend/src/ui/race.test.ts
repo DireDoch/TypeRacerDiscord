@@ -9,7 +9,10 @@ import {
   lastPlaced,
   nextBurnIn,
   aliveIds,
+  spamReps,
+  capRemaining,
 } from "./race";
+import { FreeInput } from "../core/input/free-input";
 import { avatarUrl } from "../discord";
 import { WORDS_LENGTHS } from "../core/net";
 import type { InputView } from "../core/input/controller";
@@ -199,6 +202,93 @@ describe("aliveIds — le dernier vivant se compte sur les partants figés", () 
 
   it("brûlés et sortis (arrivée/abandon/échec) sont tous deux retirés des vivants", () => {
     expect(aliveIds(["p1", "p2", "p3"], new Set(["p2"]), new Set(["p3"]))).toEqual(["p1"]);
+  });
+});
+
+// --- Spam (ADR 0016) ----------------------------------------------------------
+
+describe("spamReps — le compte se RELIT de la pile, jamais un compteur à part", () => {
+  it("compte les mots verrouillés égaux au mot cible", () => {
+    expect(spamReps("go", view(["go", "go", "go"], ""))).toBe(3);
+  });
+
+  it("un mot verrouillé FAUX n'est pas une répétition", () => {
+    expect(spamReps("go", view(["go", "ga", "go"], ""))).toBe(2);
+  });
+
+  it("la répétition en cours de frappe n'en est pas encore une", () => {
+    expect(spamReps("go", view(["go"], "go"))).toBe(1);
+  });
+
+  it("sans mot cible (hors Spam, ou avant le premier RoomState) : zéro", () => {
+    expect(spamReps("", view([], ""))).toBe(0);
+  });
+});
+
+describe("spamReps + FreeInput — Backspace au milieu d'une répétition (ADR 0016)", () => {
+  /** Tape la séquence sur un vrai FreeInput ; « ⌫ » = Backspace, « ^ » = Ctrl+Backspace. */
+  const type = (target: string[], seq: string): FreeInput => {
+    const c = new FreeInput(target);
+    let t = 0;
+    for (const ch of seq) {
+      if (ch === "⌫") c.handleKey("Backspace", false, t++);
+      else if (ch === "^") c.handleKey("Backspace", true, t++);
+      else c.handleKey(ch, false, t++);
+    }
+    return c;
+  };
+  const target = Array(10).fill("go");
+
+  it("corriger une faute AVANT de verrouiller donne bien une répétition", () => {
+    expect(spamReps("go", type(target, "ga⌫o ").view())).toBe(1);
+  });
+
+  it("Backspace en buffer vide rouvre la dernière répétition, qui se décompte", () => {
+    // Le mot rouvert redevient éditable : il n'est plus verrouillé, donc plus compté.
+    expect(spamReps("go", type(target, "go go ⌫").view())).toBe(1);
+  });
+
+  it("une répétition rouverte puis re-verrouillée recompte", () => {
+    expect(spamReps("go", type(target, "go go ⌫ ").view())).toBe(2);
+  });
+
+  it("Ctrl+Backspace supprime la répétition entière sans la rouvrir", () => {
+    const c = type(target, "go go ^");
+    expect(spamReps("go", c.view())).toBe(1);
+    expect(c.view().typed).toBe(""); // supprimée, pas remise dans le buffer
+  });
+});
+
+describe("trackLabel — sous Spam la ligne affiche les répétitions, jamais un WPM", () => {
+  it("le compte de répétitions remplace le WPM live", () => {
+    expect(trackLabel(false, undefined, undefined, 55, undefined, 14)).toBe("14 ×");
+  });
+
+  it("reste le compte après le PlayerFinished que l'arrêt déclenche", () => {
+    // Même piège que le Brûlé : un PlayerFinished SUIT toujours le SpamStop. Sans la
+    // priorité sur `finalWpm`, la ligne redeviendrait « 72 wpm ✓ » juste après le clap.
+    expect(trackLabel(false, undefined, 72, 55, undefined, 14)).toBe("14 ×");
+  });
+
+  it("zéro répétition reste un compte, pas un repli sur le WPM", () => {
+    expect(trackLabel(false, undefined, 30, 55, undefined, 0)).toBe("0 ×");
+  });
+
+  it("abandon et échec l'emportent toujours — ce ne sont pas des Devancé", () => {
+    expect(trackLabel(true, undefined, undefined, 3, undefined, 5)).toBe("abandon");
+    expect(trackLabel(false, 42, undefined, 3, undefined, 5)).toBe("échec (42%)");
+  });
+});
+
+describe("capRemaining — le temps restant avant le plafond de Spam", () => {
+  it("part du plafond plein et décroît", () => {
+    expect(capRemaining(0, 30)).toBe(30);
+    expect(capRemaining(10_500, 30)).toBe(20);
+  });
+
+  it("ne descend jamais sous zéro — l'arrêt réel vient du serveur", () => {
+    expect(capRemaining(30_000, 30)).toBe(0);
+    expect(capRemaining(99_000, 30)).toBe(0);
   });
 });
 

@@ -35,6 +35,7 @@ use tokio::sync::broadcast;
 
 use crate::domain::difficulty::{detect_difficulty_failure, Difficulty};
 use crate::domain::replay::{compute_scoreboard, ScoreInput};
+use crate::domain::spam::count_reps;
 use crate::domain::text_gen::{generate_text, GenSettings};
 use crate::domain::types::{Keystroke, Mode, RunConfig};
 use crate::quote::QuoteClient;
@@ -59,6 +60,28 @@ const LAVA_INTERVAL_DEFAULT: u32 = 10;
 /// d'arrivée — un mode qui se gagne à la survie ne doit pas offrir de victoire à
 /// l'arrivée. Toutes les Sources de texte du lobby en finiraient trop tôt (ADR 0015).
 const LAVA_WORD_COUNT: u32 = 200;
+/// Seuils de répétitions proposés en Spam (ADR 0016). Paliers fixes, comme la longueur de
+/// la Source `Mots` et comme `LAVA_INTERVAL_VALUES` — jamais un nombre libre venu du
+/// client : c'est un réglage qui s'impose aux sept autres.
+const SPAM_THRESHOLD_VALUES: [u32; 4] = [10, 20, 30, 50];
+/// Seuil par défaut.
+const SPAM_THRESHOLD_DEFAULT: u32 = 20;
+/// Plafonds de temps proposés en Spam, en secondes. Paliers fixes eux aussi, et plafonnés
+/// à 60 s (ADR 0016) : au-delà, la seconde façon de gagner cesse d'en être une.
+const SPAM_TIME_CAP_VALUES: [u32; 4] = [15, 30, 45, 60];
+/// Plafond de temps par défaut.
+const SPAM_TIME_CAP_DEFAULT: u32 = 30;
+/// Longueur max d'un mot personnalisé de Spam (ADR 0016).
+const SPAM_WORD_MAX_LEN: usize = 20;
+/// Combien de répétitions le serveur pose d'avance dans `target_text` — de quoi remplir
+/// les lignes visibles au départ. Ce n'est PAS une longueur de course : le client allonge
+/// le texte tout seul au fur et à mesure (c'est le même mot, il n'a rien à demander), ce
+/// qui est exactement ce que « texte infini » veut dire ici (ADR 0016).
+const SPAM_LEAD_WORDS: usize = 60;
+/// Plafond DUR de répétitions reconstruites pour le recompute d'un log de Spam. Le log
+/// vient du client : sans borne, un log gonflé d'espaces ferait allouer un texte cible de
+/// taille arbitraire. 5 000 mots = ~1 250 WPM pendant les 60 s du plafond le plus long.
+const SPAM_MAX_WORDS: usize = 5_000;
 /// Profondeur du canal de diffusion par Room (messages en vol tolérés).
 const BROADCAST_CAP: usize = 64;
 /// Plafond DUR de présents dans une Room, et taille par défaut. Porte sur `players`, donc
@@ -111,6 +134,10 @@ pub enum RaceState {
         /// Nombre de tics d'élimination déjà joués. Compté plutôt que déduit de
         /// `burned.len()`, que les égalités désynchroniseraient.
         lava_ticks: u32,
+        /// `SpamStop` déjà diffusé (ADR 0016). Sans ce drapeau, un partant déconnecté
+        /// laisserait la Room en course et le plafond de temps re-diffuserait l'arrêt à
+        /// chaque seconde de watchdog jusqu'aux 10 minutes du `close_overlong_races`.
+        spam_stopped: bool,
     },
 }
 
@@ -162,6 +189,16 @@ pub struct Room {
     /// Intervalle d'élimination de floor is lava, en secondes. Inerte sous `Normal` —
     /// gardé quand même, pour que rebasculer sur le mode retrouve le réglage choisi.
     pub lava_interval_s: u32,
+    /// Mot personnalisé de Spam (ADR 0016), ou `None` pour le mot par défaut — tiré de la
+    /// liste de la Source `Mots`, seedé pareil, et RETIRÉ à chaque manche : c'est ce qui
+    /// fait qu'une revanche en mot par défaut ne rejoue pas le mot d'avant.
+    pub spam_word: Option<String>,
+    /// Seuil de répétitions qui gagne la Race sur-le-champ. Inerte hors Spam — gardé
+    /// quand même, comme `lava_interval_s`, pour que rebasculer retrouve le réglage.
+    pub spam_threshold: u32,
+    /// Plafond de temps de Spam, en secondes : si personne n'atteint le seuil, c'est le
+    /// plus de répétitions qui gagne à son expiration. Inerte hors Spam.
+    pub spam_time_cap_s: u32,
     pub state: RaceState,
     /// Diffusion des ServerEvent vers tous les sockets du salon.
     pub tx: broadcast::Sender<ServerEvent>,
@@ -253,9 +290,20 @@ pub async fn handle_socket(
             Ok(ClientEvent::SetLavaInterval { seconds }) => {
                 set_lava_interval(&rooms, &key, &player_id, seconds);
             }
+            // Le texte est reposé sous le verrou (le mot répété) : rien à regénérer hors
+            // verrou, contrairement à `SetTextSource`/`SetGameMode`.
+            Ok(ClientEvent::SetSpamWord { word }) => {
+                set_spam_word(&rooms, &key, &player_id, word);
+            }
+            Ok(ClientEvent::SetSpamThreshold { count }) => {
+                set_spam_threshold(&rooms, &key, &player_id, count);
+            }
+            Ok(ClientEvent::SetSpamTimeCap { seconds }) => {
+                set_spam_time_cap(&rooms, &key, &player_id, seconds);
+            }
             Ok(ClientEvent::StartRace) => start_race(&rooms, &key, &player_id),
-            Ok(ClientEvent::Progress { chars_done }) => {
-                relay_progress(&rooms, &key, &player_id, chars_done)
+            Ok(ClientEvent::Progress { chars_done, reps }) => {
+                relay_progress(&rooms, &key, &player_id, chars_done, reps)
             }
             Ok(ClientEvent::Finish { keystrokes, ended_at_ms }) => {
                 if finish_race(&rooms, &key, &player_id, keystrokes, ended_at_ms, &pool) {
@@ -408,6 +456,9 @@ fn new_room(key: RoomKey, code: Option<String>, owner: &str) -> Room {
         difficulty: Difficulty::Normal,
         game_mode: GameMode::default(),
         lava_interval_s: LAVA_INTERVAL_DEFAULT,
+        spam_word: None,
+        spam_threshold: SPAM_THRESHOLD_DEFAULT,
+        spam_time_cap_s: SPAM_TIME_CAP_DEFAULT,
         state: RaceState::Lobby,
         tx,
     }
@@ -420,6 +471,53 @@ fn words_text(count: u32) -> (u64, String) {
         generate_text(&GenSettings { punctuation: false, numbers: false }, count as usize, seed)
             .join(" ");
     (seed as u64, text)
+}
+
+/// Le mot répété, séparé par UN espace — exactement la forme qu'attendent déjà
+/// `FreeInput` et `replay_target`. C'est tout ce que « texte de Spam » veut dire, et c'est
+/// pourquoi le mode n'apporte aucun code de saisie : le curseur libre existant s'y
+/// applique tel quel (ADR 0016).
+fn spam_text(word: &str, count: usize) -> String {
+    vec![word; count].join(" ")
+}
+
+/// Repose le `target_text` d'une Room sous Spam : son mot, posé assez loin devant pour
+/// remplir les lignes visibles au départ. Le client allonge ensuite tout seul.
+///
+/// SYNCHRONE, sous le verrou — contrairement à une Source de texte, Spam ne demande aucun
+/// aller-retour réseau. C'est pourquoi `pending_source` renvoie `None` sous ce mode :
+/// `spawn_refresh_text` n'aurait rien à faire, et surtout rien à aller chercher.
+fn refresh_spam_text(room: &mut Room) {
+    let seed = fresh_seed();
+    let word = match &room.spam_word {
+        Some(w) => w.clone(),
+        // Mot par défaut : un tirage dans la liste de mots de la Source `Mots`, seedé
+        // pareil (ADR 0016). `generate_text(.., 1, seed)` EST ce tirage — la liste reste
+        // privée à `text_gen`, et il n'y a aucun second chemin de génération à tenir.
+        None => generate_text(&GenSettings { punctuation: false, numbers: false }, 1, seed)
+            .pop()
+            .unwrap_or_else(|| "spam".to_string()),
+    };
+    room.seed = seed as u64;
+    room.target_text = spam_text(&word, SPAM_LEAD_WORDS);
+}
+
+/// Le mot en jeu d'une Room sous Spam, relu du texte : il en EST la répétition. Évite de
+/// promener `spam_word` en parallèle du texte, et donc de pouvoir les désaccorder.
+fn spam_word_of(target_text: &str) -> &str {
+    target_text.split(' ').next().unwrap_or("")
+}
+
+/// Valide un mot personnalisé (ADR 0016). Frontière de confiance : la valeur vient du
+/// client et s'impose aux sept autres.
+///
+/// Pas d'espace — il transformerait silencieusement « un mot répété » en plusieurs mots
+/// cibles et casserait le comptage des répétitions. Chiffres et ponctuation à l'intérieur
+/// sont acceptés : seule la FORME importe, pas le vocabulaire.
+fn valid_spam_word(word: &str) -> bool {
+    !word.is_empty()
+        && word.chars().count() <= SPAM_WORD_MAX_LEN
+        && !word.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
 /// Regénère le texte cible d'une Room depuis sa Source, puis re-diffuse `RoomState`.
@@ -470,6 +568,11 @@ fn spawn_refresh_text(rooms: Rooms, key: RoomKey, quotes: Arc<QuoteClient>) {
 fn pending_source(rooms: &Rooms, key: &str) -> Option<TextSource> {
     let guard = rooms.lock().unwrap();
     let room = guard.get(key)?;
+    // Spam génère son texte lui-même, sous verrou (`refresh_spam_text`) : rien à aller
+    // chercher au bout du réseau, et surtout pas une citation dont le mode ne veut pas.
+    if room.game_mode == GameMode::Spam {
+        return None;
+    }
     (!room.state.is_racing()).then(|| effective_source(room))
 }
 
@@ -481,7 +584,10 @@ fn pending_source(rooms: &Rooms, key: &str) -> Option<TextSource> {
 fn effective_source(room: &Room) -> TextSource {
     match room.game_mode {
         GameMode::FloorIsLava => TextSource::Words { count: LAVA_WORD_COUNT },
-        GameMode::Normal => room.text_source,
+        // Spam n'a pas de Source du tout : son texte est le mot répété, posé par
+        // `refresh_spam_text`. Aucun appelant ne l'atteint sous ce mode — `pending_source`
+        // sort avant, `end_race` branche avant — la valeur rendue ici n'est jamais lue.
+        GameMode::Normal | GameMode::Spam => room.text_source,
     }
 }
 
@@ -609,6 +715,64 @@ fn set_game_mode(rooms: &Rooms, key: &str, player_id: &str, mode: GameMode) -> b
         return false;
     }
     room.game_mode = mode;
+    // Spam pose son texte TOUT DE SUITE, sous le verrou : il ne demande aucun réseau, et
+    // le `RoomState` diffusé juste après doit déjà porter le mot. Les autres modes le font
+    // regénérer par l'appelant, hors verrou — une citation peut demander un aller-retour.
+    if mode == GameMode::Spam {
+        refresh_spam_text(room);
+    }
+    let _ = room.tx.send(room_state(room));
+    true
+}
+
+/// SetSpamWord : accepté du seul owner, hors course, et seulement pour un mot valide
+/// (ADR 0016). `None` = retour au mot par défaut. Regénère le texte sous le verrou —
+/// le texte EST le mot répété, changer l'un sans l'autre n'a pas de sens.
+fn set_spam_word(rooms: &Rooms, key: &str, player_id: &str, word: Option<String>) -> bool {
+    if let Some(w) = &word {
+        if !valid_spam_word(w) {
+            return false; // mot vide, avec espace, ou démesuré : refusé
+        }
+    }
+    let mut rooms = rooms.lock().unwrap();
+    let Some(room) = rooms.get_mut(key) else { return false };
+    if room.owner != player_id || room.state.is_racing() {
+        return false;
+    }
+    room.spam_word = word;
+    refresh_spam_text(room);
+    let _ = room.tx.send(room_state(room));
+    true
+}
+
+/// SetSpamThreshold : accepté du seul owner, hors course, parmi `SPAM_THRESHOLD_VALUES`.
+/// Accepté même hors Spam — le réglage est simplement inerte, et le lobby peut le préparer
+/// avant de basculer, comme `SetLavaInterval`. Ne touche pas au texte.
+fn set_spam_threshold(rooms: &Rooms, key: &str, player_id: &str, count: u32) -> bool {
+    if !SPAM_THRESHOLD_VALUES.contains(&count) {
+        return false;
+    }
+    let mut rooms = rooms.lock().unwrap();
+    let Some(room) = rooms.get_mut(key) else { return false };
+    if room.owner != player_id || room.state.is_racing() {
+        return false;
+    }
+    room.spam_threshold = count;
+    let _ = room.tx.send(room_state(room));
+    true
+}
+
+/// SetSpamTimeCap : même patron, parmi `SPAM_TIME_CAP_VALUES`.
+fn set_spam_time_cap(rooms: &Rooms, key: &str, player_id: &str, seconds: u32) -> bool {
+    if !SPAM_TIME_CAP_VALUES.contains(&seconds) {
+        return false;
+    }
+    let mut rooms = rooms.lock().unwrap();
+    let Some(room) = rooms.get_mut(key) else { return false };
+    if room.owner != player_id || room.state.is_racing() {
+        return false;
+    }
+    room.spam_time_cap_s = seconds;
     let _ = room.tx.send(room_state(room));
     true
 }
@@ -798,6 +962,7 @@ pub fn spawn_watchdog(rooms: Rooms, quotes: Arc<QuoteClient>) {
             interval.tick().await;
             let now = now_epoch_ms();
             lava_tick(&rooms, now);
+            spam_tick(&rooms, now);
             for key in close_overlong_races(&rooms, now) {
                 spawn_refresh_text(rooms.clone(), key, quotes.clone());
             }
@@ -877,6 +1042,57 @@ fn lava_tick(rooms: &Rooms, now: i64) {
     }
 }
 
+/// Arrête une Race sous Spam (ADR 0016). Les deux façons de gagner y mènent — un Player
+/// qui verrouille le seuil (`relay_progress`) ou le plafond de temps qui expire
+/// (`spam_tick`) — et le mode ne les distingue pas, donc un seul chemin ici.
+///
+/// Ne clôt PAS la course lui-même : chaque partant renvoie son log via `Finish` et c'est
+/// l'arrivée du dernier log attendu qui déclenche `end_race`, exactement comme une Race
+/// normale et comme floor is lava. Ne désigne aucun vainqueur non plus : le classement
+/// vient du recompute serveur au `Finish`, jamais du compte déclaré qui a claqué l'arrêt.
+///
+/// Renvoie `true` si c'est CET appel qui a arrêté la course (une seule diffusion).
+fn stop_spam(room: &mut Room) -> bool {
+    // Le drapeau se pose SOUS l'emprunt de `state`, la diffusion se fait dehors — même
+    // découpage que `lava_tick` et `close_race`, pour ne jamais tenir `&mut room.state`
+    // et `room.tx` en même temps.
+    let fresh = match &mut room.state {
+        RaceState::Racing { spam_stopped, .. } if !*spam_stopped => {
+            *spam_stopped = true;
+            true
+        }
+        _ => false,
+    };
+    if fresh {
+        let _ = room.tx.send(ServerEvent::SpamStop);
+    }
+    fresh
+}
+
+/// Le plafond de temps de Spam (ADR 0016) : si personne n'a atteint le seuil quand il
+/// expire, la Race s'arrête et c'est le plus de répétitions qui gagne. Le SEUIL, lui, est
+/// vérifié à chaud dans `relay_progress` — l'attendre ici le ferait traîner jusqu'à une
+/// seconde après la répétition gagnante, alors que le mode promet une victoire immédiate.
+///
+/// Horloge injectée (`now`), comme `lava_tick` et `close_overlong_races` : testable sans
+/// attendre le plafond en vrai.
+fn spam_tick(rooms: &Rooms, now: i64) {
+    let mut rooms = rooms.lock().unwrap();
+    for room in rooms.values_mut() {
+        if room.game_mode != GameMode::Spam {
+            continue;
+        }
+        let cap_ms = (room.spam_time_cap_s as i64) * 1000;
+        let expired = match &room.state {
+            RaceState::Racing { start_at_epoch_ms, .. } => now - start_at_epoch_ms >= cap_ms,
+            RaceState::Lobby => false,
+        };
+        if expired {
+            stop_spam(room);
+        }
+    }
+}
+
 /// StartRace : accepté du seul owner, hors course en cours, et seulement si le
 /// ready-check (s'il est activé) est satisfait par tous les présents (issue #63). Fige
 /// les partants, fixe t=0 (horloge murale serveur) et le diffuse.
@@ -888,7 +1104,9 @@ fn start_race(rooms: &Rooms, key: &str, player_id: &str) {
         }
         // Floor is lava exige deux partants (ADR 0015) : seul, on est DÉJÀ le dernier
         // vivant, la course serait finie à t=0. `StartRace` ne vérifiait jusqu'ici aucun
-        // effectif — une Race normale à un joueur est parfaitement jouable.
+        // effectif — une Race normale à un joueur est parfaitement jouable. Spam non plus
+        // n'exige rien (ADR 0016) : courir seul contre un seuil ou une horloge reste un
+        // jeu, il n'y a pas d'élimination qui le viderait de son sens.
         if room.game_mode == GameMode::FloorIsLava && room.players.len() < MIN_PLAYERS {
             return;
         }
@@ -901,19 +1119,26 @@ fn start_race(rooms: &Rooms, key: &str, player_id: &str) {
             progress: HashMap::new(),
             burned: Vec::new(),
             lava_ticks: 0,
+            spam_stopped: false,
         };
         let _ = room.tx.send(ServerEvent::RaceStart { start_at_epoch_ms: start });
     }
 }
 
 /// Relaie la progression d'un joueur aux autres (rendu des barres). Non autoritaire.
-fn relay_progress(rooms: &Rooms, key: &str, player_id: &str, chars_done: u32) {
+fn relay_progress(rooms: &Rooms, key: &str, player_id: &str, chars_done: u32, reps: u32) {
     let mut rooms = rooms.lock().unwrap();
     if let Some(room) = rooms.get_mut(key) {
         // Retenu pour le tic d'élimination (ADR 0015). Monotone : on ne garde que la
         // valeur la plus haute reçue, sinon un `Progress` en retard remis dans le désordre
         // ferait reculer un joueur juste avant un tic et le tuerait pour un artefact
         // d'ordonnancement. La progression d'une Race ne recule jamais de toute façon.
+        //
+        // `reps` n'est PAS retenu, lui : la seule question qu'on lui pose est « celui-ci
+        // vient-il d'atteindre le seuil ? », et elle se répond sur la valeur qui arrive.
+        // Un compte de répétitions, contrairement à une progression, peut légitimement
+        // reculer (Backspace rouvre un mot verrouillé) — le mémoriser au maximum vu
+        // arrêterait la course sur un pic annulé depuis.
         if let RaceState::Racing { progress, .. } = &mut room.state {
             let seen = progress.entry(player_id.to_string()).or_insert(0);
             *seen = (*seen).max(chars_done);
@@ -921,7 +1146,31 @@ fn relay_progress(rooms: &Rooms, key: &str, player_id: &str, chars_done: u32) {
         let _ = room.tx.send(ServerEvent::PlayerProgress {
             player_id: player_id.to_string(),
             chars_done,
+            reps,
         });
+        // Seuil atteint (ADR 0016) : la Race s'arrête pour tout le monde, sur-le-champ.
+        // Vérifié ICI et pas au tic du watchdog, parce que `Progress` part exactement au
+        // verrouillage d'un mot (#94) — c'est-à-dire à l'instant même où une répétition se
+        // termine, à la milliseconde près plutôt qu'à la seconde.
+        //
+        // Réservé aux PARTANTS, figés au RaceStart : `relay_progress` accepte le `Progress`
+        // de n'importe quel présent (les barres ne s'en portent pas plus mal), mais arrêter
+        // la course est une autre affaire — sans ce filtre, un spectateur arrivé en cours
+        // de course couperait la manche des autres avec un seul message. Même raison que
+        // `lava_tick`, qui ne regarde lui aussi que `racers`.
+        //
+        // ponytail: `reps` reste déclaratif, comme `chars_done` l'est pour floor is lava
+        // (ADR 0015). Le plafond assumé est donc un grief entre partants : un client qui
+        // ment arrête la course trop tôt, il ne la gagne pas — le classement de `end_race`
+        // vient du recompute serveur sur son log. Le durcir voudrait dire recompter le log
+        // à chaque mot verrouillé, pour huit joueurs, à chaque seconde.
+        let is_racer = match &room.state {
+            RaceState::Racing { racers, .. } => racers.iter().any(|r| r == player_id),
+            RaceState::Lobby => false,
+        };
+        if is_racer && room.game_mode == GameMode::Spam && reps >= room.spam_threshold {
+            stop_spam(room);
+        }
     }
 }
 
@@ -1074,6 +1323,27 @@ fn finish_race(
         (room.target_text.clone(), room.game_mode)
     };
 
+    // Sous Spam le texte cible est INFINI (ADR 0016) : plutôt que de deviner une longueur
+    // d'avance, le recompute reconstruit exactement ce qu'il faut de mot répété pour
+    // couvrir CE log. Un espace journalisé verrouille au plus un mot, donc leur nombre
+    // borne la pile ; le +1 couvre la répétition en cours, jamais verrouillée.
+    //
+    // Surprovisionner est sans effet sur les chiffres : `replay_target` ne compte Extra et
+    // Missed que sur les mots ATTEINTS, et un mot cible jamais atteint n'entre ni dans le
+    // WPM ni dans l'accuracy. Le plafond, lui, n'est pas cosmétique — le log vient du
+    // client, et sans borne un log gonflé d'espaces ferait allouer un texte arbitraire.
+    let target_text = if game_mode == GameMode::Spam {
+        let locks = keystrokes.iter().filter(|k| k.ctrl.is_none() && k.k == " ").count();
+        spam_text(spam_word_of(&target_text), (locks + 1).min(SPAM_MAX_WORDS))
+    } else {
+        target_text
+    };
+
+    // Compté AVANT le recompute, qui prend possession des keystrokes. `None` hors Spam :
+    // c'est aussi à ça que le podium reconnaît le mode (ADR 0016).
+    let spam = (game_mode == GameMode::Spam)
+        .then(|| count_reps(spam_word_of(&target_text), &keystrokes));
+
     // Sérialisé avant le recompute (qui prend possession des keystrokes).
     let keystroke_log = serde_json::to_string(&keystrokes).unwrap_or_else(|_| "[]".to_string());
     // CLONÉ pour la rétention en mémoire (ADR 0011, Play of the Game) : même motif que la
@@ -1105,6 +1375,8 @@ fn finish_race(
             failed_percent: None,
             // Renseigné par `record_finish`, qui est le seul à savoir qui a brûlé.
             burned_at_ms: None,
+            reps: spam.map(|c| c.reps),
+            spam_partial: spam.map_or(0, |c| c.partial),
             per_second: sb.per_second.clone(),
         },
         retained_log,
@@ -1113,12 +1385,14 @@ fn finish_race(
         return false;
     }
 
-    // Floor is lava ne persiste RIEN (ADR 0015) : texte imposé, jamais terminé, comparable
-    // à rien. La règle existante se lit « un Run est sauvegardé pour qui est arrivé » — et
-    // ici personne n'arrive. Le recompute a bien eu lieu, mais il reste en mémoire, pour le
-    // podium et le duel. C'est le seul `if` que la décision « rien n'est persisté » coûte :
-    // le log passant par `Finish`, ce chemin serait sinon emprunté par tout le monde.
-    if game_mode == GameMode::FloorIsLava {
+    // AUCUN Mode de jeu ne persiste (ADR 0015 puis 0016) : les deux imposent leur texte,
+    // aucun des deux n'a de ligne d'arrivée, et la règle existante se lit « un Run est
+    // sauvegardé pour qui est arrivé » — ici personne n'arrive. Le recompute a bien eu
+    // lieu, mais il reste en mémoire, pour le podium et le duel. C'est le seul `if` que la
+    // décision coûte : le log passant par `Finish`, ce chemin serait sinon emprunté par
+    // tout le monde. Écrit en « != Normal » pour qu'un troisième Mode de jeu hérite du bon
+    // défaut sans qu'on ait à y penser.
+    if game_mode != GameMode::Normal {
         return outcome == FinishOutcome::RaceOver;
     }
 
@@ -1201,14 +1475,30 @@ fn end_race(room: &mut Room) {
                         .unwrap_or(std::cmp::Ordering::Equal),
                 )
         }),
+        // Spam classe au NOMBRE DE RÉPÉTITIONS correctes (ADR 0016), recompté par le
+        // serveur sur chaque log — jamais au compte déclaré qui a claqué l'arrêt, sans
+        // quoi mentir sur `Progress` suffirait à gagner. Départage : les caractères
+        // corrects de la répétition en cours, pour qu'un Player en train d'en taper une au
+        // moment du clap ne soit pas à égalité avec un Player resté sur un buffer vide.
+        // `Option` s'ordonne `None < Some`, donc un abandon ne peut pas remonter — et il
+        // est déjà repoussé en queue par `is_tail`.
+        GameMode::Spam => results.sort_by(|a, b| {
+            is_tail(a)
+                .cmp(&is_tail(b))
+                .then(b.reps.cmp(&a.reps))
+                .then(b.spam_partial.cmp(&a.spam_partial))
+        }),
     }
     // Play of the Game (ADR 0011) : le serveur choisit le duel et n'expédie QUE ses deux
     // logs, jamais les huit. `None` = pas de duel → le bouton est absent du podium.
     // En floor is lava la proximité se mesure en WPM (ADR 0015) — les décès tombant sur un
     // métronome, leur écart ne dit rien de la proximité.
+    // Spam est logé à la même enseigne : tout le monde s'arrête au MÊME instant (le seuil
+    // ou le plafond claquent pour tous à la fois), donc les `duration_ms` y sont
+    // quasi-identiques et `duel()` déclarerait un photo-finish entre huit joueurs.
     let pick = match room.game_mode {
         GameMode::Normal => duel(&results),
-        GameMode::FloorIsLava => duel_by_wpm(&results),
+        GameMode::FloorIsLava | GameMode::Spam => duel_by_wpm(&results),
     };
     let play_of_the_game = pick.map(|(i, j)| {
         let a = results[i].player_id.clone();
@@ -1232,13 +1522,19 @@ fn end_race(room: &mut Room) {
     // l'appelant qui le déclenche, une fois le verrou relâché.
     // `effective_source` : sous floor is lava la revanche repart sur 200 mots, pas sur la
     // Source du lobby — sinon la manche suivante retrouverait une ligne d'arrivée.
-    let count = match effective_source(room) {
-        TextSource::Words { count } => count,
-        TextSource::Quote => ROOM_WORD_COUNT,
-    };
-    let (seed, text) = words_text(count);
-    room.seed = seed;
-    room.target_text = text;
+    // Sous Spam elle repart sur le mot répété, et sur un mot par défaut RETIRÉ (ADR 0016) :
+    // deux manches d'affilée ne doivent pas tomber sur le même mot.
+    if room.game_mode == GameMode::Spam {
+        refresh_spam_text(room);
+    } else {
+        let count = match effective_source(room) {
+            TextSource::Words { count } => count,
+            TextSource::Quote => ROOM_WORD_COUNT,
+        };
+        let (seed, text) = words_text(count);
+        room.seed = seed;
+        room.target_text = text;
+    }
     let _ = room.tx.send(room_state(room));
 }
 
@@ -1347,6 +1643,9 @@ fn room_state(room: &Room) -> ServerEvent {
         difficulty: room.difficulty,
         game_mode: room.game_mode,
         lava_interval_s: room.lava_interval_s,
+        spam_word: room.spam_word.clone(),
+        spam_threshold: room.spam_threshold,
+        spam_time_cap_s: room.spam_time_cap_s,
     }
 }
 
@@ -1398,6 +1697,8 @@ mod tests {
             forfeit: false,
             failed_percent: None,
             burned_at_ms: None,
+            reps: None,
+            spam_partial: 0,
             per_second: Vec::new(),
         }
     }
@@ -1460,7 +1761,7 @@ mod tests {
         // créée) sont ignorés — pas de panique, pas de Room créée par effet de bord.
         let rooms = new_rooms();
         start_race(&rooms, "c1", "p1");
-        relay_progress(&rooms, "c1", "p1", 5);
+        relay_progress(&rooms, "c1", "p1", 5, 0);
         assert_eq!(record(&rooms, "c1", done("p1", 80.0)), FinishOutcome::Rejected);
         assert!(rooms.lock().unwrap().is_empty());
     }
@@ -1749,6 +2050,8 @@ mod tests {
             forfeit: false,
             failed_percent: None,
             burned_at_ms: None,
+            reps: None,
+            spam_partial: 0,
             per_second: Vec::new(),
         }
     }
@@ -1917,7 +2220,7 @@ mod tests {
         assert!(set_lava_interval(rooms, "c1", players[0], interval_s));
         start_race(rooms, "c1", players[0]);
         for (p, chars) in progress {
-            relay_progress(rooms, "c1", p, *chars);
+            relay_progress(rooms, "c1", p, *chars, 0);
         }
         match &rooms.lock().unwrap().get("c1").unwrap().state {
             RaceState::Racing { start_at_epoch_ms, .. } => *start_at_epoch_ms,
@@ -2016,7 +2319,7 @@ mod tests {
         // et le tuerait pour un artefact d'ordonnancement.
         let rooms = new_rooms();
         let t0 = lava_race(&rooms, &["p1", "p2"], 10, &[("p1", 10), ("p2", 50)]);
-        relay_progress(&rooms, "c1", "p2", 5); // paquet en retard
+        relay_progress(&rooms, "c1", "p2", 5, 0); // paquet en retard
         lava_tick(&rooms, t0 + 10_000);
         assert_eq!(burned_of(&rooms, "c1")[0].0, "p1");
     }
@@ -2149,6 +2452,231 @@ mod tests {
         };
         assert_eq!(finishers[0].burned_at_ms, None);
         assert!(finishers[0].forfeit);
+    }
+
+    // --- Spam (ADR 0016) -----------------------------------------------------------
+
+    /// Room en Spam, course lancée. Renvoie le t=0 réel, pour piloter le plafond de temps
+    /// à l'horloge injectée — même patron que `lava_race`.
+    fn spam_race(rooms: &Rooms, players: &[&str], threshold: u32, cap_s: u32) -> i64 {
+        for p in players {
+            join(rooms, "c1", p);
+        }
+        assert!(set_game_mode(rooms, "c1", players[0], GameMode::Spam));
+        assert!(set_spam_threshold(rooms, "c1", players[0], threshold));
+        assert!(set_spam_time_cap(rooms, "c1", players[0], cap_s));
+        start_race(rooms, "c1", players[0]);
+        match &rooms.lock().unwrap().get("c1").unwrap().state {
+            RaceState::Racing { start_at_epoch_ms, .. } => *start_at_epoch_ms,
+            RaceState::Lobby => panic!("pas en course"),
+        }
+    }
+
+    /// La course a-t-elle été arrêtée (drapeau `spam_stopped`) ?
+    fn stopped(rooms: &Rooms, key: &str) -> bool {
+        match &rooms.lock().unwrap().get(key).unwrap().state {
+            RaceState::Racing { spam_stopped, .. } => *spam_stopped,
+            RaceState::Lobby => panic!("pas en course"),
+        }
+    }
+
+    fn stops_seen(rx: &mut broadcast::Receiver<ServerEvent>) -> usize {
+        let mut n = 0;
+        while let Ok(ev) = rx.try_recv() {
+            if matches!(ev, ServerEvent::SpamStop) {
+                n += 1;
+            }
+        }
+        n
+    }
+
+    /// Un résultat de Spam : ce que `record_finish` produit une fois le log recompté.
+    fn spammed(id: &str, wpm: f64, reps: u32, partial: u32) -> RaceResult {
+        RaceResult { reps: Some(reps), spam_partial: partial, ..done(id, wpm) }
+    }
+
+    #[test]
+    fn le_texte_est_le_mot_repete_et_la_source_devient_inerte() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        assert!(set_text_source(&rooms, "c1", "p1", TextSource::Quote));
+        assert!(set_game_mode(&rooms, "c1", "p1", GameMode::Spam));
+        assert!(set_spam_word(&rooms, "c1", "p1", Some("wow".to_string())));
+
+        let text = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
+        let words: Vec<&str> = text.split(' ').collect();
+        assert_eq!(words.len(), SPAM_LEAD_WORDS);
+        assert!(words.iter().all(|w| *w == "wow"));
+        // La Source du lobby est GARDÉE (elle reprend effet en revenant à Normal) mais
+        // n'est plus effective : aucune citation n'est demandée sous ce mode.
+        assert_eq!(source_of(&rooms, "c1"), TextSource::Quote);
+        assert!(pending_source(&rooms, "c1").is_none());
+    }
+
+    #[test]
+    fn le_mot_par_defaut_vient_de_la_liste_de_la_source_mots() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        assert!(set_game_mode(&rooms, "c1", "p1", GameMode::Spam));
+        let text = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
+        let word = spam_word_of(&text);
+        assert!(!word.is_empty());
+        assert!(word.chars().all(|c| c.is_ascii_alphabetic()));
+        assert!(text.split(' ').all(|w| w == word));
+    }
+
+    #[test]
+    fn un_mot_personnalise_invalide_est_refuse() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        set_game_mode(&rooms, "c1", "p1", GameMode::Spam);
+        // Un espace ferait silencieusement DEUX mots cibles et casserait le comptage.
+        assert!(!set_spam_word(&rooms, "c1", "p1", Some("deux mots".to_string())));
+        assert!(!set_spam_word(&rooms, "c1", "p1", Some(String::new())));
+        assert!(!set_spam_word(&rooms, "c1", "p1", Some("a".repeat(21))));
+        assert!(!set_spam_word(&rooms, "c1", "p1", Some("saut\nligne".to_string())));
+        // Chiffres et ponctuation À L'INTÉRIEUR du mot : acceptés, seule la forme compte.
+        assert!(set_spam_word(&rooms, "c1", "p1", Some("l33t!".to_string())));
+        assert!(set_spam_word(&rooms, "c1", "p1", Some("a".repeat(20))));
+    }
+
+    #[test]
+    fn les_reglages_de_spam_sont_reserves_a_l_owner_et_hors_course() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        join(&rooms, "c1", "p2");
+        assert!(!set_spam_word(&rooms, "c1", "p2", Some("no".to_string())));
+        assert!(!set_spam_threshold(&rooms, "c1", "p2", 30));
+        assert!(!set_spam_time_cap(&rooms, "c1", "p2", 45));
+        // Valeurs hors paliers : refusées même à l'owner (elles s'imposent aux autres).
+        assert!(!set_spam_threshold(&rooms, "c1", "p1", 17));
+        assert!(!set_spam_time_cap(&rooms, "c1", "p1", 300));
+
+        set_game_mode(&rooms, "c1", "p1", GameMode::Spam);
+        start_race(&rooms, "c1", "p1");
+        assert!(!set_spam_word(&rooms, "c1", "p1", Some("no".to_string())));
+        assert!(!set_spam_threshold(&rooms, "c1", "p1", 30));
+        assert!(!set_spam_time_cap(&rooms, "c1", "p1", 45));
+    }
+
+    #[test]
+    fn atteindre_le_seuil_arrete_la_course_tout_de_suite() {
+        let rooms = new_rooms();
+        spam_race(&rooms, &["p1", "p2"], 10, 60);
+        let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
+
+        relay_progress(&rooms, "c1", "p1", 27, 9); // encore une
+        assert!(!stopped(&rooms, "c1"));
+        relay_progress(&rooms, "c1", "p1", 30, 10); // seuil atteint
+        assert!(stopped(&rooms, "c1"));
+        assert_eq!(stops_seen(&mut rx), 1);
+    }
+
+    #[test]
+    fn un_spectateur_ne_peut_pas_couper_la_course_des_autres() {
+        // Un rejoignant en cours de course entre dans `players` mais jamais dans `racers`.
+        // Sans le filtre, un seul `Progress` gonflé suffirait à clore la manche des autres.
+        let rooms = new_rooms();
+        spam_race(&rooms, &["p1"], 10, 60);
+        join(&rooms, "c1", "intrus");
+        relay_progress(&rooms, "c1", "intrus", 9_999, 9_999);
+        assert!(!stopped(&rooms, "c1"));
+        // Le vrai partant, lui, arrête bien la course.
+        relay_progress(&rooms, "c1", "p1", 30, 10);
+        assert!(stopped(&rooms, "c1"));
+    }
+
+    #[test]
+    fn l_arret_n_est_diffuse_qu_une_fois() {
+        // Un partant figé laisserait la Room en course : sans le drapeau, chaque seconde
+        // de watchdog re-diffuserait l'arrêt jusqu'aux 10 minutes du close_overlong.
+        let rooms = new_rooms();
+        let t0 = spam_race(&rooms, &["p1", "p2"], 10, 15);
+        let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
+        spam_tick(&rooms, t0 + 15_000);
+        spam_tick(&rooms, t0 + 16_000);
+        spam_tick(&rooms, t0 + 17_000);
+        relay_progress(&rooms, "c1", "p1", 90, 30); // et le seuil par-dessus
+        assert_eq!(stops_seen(&mut rx), 1);
+    }
+
+    #[test]
+    fn le_plafond_de_temps_arrete_la_course_et_pas_avant() {
+        let rooms = new_rooms();
+        let t0 = spam_race(&rooms, &["p1", "p2"], 50, 30);
+        spam_tick(&rooms, t0 + 29_000);
+        assert!(!stopped(&rooms, "c1"));
+        spam_tick(&rooms, t0 + 30_000);
+        assert!(stopped(&rooms, "c1"));
+    }
+
+    #[test]
+    fn le_plafond_ne_touche_pas_les_autres_modes() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        start_race(&rooms, "c1", "p1"); // Race normale
+        spam_tick(&rooms, now_epoch_ms() + 600_000);
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    }
+
+    #[test]
+    fn spam_part_a_un_seul_joueur() {
+        // Contrairement à floor is lava (ADR 0015) : courir seul contre un seuil ou une
+        // horloge reste un jeu cohérent, il n'y a pas d'élimination à vider de son sens.
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        set_game_mode(&rooms, "c1", "p1", GameMode::Spam);
+        start_race(&rooms, "c1", "p1");
+        assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    }
+
+    #[test]
+    fn le_classement_suit_les_repetitions_pas_le_wpm() {
+        // Le WPM et les répétitions divergent dès qu'on tape vite ET faux : c'est le
+        // compte de répétitions correctes qui décide, jamais la vitesse brute.
+        let rooms = new_rooms();
+        spam_race(&rooms, &["a", "b", "c"], 20, 30);
+        let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
+
+        record(&rooms, "c1", spammed("a", 90.0, 11, 0)); // rapide, mais 11 répétitions
+        record(&rooms, "c1", spammed("b", 40.0, 20, 0)); // lent, mais le seuil atteint
+        record(&rooms, "c1", spammed("c", 70.0, 11, 3)); // ex æquo avec a, mais en cours
+
+        assert_eq!(ranking_of(&mut rx), Some(s(&["b", "c", "a"])));
+    }
+
+    #[test]
+    fn un_abandon_reste_derriere_les_devances() {
+        let rooms = new_rooms();
+        spam_race(&rooms, &["p1", "p2", "p3"], 20, 30);
+        let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
+
+        record(&rooms, "c1", RaceResult::forfeited("p3"));
+        record(&rooms, "c1", spammed("p2", 30.0, 4, 0));
+        record(&rooms, "c1", spammed("p1", 20.0, 12, 0));
+
+        assert_eq!(ranking_of(&mut rx), Some(s(&["p1", "p2", "p3"])));
+    }
+
+    #[test]
+    fn la_revanche_repart_sur_un_mot_repete() {
+        let rooms = new_rooms();
+        spam_race(&rooms, &["p1"], 10, 15);
+        record(&rooms, "c1", spammed("p1", 40.0, 10, 0)); // dernier partant : clôt
+        let text = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
+        assert_eq!(text.split(' ').count(), SPAM_LEAD_WORDS);
+        assert_eq!(text.split(' ').collect::<HashSet<_>>().len(), 1);
+    }
+
+    #[test]
+    fn le_texte_du_recompute_couvre_le_log_sans_le_deviner_d_avance() {
+        // Le texte de la Room ne fait que SPAM_LEAD_WORDS mots : un joueur plus rapide que
+        // ça ne doit pas voir ses répétitions au-delà comptées comme fausses.
+        let word = "go";
+        let locks = SPAM_LEAD_WORDS + 40;
+        let text = spam_text(word, (locks + 1).min(SPAM_MAX_WORDS));
+        assert_eq!(text.split(' ').count(), locks + 1);
+        assert_eq!(spam_word_of(&text), word);
     }
 
     #[test]
