@@ -11,6 +11,7 @@ import {
   aliveIds,
   spamReps,
   capRemaining,
+  spamRefill,
 } from "./race";
 import { FreeInput } from "../core/input/free-input";
 import { avatarUrl } from "../discord";
@@ -277,6 +278,31 @@ describe("trackLabel — sous Spam la ligne affiche les répétitions, jamais un
   it("abandon et échec l'emportent toujours — ce ne sont pas des Devancé", () => {
     expect(trackLabel(true, undefined, undefined, 3, undefined, 5)).toBe("abandon");
     expect(trackLabel(false, 42, undefined, 3, undefined, 5)).toBe("échec (42%)");
+  });
+});
+
+describe("spamRefill — le texte de Spam ne s'épuise jamais", () => {
+  it("ne rallonge pas tant qu'il reste de la marge devant le curseur", () => {
+    expect(spamRefill(60, 0)).toBe(0);
+    expect(spamRefill(60, 29)).toBe(0);
+  });
+
+  it("rallonge dès que le curseur entre dans la zone de garde", () => {
+    expect(spamRefill(60, 30)).toBeGreaterThan(0);
+  });
+
+  it("le curseur ne rattrape JAMAIS la fin, même en tapant sans s'arrêter", () => {
+    // C'est LA propriété du mode : sans elle, `FreeInput` retomberait sur un mot cible
+    // vide et le plafond de buffer s'effondrerait au milieu d'une course.
+    let length = 60;
+    for (let wordIndex = 0; wordIndex < 2_000; wordIndex++) {
+      length += spamRefill(length, wordIndex);
+      expect(wordIndex).toBeLessThan(length);
+    }
+  });
+
+  it("repart d'un texte déjà rallongé sans jamais reculer", () => {
+    expect(spamRefill(300, 500)).toBeGreaterThan(0);
   });
 });
 

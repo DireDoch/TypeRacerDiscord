@@ -69,6 +69,12 @@ pub enum GameMode {
     /// Un seul mot, répété indéfiniment (ADR 0016). Gagne qui verrouille le premier le
     /// seuil de répétitions correctes — ou, si le plafond de temps tombe avant, qui en a
     /// le plus. Pas de ligne d'arrivée non plus : le texte ne s'épuise jamais.
+    ///
+    /// Variante NUE, alors que l'ADR l'écrivait `Spam { word_source, threshold,
+    /// time_cap_s }` : ses trois réglages vivent à plat sur `Room`, comme
+    /// `lava_interval_s`. Écart assumé — les porter dans la variante rendrait `GameMode`
+    /// non-`Copy` et ferait perdre au lobby les réglages préparés avant la bascule, que
+    /// le patron existant conserve précisément pour qu'y revenir les retrouve.
     Spam,
 }
 

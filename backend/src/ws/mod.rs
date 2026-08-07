@@ -77,6 +77,9 @@ const SPAM_WORD_MAX_LEN: usize = 20;
 /// les lignes visibles au départ. Ce n'est PAS une longueur de course : le client allonge
 /// le texte tout seul au fur et à mesure (c'est le même mot, il n'a rien à demander), ce
 /// qui est exactement ce que « texte infini » veut dire ici (ADR 0016).
+///
+/// À partir de la première rallonge, c'est `SPAM_LOOKAHEAD` (`ui/race.ts`, via `spamRefill`)
+/// qui décide seul de la longueur — cette constante-ci ne sert qu'à l'amorce.
 const SPAM_LEAD_WORDS: usize = 60;
 /// Plafond DUR de répétitions reconstruites pour le recompute d'un log de Spam. Le log
 /// vient du client : sans borne, un log gonflé d'espaces ferait allouer un texte cible de
@@ -736,7 +739,11 @@ fn set_spam_word(rooms: &Rooms, key: &str, player_id: &str, word: Option<String>
     }
     let mut rooms = rooms.lock().unwrap();
     let Some(room) = rooms.get_mut(key) else { return false };
-    if room.owner != player_id || room.state.is_racing() {
+    // Refusé HORS Spam, contrairement au seuil et au plafond qui, eux, se préparent
+    // d'avance sans rien casser : celui-ci REGÉNÈRE le texte, et l'accepter sous Normal
+    // remplacerait la citation du lobby par 60 répétitions d'un mot. L'UI masque déjà le
+    // champ — mais l'UI n'est pas la frontière de confiance (ADR 0016).
+    if room.owner != player_id || room.state.is_racing() || room.game_mode != GameMode::Spam {
         return false;
     }
     room.spam_word = word;
@@ -1082,7 +1089,16 @@ fn spam_tick(rooms: &Rooms, now: i64) {
         if room.game_mode != GameMode::Spam {
             continue;
         }
-        let cap_ms = (room.spam_time_cap_s as i64) * 1000;
+        // Le plafond court depuis GO, PAS depuis `StartRace` : `start_at_epoch_ms` est posé
+        // avant le décompte (c'est lui que les clients calent), alors que le joueur — et le
+        // compteur que Spam lui affiche — comptent depuis sa première frappe. Sans ce
+        // décalage, un plafond de 15 s derrière un décompte de 10 s ne laisserait que 5 s de
+        // frappe pendant que l'écran en annonce 15.
+        //
+        // Floor is lava vit avec la même origine sans le corriger : son décompte n'est qu'un
+        // métronome, le décalage y avance le premier tic sans rien promettre de faux. Spam
+        // est le premier mode à AFFICHER un temps restant, donc le premier à devoir le tenir.
+        let cap_ms = ((room.spam_time_cap_s + room.countdown_s) as i64) * 1000;
         let expired = match &room.state {
             RaceState::Racing { start_at_epoch_ms, .. } => now - start_at_epoch_ms >= cap_ms,
             RaceState::Lobby => false,
@@ -2545,6 +2561,7 @@ mod tests {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
         join(&rooms, "c1", "p2");
+        set_game_mode(&rooms, "c1", "p1", GameMode::Spam); // sinon le mot serait refusé pour ça
         assert!(!set_spam_word(&rooms, "c1", "p2", Some("no".to_string())));
         assert!(!set_spam_threshold(&rooms, "c1", "p2", 30));
         assert!(!set_spam_time_cap(&rooms, "c1", "p2", 45));
@@ -2552,7 +2569,6 @@ mod tests {
         assert!(!set_spam_threshold(&rooms, "c1", "p1", 17));
         assert!(!set_spam_time_cap(&rooms, "c1", "p1", 300));
 
-        set_game_mode(&rooms, "c1", "p1", GameMode::Spam);
         start_race(&rooms, "c1", "p1");
         assert!(!set_spam_word(&rooms, "c1", "p1", Some("no".to_string())));
         assert!(!set_spam_threshold(&rooms, "c1", "p1", 30));
@@ -2601,13 +2617,35 @@ mod tests {
     }
 
     #[test]
-    fn le_plafond_de_temps_arrete_la_course_et_pas_avant() {
+    fn le_plafond_de_temps_court_depuis_go_pas_depuis_start_race() {
+        // `start_at_epoch_ms` est posé AVANT le décompte : sans l'y ajouter, un plafond de
+        // 30 s derrière le décompte par défaut (7 s) ne laisserait que 23 s de frappe,
+        // pendant que le compteur à l'écran — qui part de la 1re frappe — en annonce 30.
         let rooms = new_rooms();
         let t0 = spam_race(&rooms, &["p1", "p2"], 50, 30);
-        spam_tick(&rooms, t0 + 29_000);
+        let countdown = rooms.lock().unwrap().get("c1").unwrap().countdown_s as i64;
+        assert!(countdown > 0, "sinon le test ne prouve rien");
+
+        spam_tick(&rooms, t0 + 30_000); // le plafond nu : trop tôt de tout le décompte
         assert!(!stopped(&rooms, "c1"));
-        spam_tick(&rooms, t0 + 30_000);
+        spam_tick(&rooms, t0 + (30 + countdown) * 1000 - 1_000);
+        assert!(!stopped(&rooms, "c1"));
+        spam_tick(&rooms, t0 + (30 + countdown) * 1000);
         assert!(stopped(&rooms, "c1"));
+    }
+
+    #[test]
+    fn le_mot_ne_se_regle_pas_hors_spam_il_ecraserait_le_texte_du_lobby() {
+        // Le seuil et le plafond se préparent d'avance sans rien casser ; le mot, lui,
+        // REGÉNÈRE le texte — l'accepter sous Normal remplacerait la citation du lobby.
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        let before = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
+        assert!(!set_spam_word(&rooms, "c1", "p1", Some("wow".to_string())));
+        assert_eq!(rooms.lock().unwrap().get("c1").unwrap().target_text, before);
+        // Les deux autres restent préparables d'avance, eux.
+        assert!(set_spam_threshold(&rooms, "c1", "p1", 30));
+        assert!(set_spam_time_cap(&rooms, "c1", "p1", 45));
     }
 
     #[test]

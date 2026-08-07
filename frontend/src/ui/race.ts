@@ -399,9 +399,9 @@ export class Race {
     if (this.gameMode !== "spam") return;
     const word = this.targetWords[0];
     if (word === undefined) return;
-    const { wordIndex } = this.controller.view();
-    if (wordIndex + SPAM_LOOKAHEAD < this.targetWords.length) return;
-    for (let i = 0; i < SPAM_LOOKAHEAD; i++) this.targetWords.push(word);
+    const n = spamRefill(this.targetWords.length, this.controller.view().wordIndex);
+    if (n === 0) return;
+    for (let i = 0; i < n; i++) this.targetWords.push(word);
     this.targetText = this.targetWords.join(" ");
   }
 
@@ -1132,7 +1132,11 @@ export function trackLabel(
 /**
  * Secondes restantes avant le plafond de temps de Spam (ADR 0016). Dérivé en local du
  * chrono : le client connaît le plafond depuis le lobby, aucun événement serveur n'est
- * nécessaire pour l'afficher — l'arrêt réel, lui, vient du serveur (`SpamStop`). Pure.
+ * nécessaire pour l'afficher — l'arrêt réel, lui, vient du serveur (`SpamStop`).
+ *
+ * Compte depuis GO (`clock.start()`, après le décompte), et c'est pour s'aligner sur CE
+ * compteur que `spam_tick` ajoute le décompte à son plafond : le serveur, lui, mesure
+ * depuis `StartRace`, qui tombe un décompte plus tôt. Pure.
  */
 export function capRemaining(elapsedMs: number, capS: number): number {
   return Math.max(0, Math.ceil(capS - Math.max(0, elapsedMs) / 1000));
@@ -1226,6 +1230,18 @@ const GAME_MODE_LABELS: Record<GameMode, string> = {
  * de rendu qu'il faut (ne dessiner que les lignes visibles), pas un lookahead plus petit.
  */
 const SPAM_LOOKAHEAD = 30;
+
+/**
+ * Combien de répétitions ajouter au texte pour garder `SPAM_LOOKAHEAD` mots devant le
+ * curseur — 0 s'il y a déjà de la marge (ADR 0016). C'est le cœur du « texte infini » :
+ * extrait ici pour être testable, la méthode qui l'appelle ne faisant plus que pousser.
+ *
+ * Le serveur pose `SPAM_LEAD_WORDS` (60) mots au départ ; à partir de là c'est cette
+ * fonction seule qui décide de la longueur, sans jamais rien demander au serveur. Pure.
+ */
+export function spamRefill(length: number, wordIndex: number): number {
+  return wordIndex + SPAM_LOOKAHEAD < length ? 0 : SPAM_LOOKAHEAD;
+}
 
 /**
  * Répétitions correctes verrouillées (ADR 0016) : les mots de la pile égaux au mot cible.
