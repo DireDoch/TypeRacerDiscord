@@ -44,12 +44,20 @@ Where a Race's text comes from — `Quote` (default, via the existing quote prox
 _Avoid_: Mode, Race mode, Game mode.
 
 **Mode de jeu (Race)**:
-The rule that decides **how a Race is won** — `Normal` (first to type the whole text exactly) or `Floor is lava`. Its own axis, distinct from the Source de texte (which decides the text, never the victory) and from the Difficulté (an individual fail condition, evaluated on that Player's Keystroke log alone, never against the others). A Réglage de salon: chosen by the party leader, out of race only, imposed on everyone. **Exactly one at a time** — Modes de jeu never combine. Not to be confused with the Mode (`Time`/`Words`/`Quotes`/`Zen`), which is solo and decides the text and the end of a Run.
+The rule that decides **how a Race is won** — `Normal` (first to type the whole text exactly), `Floor is lava`, or `Spam`. Its own axis, distinct from the Source de texte (which decides the text, never the victory) and from the Difficulté (an individual fail condition, evaluated on that Player's Keystroke log alone, never against the others). A Réglage de salon: chosen by the party leader, out of race only, imposed on everyone. **Exactly one at a time** — Modes de jeu never combine. Not to be confused with the Mode (`Time`/`Words`/`Quotes`/`Zen`), which is solo and decides the text and the end of a Run.
 _Avoid_: Mode, Variante, Ruleset, Game mode.
 
 **Floor is lava**:
 The first Mode de jeu: at a fixed interval, the least advanced Player is Brûlé. The Race stops the instant a single Player is left alive — the survivor wins **without having typed the whole text**, making it the only Race that ends with nobody crossing the line. Ranking is the order of deaths, reversed: surviving longer places better, typing faster does not. **It has no finish line at all**: the mode imposes its own generated text, long enough that no Player can reach its end within a Race, so the Source de texte is inert while Floor is lava is active. A mode won by surviving must not hand out a way to win by arriving.
 _Avoid_: Élimination, Battle royale, Survie, Lava, Last man standing.
+
+**Spam**:
+The second Mode de jeu: one word — the party leader's pick from the existing word list, or a custom string (non-empty, no spaces, ≤20 characters, punctuation and numbers allowed) — streamed indefinitely, the same "always enough words ahead to fill the visible rows" mechanism solo's Time infini already uses, so the target text never runs out. Two Réglages de salon control the finish: a repetition threshold and a time cap (both fixed tiers, the cap capped at 60 s). The Race stops the instant either fires — a Player locking the threshold's-worth of correct repetitions wins outright, or, if nobody has by the time cap, whoever has the most correct repetitions wins. Whoever hasn't reached the threshold when it stops is Devancé. The podium headline is the raw count of correct repetitions, not Gap. Source de texte is inert while Spam is active, same reason as Floor is lava: the mode imposes its own text. Unlike Floor is lava, a single Player can start it — there is no elimination to make solo play meaningless.
+_Avoid_: Répétition, Boucle, Repeat mode, Loop mode.
+
+**Devancé**:
+The terminal state for a Player still typing when the Spam Mode de jeu stops — beaten by a Player reaching the repetition threshold first, or caught by the time cap running out, one term for both, the way Spam itself doesn't distinguish them. Like Brûlé, it comes from comparison or a clock, never from the Player's own choice (Abandon) or their own mistake (Failed). The server partially recomputes their Keystroke log against its own copy of the word to know their final repetition count, which ranks them — never persisted.
+_Avoid_: Perdant, Éliminé, Timeout, DNF, Failed, Abandon.
 
 **Setting**:
 An independent, cumulable text modifier applied on top of a Mode — currently `Punctuation` and `Numbers`. Zero or more per Run.
