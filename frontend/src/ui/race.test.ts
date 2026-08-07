@@ -8,6 +8,7 @@ import {
   trackPercent,
   lastPlaced,
   nextBurnIn,
+  aliveIds,
 } from "./race";
 import { avatarUrl } from "../discord";
 import { WORDS_LENGTHS } from "../core/net";
@@ -185,6 +186,19 @@ describe("lastPlaced — qui brûlera au prochain tic", () => {
 
   it("traite le zéro comme une valeur — pas encore tapé, c'est bien le dernier", () => {
     expect([...lastPlaced([a("p1", 0), a("p2", 5)])]).toEqual(["p1"]);
+  });
+});
+
+describe("aliveIds — le dernier vivant se compte sur les partants figés", () => {
+  it("un rejoignant en cours de course (absent de `racers`) ne compte jamais comme vivant", () => {
+    // p3 a rejoint la Room après le RaceStart — il n'apparaît que dans `players`, jamais
+    // dans `racers`. S'il fuitait ici, un duel à 2 (p1 vs p2) ne se clôturerait jamais
+    // tout seul : il resterait toujours 2 "vivants" (le survivant + le spectateur p3).
+    expect(aliveIds(["p1", "p2"], new Set(["p2"]), new Set())).toEqual(["p1"]);
+  });
+
+  it("brûlés et sortis (arrivée/abandon/échec) sont tous deux retirés des vivants", () => {
+    expect(aliveIds(["p1", "p2", "p3"], new Set(["p2"]), new Set(["p3"]))).toEqual(["p1"]);
   });
 });
 

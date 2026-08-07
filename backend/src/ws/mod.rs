@@ -968,8 +968,16 @@ fn record_finish(rooms: &Rooms, key: &str, mut result: RaceResult, log: Vec<Keys
     // tic — il ne le demande donc pas au client. Le log, lui, arrive par le `Finish`
     // existant : « voici mon log, j'ai fini » veut déjà dire exactement ça. Le survivant
     // envoie le sien pareil, et repart d'ici avec `burned_at_ms: None`.
-    if let Some((_, at)) = burned.iter().find(|(id, _)| *id == player_id) {
-        result.burned_at_ms = Some(*at);
+    //
+    // Réservé à une VRAIE arrivée (`forfeit: false`, `failed_percent: None`) : un
+    // Abandon/Échec Master passe aussi par ici (`forfeit_race`/`fail_race`), et peut
+    // perdre la course du lock contre `lava_tick` — le partant est alors déjà dans
+    // `burned` au moment où son Abandon/Échec s'enregistre. Sans cette garde, la vraie
+    // cause (abandon volontaire, faute) serait maquillée en brûlure sur le podium.
+    if !result.forfeit && result.failed_percent.is_none() {
+        if let Some((_, at)) = burned.iter().find(|(id, _)| *id == player_id) {
+            result.burned_at_ms = Some(*at);
+        }
     }
     logs.insert(player_id.clone(), log);
     finishers.push(result);
@@ -2122,6 +2130,25 @@ mod tests {
             RaceState::Lobby => panic!("course close trop tôt"),
         };
         assert_eq!(burned_at, Some(10_000.0));
+    }
+
+    #[test]
+    fn un_abandon_qui_perd_la_course_du_lock_contre_le_tic_reste_un_abandon() {
+        // p2 est brûlé par le tic, mais son Abandon (envoyé avant qu'il n'apprenne sa
+        // mort, ou en vol au même instant) arrive après : record_finish ne doit PAS
+        // repeindre cet Abandon en Brûlé.
+        let rooms = new_rooms();
+        let t0 = lava_race(&rooms, &["p1", "p2"], 10, &[("p1", 100), ("p2", 10)]);
+        lava_tick(&rooms, t0 + 10_000);
+        assert_eq!(burned_of(&rooms, "c1"), vec![("p2".to_string(), 10_000.0)]);
+
+        record(&rooms, "c1", RaceResult::forfeited("p2"));
+        let finishers = match &rooms.lock().unwrap().get("c1").unwrap().state {
+            RaceState::Racing { finishers, .. } => finishers.clone(),
+            RaceState::Lobby => panic!("course close trop tôt"),
+        };
+        assert_eq!(finishers[0].burned_at_ms, None);
+        assert!(finishers[0].forfeit);
     }
 
     #[test]
