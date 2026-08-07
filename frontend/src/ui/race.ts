@@ -75,6 +75,9 @@ export class Race {
   private phase: Phase = "connecting";
   /** Présents AVEC leur Display identity — c'est ce que la piste dessine. */
   private players: PlayerEntry[] = [];
+  /** Partants figés au RaceStart (miroir du `racers` serveur) — un rejoignant en cours
+   * de course entre dans `players` mais jamais ici, donc jamais dans `alive()`. */
+  private racers: PlayerEntry[] = [];
   private owner = "";
   private targetText = "";
   private targetWords: string[] = [];
@@ -220,6 +223,10 @@ export class Race {
         this.finished.set(e.playerId, e.wpm);
         if (e.forfeit) this.forfeited.add(e.playerId);
         if (e.failedPercent !== null) this.failedPercents.set(e.playerId, e.failedPercent);
+        // Un partant peut aussi sortir par Abandon/Échec Master, pas seulement par le
+        // feu (ADR 0015) — sans ce même réflexe qu'`onBurned`, le survivant ne se
+        // déduirait dernier vivant qu'au watchdog (10 min).
+        if (this.gameMode === "floorIsLava" && this.isLastAlive()) this.stopAndSubmit();
         if (this.phase === "running") this.renderBars();
         break;
       case "PlayerBurned":
@@ -251,11 +258,17 @@ export class Race {
     if (this.phase === "running") this.renderBars();
   }
 
-  /** Les vivants : présents ni brûlés ni déjà sortis (arrivée, abandon, échec). */
+  /** Les vivants : partants figés au RaceStart, ni brûlés ni déjà sortis (arrivée,
+   * abandon, échec) — un rejoignant en cours de course n'en fait jamais partie. */
   private alive(): PlayerEntry[] {
-    return this.players.filter(
-      (p) => !this.burned.has(p.playerId) && !this.finished.has(p.playerId),
+    const ids = new Set(
+      aliveIds(
+        this.racers.map((p) => p.playerId),
+        this.burned,
+        this.finished,
+      ),
     );
+    return this.racers.filter((p) => ids.has(p.playerId));
   }
 
   private isLastAlive(): boolean {
@@ -286,6 +299,9 @@ export class Race {
     if (this.phase === "countdown" || this.phase === "running") return;
     this.phase = "countdown";
     this.countdownN = this.countdownS;
+    // Figé ici, pas relu ailleurs : un RoomState reçu pendant la course (un rejoignant)
+    // ne doit pas faire grossir la liste des partants.
+    this.racers = this.players.slice();
     this.progress.clear();
     this.finished.clear();
     this.forfeited.clear();
@@ -950,6 +966,19 @@ export function lastPlaced(alive: { playerId: string; done: number }[]): Set<str
   if (alive.length < 2) return new Set();
   const least = Math.min(...alive.map((a) => a.done));
   return new Set(alive.filter((a) => a.done === least).map((a) => a.playerId));
+}
+
+/**
+ * Les vivants (ADR 0015) : `racers` doit être la liste FIGÉE au RaceStart, jamais les
+ * présents courants — un rejoignant en cours de course ne doit jamais s'y compter, ni
+ * comme candidat au feu, ni comme le dernier vivant qui clôt la course.
+ */
+export function aliveIds(
+  racers: string[],
+  burned: { has(id: string): boolean },
+  finished: { has(id: string): boolean },
+): string[] {
+  return racers.filter((id) => !burned.has(id) && !finished.has(id));
 }
 
 /**
