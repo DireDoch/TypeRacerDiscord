@@ -76,10 +76,12 @@ pub fn count_reps(word: &str, keys: &[Keystroke]) -> SpamCount {
                     locked.push(std::mem::take(&mut typed));
                 }
             }
-            None if k.k.chars().count() == 1 => {
-                if typed.chars().count() < max_buffer(word) {
-                    typed.push_str(&k.k);
-                }
+            // Plafond d'Extra porté par la garde : au-delà, la frappe n'entre pas au buffer
+            // et retombe sur le cas par défaut, qui l'ignore. Rien à représenter de plus —
+            // une frappe par-dessus le plafond ne peut de toute façon plus rendre la
+            // répétition correcte.
+            None if k.k.chars().count() == 1 && typed.chars().count() < max_buffer(word) => {
+                typed.push_str(&k.k);
             }
             None => {}
         }
