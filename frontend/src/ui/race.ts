@@ -43,7 +43,7 @@ import { podiumHtml, wirePodium, type PodiumOptions } from "./podium";
 import { runPlayOfTheGame } from "./potg";
 import { liveWpm } from "../live-stats";
 import { wordsHtml, placeCaret, escapeText } from "./typing-zone";
-import { avatarUrl, getIdentity, proxyBase } from "../discord";
+import { avatarUrl, getIdentity, proxyBase, updateActivity } from "../discord";
 
 type Phase = "connecting" | "lobby" | "countdown" | "running" | "over" | "failed";
 
@@ -223,7 +223,10 @@ export class Race {
         // Duel à l'écran : on met à jour les données (join/leave du lobby d'après-course)
         // mais on NE re-render PAS — sinon on effacerait le Play of the Game en pleine lecture.
         if (this.potgStop) return;
-        if (this.phase === "connecting") this.phase = "lobby";
+        if (this.phase === "connecting") {
+          this.phase = "lobby";
+          updateActivity("lobby");
+        }
         this.render();
         break;
       // Jointure refusée : le socket reste ouvert côté serveur, mais la reprise se fait
@@ -269,6 +272,7 @@ export class Race {
         // Snapshot AVANT que le RoomState de revanche (ordonné après) n'écrase targetWords.
         this.racedWords = this.targetWords.slice();
         this.phase = "over";
+        updateActivity("lobby"); // podium affiché, mais on est revenu dans la Room
         cancelAnimationFrame(this.rafId);
         this.render();
         break;
@@ -358,6 +362,7 @@ export class Race {
   private beginRun(): void {
     this.countdown = null;
     this.phase = "running";
+    updateActivity(this.gameMode === "normal" ? "race" : this.gameMode);
     this.doneLocal = false;
     this.log = [];
     this.lastLockedSent = 0; // revanche : sans ça, aucun Progress ne repartirait

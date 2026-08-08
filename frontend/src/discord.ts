@@ -16,6 +16,7 @@
 //  renvoie un token de test que le backend en mode dev accepte tel quel comme player_id.
 // =============================================================================
 
+import type { DiscordSDK } from "@discord/embedded-app-sdk";
 import type { TokenResponse } from "./core/types";
 
 const DEV_TOKEN = "dev-player-1";
@@ -93,6 +94,50 @@ export function closeActivity(): void {
   closeSdk?.();
 }
 
+/** SDK courant, pour `updateActivity` — `null` hors Discord ou avant le handshake (issue #111). */
+let activitySdk: DiscordSDK | null = null;
+
+/**
+ * Écran/état affiché au Player, pour la Rich Presence (issue #111). `lobby`/`race`/
+ * `floorIsLava`/`spam` viennent de `Race` (le Mode de jeu et la phase de la Room) ;
+ * `menu`/`practice` viennent de `main.ts` au changement d'écran.
+ */
+export type ActivityState = "menu" | "practice" | "lobby" | "race" | "floorIsLava" | "spam";
+
+/**
+ * Un couple (texte, clé d'asset) par état — POUR AJOUTER UN ÉTAT : une entrée ici, rien
+ * ailleurs. `largeImageKey` doit correspondre à une clé uploadée sur le portail
+ * développeur Discord (issues d'art) ; une clé absente n'y fait pas planter l'appel,
+ * Discord retombe silencieusement sur l'image par défaut.
+ */
+const ACTIVITY_PRESETS: Record<ActivityState, { details: string; largeImageKey: string }> = {
+  menu: { details: "Dans le menu", largeImageKey: "menu" },
+  practice: { details: "S'entraîne", largeImageKey: "practice" },
+  lobby: { details: "Dans un salon", largeImageKey: "lobby" },
+  race: { details: "En course", largeImageKey: "race" },
+  floorIsLava: { details: "Floor is lava", largeImageKey: "floor-is-lava" },
+  spam: { details: "Mode Spam", largeImageKey: "spam" },
+};
+
+/**
+ * Pousse l'état courant en Rich Presence. No-op hors Discord / avant le handshake, comme
+ * `closeActivity`. Le petit visuel reste le logo de l'app (badge constant) ; seul le grand
+ * visuel change avec l'état.
+ */
+export function updateActivity(activityState: ActivityState): void {
+  if (!activitySdk) return;
+  const preset = ACTIVITY_PRESETS[activityState];
+  void activitySdk.commands
+    .setActivity({
+      activity: {
+        type: 0,
+        details: preset.details,
+        assets: { large_image: preset.largeImageKey, large_text: preset.details, small_image: "app-icon" },
+      },
+    })
+    .catch(() => {}); // décoratif : une Rich Presence en échec ne doit pas se voir ailleurs
+}
+
 async function resolveIdentity(): Promise<Identity> {
   const clientId = import.meta.env.VITE_DISCORD_CLIENT_ID;
   const params = new URLSearchParams(window.location.search);
@@ -116,6 +161,7 @@ async function resolveIdentity(): Promise<Identity> {
   const sdk = new DiscordSDK(clientId);
   await sdk.ready();
   closeSdk = () => void sdk.close(RPCCloseCodes.CLOSE_NORMAL, "Fermé depuis le menu");
+  activitySdk = sdk;
 
   const { code } = await sdk.commands.authorize({
     client_id: clientId,
