@@ -17,7 +17,7 @@ import { Learn } from "./ui/learn";
 import { Settings } from "./ui/settings";
 import { applyPreferences } from "./core/preferences";
 import { fitToViewport, mountIdentityBadge } from "./ui/chrome";
-import { getAuthToken } from "./discord";
+import { getAuthToken, updateActivity } from "./discord";
 
 // --- Bandeau d'erreurs (debug in-iframe) -------------------------------------
 // Dans Discord la console est invisible : toute erreur JS ou promesse rejetée
@@ -91,6 +91,7 @@ function swap<T extends { destroy(): void; mount(): unknown }>(make: () => T): v
 }
 
 function showMenu(): void {
+  updateActivity("menu");
   swap(
     () =>
       new Menu(root, {
@@ -116,6 +117,7 @@ function showHistory(): void {
 }
 
 function showPractice(): void {
+  updateActivity("practice");
   swap(() => new Practice(root, showMenu));
 }
 
