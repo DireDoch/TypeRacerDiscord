@@ -24,6 +24,8 @@
 
 pub mod protocol;
 
+mod game_mode;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -33,9 +35,10 @@ use futures_util::{SinkExt, StreamExt};
 use sqlx::sqlite::SqlitePool;
 use tokio::sync::broadcast;
 
+use game_mode::rules;
+
 use crate::domain::difficulty::{detect_difficulty_failure, Difficulty};
 use crate::domain::replay::{compute_scoreboard, ScoreInput};
-use crate::domain::spam::count_reps;
 use crate::domain::text_gen::{generate_text, GenSettings};
 use crate::domain::types::{Keystroke, Mode, RunConfig};
 use crate::quote::QuoteClient;
@@ -567,31 +570,15 @@ fn spawn_refresh_text(rooms: Rooms, key: RoomKey, quotes: Arc<QuoteClient>) {
 }
 
 /// Source d'une Room qui attend un texte, ou `None` s'il n'y a rien à regénérer : Room
-/// disparue, ou course déjà lancée (on ne change pas le texte sous les doigts des joueurs).
+/// disparue, course déjà lancée (on ne change pas le texte sous les doigts des joueurs),
+/// ou Mode de jeu qui produit son propre texte sans réseau (#128 : `GameModeRules`).
 fn pending_source(rooms: &Rooms, key: &str) -> Option<TextSource> {
     let guard = rooms.lock().unwrap();
     let room = guard.get(key)?;
-    // Spam génère son texte lui-même, sous verrou (`refresh_spam_text`) : rien à aller
-    // chercher au bout du réseau, et surtout pas une citation dont le mode ne veut pas.
-    if room.game_mode == GameMode::Spam {
+    if room.state.is_racing() {
         return None;
     }
-    (!room.state.is_racing()).then(|| effective_source(room))
-}
-
-/// La Source RÉELLEMENT utilisée pour générer le texte. Floor is lava impose la sienne
-/// (ADR 0015) : sans ligne d'arrivée à atteindre, une citation de 150 caractères serait
-/// finie avant la deuxième élimination. La Source du lobby est gardée en l'état — elle
-/// reprend effet dès qu'on revient en `Normal` — mais elle est inerte, et c'est aussi ce
-/// qui évite d'appeler le proxy de citations pour rien.
-fn effective_source(room: &Room) -> TextSource {
-    match room.game_mode {
-        GameMode::FloorIsLava => TextSource::Words { count: LAVA_WORD_COUNT },
-        // Spam n'a pas de Source du tout : son texte est le mot répété, posé par
-        // `refresh_spam_text`. Aucun appelant ne l'atteint sous ce mode — `pending_source`
-        // sort avant, `end_race` branche avant — la valeur rendue ici n'est jamais lue.
-        GameMode::Normal | GameMode::Spam => room.text_source,
-    }
+    rules(room.game_mode).pending_source(room)
 }
 
 /// Ramène une citation à la forme que le reste du moteur attend : des mots séparés par
@@ -718,12 +705,11 @@ fn set_game_mode(rooms: &Rooms, key: &str, player_id: &str, mode: GameMode) -> b
         return false;
     }
     room.game_mode = mode;
-    // Spam pose son texte TOUT DE SUITE, sous le verrou : il ne demande aucun réseau, et
-    // le `RoomState` diffusé juste après doit déjà porter le mot. Les autres modes le font
-    // regénérer par l'appelant, hors verrou — une citation peut demander un aller-retour.
-    if mode == GameMode::Spam {
-        refresh_spam_text(room);
-    }
+    // Pose son texte TOUT DE SUITE, sous le verrou, seulement si ce mode se génère
+    // lui-même (Spam) — le `RoomState` diffusé juste après doit déjà porter le mot. Les
+    // autres modes le font regénérer par l'appelant, hors verrou — une citation peut
+    // demander un aller-retour (`GameModeRules::on_mode_switch`, #128).
+    rules(mode).on_mode_switch(room);
     let _ = room.tx.send(room_state(room));
     true
 }
@@ -742,8 +728,9 @@ fn set_spam_word(rooms: &Rooms, key: &str, player_id: &str, word: Option<String>
     // Refusé HORS Spam, contrairement au seuil et au plafond qui, eux, se préparent
     // d'avance sans rien casser : celui-ci REGÉNÈRE le texte, et l'accepter sous Normal
     // remplacerait la citation du lobby par 60 répétitions d'un mot. L'UI masque déjà le
-    // champ — mais l'UI n'est pas la frontière de confiance (ADR 0016).
-    if room.owner != player_id || room.state.is_racing() || room.game_mode != GameMode::Spam {
+    // champ — mais l'UI n'est pas la frontière de confiance (ADR 0016 ; `GameModeRules`
+    // porte cette garde depuis #128, `accepts_spam_settings`).
+    if room.owner != player_id || room.state.is_racing() || !rules(room.game_mode).accepts_spam_settings {
         return false;
     }
     room.spam_word = word;
@@ -968,8 +955,7 @@ pub fn spawn_watchdog(rooms: Rooms, quotes: Arc<QuoteClient>) {
         loop {
             interval.tick().await;
             let now = now_epoch_ms();
-            lava_tick(&rooms, now);
-            spam_tick(&rooms, now);
+            game_mode_tick(&rooms, now);
             for key in close_overlong_races(&rooms, now) {
                 spawn_refresh_text(rooms.clone(), key, quotes.clone());
             }
@@ -977,9 +963,20 @@ pub fn spawn_watchdog(rooms: Rooms, quotes: Arc<QuoteClient>) {
     });
 }
 
-/// Le tic d'élimination de floor is lava (ADR 0015) : brûle le partant le moins avancé
-/// dans chaque Room concernée, une fois par intervalle écoulé. Horloge injectée (`now`)
-/// pour rester testable sans attendre en vrai, comme `close_overlong_races`.
+/// Le tic du watchdog pour toutes les Rooms, quel que soit leur Mode de jeu — délègue à
+/// `GameModeRules::tick` (#128), no-op sous `Normal`. Remplace les deux boucles
+/// séparées (`lava_tick`/`spam_tick`) qui filtraient chacune `room.game_mode` elles-mêmes.
+fn game_mode_tick(rooms: &Rooms, now: i64) {
+    let mut rooms = rooms.lock().unwrap();
+    for room in rooms.values_mut() {
+        rules(room.game_mode).tick(room, now);
+    }
+}
+
+/// Le tic d'élimination de floor is lava (ADR 0015) : brûle le partant le moins avancé,
+/// une fois par intervalle écoulé. Horloge injectée (`now`) pour rester testable sans
+/// attendre en vrai, comme `close_overlong_races`. Référencé depuis `game_mode::FLOOR_IS_LAVA`
+/// (#128) — jamais appelé pour une Room qui n'est pas sous ce mode.
 ///
 /// Rattrape les tics manqués (boucle `while`) : la boucle peut avoir pris du retard, et
 /// un tic sauté ferait durer la course plus longtemps que le réglage annoncé. L'instant
@@ -989,63 +986,55 @@ pub fn spawn_watchdog(rooms: Rooms, quotes: Arc<QuoteClient>) {
 /// Ne clôt jamais la course lui-même : chaque brûlé renvoie son log via `Finish` et c'est
 /// l'arrivée du dernier log attendu qui déclenche `end_race`, exactement comme une Race
 /// normale. Le survivant fait pareil dès qu'il se voit seul.
-fn lava_tick(rooms: &Rooms, now: i64) {
-    let mut rooms = rooms.lock().unwrap();
-    for room in rooms.values_mut() {
-        if room.game_mode != GameMode::FloorIsLava {
-            continue;
-        }
-        // `max(1)` : une division par zéro paniquerait tout le watchdog. La valeur est
-        // validée à l'entrée, mais la garde coûte moins cher que la confiance.
-        let interval_ms = (room.lava_interval_s as i64).max(1) * 1000;
-        let mut announce: Vec<(PlayerId, f64)> = Vec::new();
-        if let RaceState::Racing {
-            start_at_epoch_ms, racers, finishers, progress, burned, lava_ticks, ..
-        } = &mut room.state
-        {
-            let due = ((now - *start_at_epoch_ms) / interval_ms).max(0) as u32;
-            while *lava_ticks < due {
-                *lava_ticks += 1;
-                // Vivant = partant qui n'est ni sorti (`finishers`) ni déjà condamné.
-                // Un abandon, un échec Master ou une déconnexion sortent donc des vivants
-                // sans règle supplémentaire — ils passent tous par `finishers`.
-                let alive: Vec<PlayerId> = racers
-                    .iter()
-                    .filter(|r| {
-                        !finishers.iter().any(|f| f.player_id == **r)
-                            && !burned.iter().any(|(id, _)| id == *r)
-                    })
-                    .cloned()
-                    .collect();
-                // « au plus un vivant » : plus rien à brûler. Zéro est atteignable — une
-                // égalité entre les deux derniers les emporte tous les deux et la course
-                // n'a pas de vainqueur (ADR 0015), un cas spécial de moins.
-                if alive.len() <= 1 {
-                    break;
-                }
-                let least = alive
-                    .iter()
-                    .map(|r| progress.get(r).copied().unwrap_or(0))
-                    .min()
-                    .unwrap_or(0);
-                let at_ms = (*lava_ticks as i64 * interval_ms) as f64;
-                // Égalité : TOUS les ex æquo brûlent. Départager sur l'ordre d'arrivée des
-                // paquets serait un tirage au sort invisible ; deux flammes d'un coup se
-                // voient et s'expliquent.
-                for id in alive
-                    .into_iter()
-                    .filter(|r| progress.get(r).copied().unwrap_or(0) == least)
-                {
-                    burned.push((id.clone(), at_ms));
-                    announce.push((id, at_ms));
-                }
+fn lava_tick_room(room: &mut Room, now: i64) {
+    // `max(1)` : une division par zéro paniquerait tout le watchdog. La valeur est
+    // validée à l'entrée, mais la garde coûte moins cher que la confiance.
+    let interval_ms = (room.lava_interval_s as i64).max(1) * 1000;
+    let mut announce: Vec<(PlayerId, f64)> = Vec::new();
+    if let RaceState::Racing {
+        start_at_epoch_ms, racers, finishers, progress, burned, lava_ticks, ..
+    } = &mut room.state
+    {
+        let due = ((now - *start_at_epoch_ms) / interval_ms).max(0) as u32;
+        while *lava_ticks < due {
+            *lava_ticks += 1;
+            // Vivant = partant qui n'est ni sorti (`finishers`) ni déjà condamné.
+            // Un abandon, un échec Master ou une déconnexion sortent donc des vivants
+            // sans règle supplémentaire — ils passent tous par `finishers`.
+            let alive: Vec<PlayerId> = racers
+                .iter()
+                .filter(|r| {
+                    !finishers.iter().any(|f| f.player_id == **r)
+                        && !burned.iter().any(|(id, _)| id == *r)
+                })
+                .cloned()
+                .collect();
+            // « au plus un vivant » : plus rien à brûler. Zéro est atteignable — une
+            // égalité entre les deux derniers les emporte tous les deux et la course
+            // n'a pas de vainqueur (ADR 0015), un cas spécial de moins.
+            if alive.len() <= 1 {
+                break;
+            }
+            let least = alive
+                .iter()
+                .map(|r| progress.get(r).copied().unwrap_or(0))
+                .min()
+                .unwrap_or(0);
+            let at_ms = (*lava_ticks as i64 * interval_ms) as f64;
+            // Égalité : TOUS les ex æquo brûlent. Départager sur l'ordre d'arrivée des
+            // paquets serait un tirage au sort invisible ; deux flammes d'un coup se
+            // voient et s'expliquent.
+            for id in alive.into_iter().filter(|r| progress.get(r).copied().unwrap_or(0) == least)
+            {
+                burned.push((id.clone(), at_ms));
+                announce.push((id, at_ms));
             }
         }
-        // Diffusé hors de l'emprunt mutable de `state`. C'est ce message qui dit au brûlé
-        // d'arrêter de taper et de renvoyer son log ; les autres y lisent qui est mort.
-        for (player_id, at_ms) in announce {
-            let _ = room.tx.send(ServerEvent::PlayerBurned { player_id, at_ms });
-        }
+    }
+    // Diffusé hors de l'emprunt mutable de `state`. C'est ce message qui dit au brûlé
+    // d'arrêter de taper et de renvoyer son log ; les autres y lisent qui est mort.
+    for (player_id, at_ms) in announce {
+        let _ = room.tx.send(ServerEvent::PlayerBurned { player_id, at_ms });
     }
 }
 
@@ -1081,31 +1070,26 @@ fn stop_spam(room: &mut Room) -> bool {
 /// vérifié à chaud dans `relay_progress` — l'attendre ici le ferait traîner jusqu'à une
 /// seconde après la répétition gagnante, alors que le mode promet une victoire immédiate.
 ///
-/// Horloge injectée (`now`), comme `lava_tick` et `close_overlong_races` : testable sans
-/// attendre le plafond en vrai.
-fn spam_tick(rooms: &Rooms, now: i64) {
-    let mut rooms = rooms.lock().unwrap();
-    for room in rooms.values_mut() {
-        if room.game_mode != GameMode::Spam {
-            continue;
-        }
-        // Le plafond court depuis GO, PAS depuis `StartRace` : `start_at_epoch_ms` est posé
-        // avant le décompte (c'est lui que les clients calent), alors que le joueur — et le
-        // compteur que Spam lui affiche — comptent depuis sa première frappe. Sans ce
-        // décalage, un plafond de 15 s derrière un décompte de 10 s ne laisserait que 5 s de
-        // frappe pendant que l'écran en annonce 15.
-        //
-        // Floor is lava vit avec la même origine sans le corriger : son décompte n'est qu'un
-        // métronome, le décalage y avance le premier tic sans rien promettre de faux. Spam
-        // est le premier mode à AFFICHER un temps restant, donc le premier à devoir le tenir.
-        let cap_ms = ((room.spam_time_cap_s + room.countdown_s) as i64) * 1000;
-        let expired = match &room.state {
-            RaceState::Racing { start_at_epoch_ms, .. } => now - start_at_epoch_ms >= cap_ms,
-            RaceState::Lobby => false,
-        };
-        if expired {
-            stop_spam(room);
-        }
+/// Horloge injectée (`now`), comme `lava_tick_room` et `close_overlong_races` : testable
+/// sans attendre le plafond en vrai. Référencé depuis `game_mode::SPAM` (#128) — jamais
+/// appelé pour une Room qui n'est pas sous ce mode.
+fn spam_tick_room(room: &mut Room, now: i64) {
+    // Le plafond court depuis GO, PAS depuis `StartRace` : `start_at_epoch_ms` est posé
+    // avant le décompte (c'est lui que les clients calent), alors que le joueur — et le
+    // compteur que Spam lui affiche — comptent depuis sa première frappe. Sans ce
+    // décalage, un plafond de 15 s derrière un décompte de 10 s ne laisserait que 5 s de
+    // frappe pendant que l'écran en annonce 15.
+    //
+    // Floor is lava vit avec la même origine sans le corriger : son décompte n'est qu'un
+    // métronome, le décalage y avance le premier tic sans rien promettre de faux. Spam
+    // est le premier mode à AFFICHER un temps restant, donc le premier à devoir le tenir.
+    let cap_ms = ((room.spam_time_cap_s + room.countdown_s) as i64) * 1000;
+    let expired = match &room.state {
+        RaceState::Racing { start_at_epoch_ms, .. } => now - start_at_epoch_ms >= cap_ms,
+        RaceState::Lobby => false,
+    };
+    if expired {
+        stop_spam(room);
     }
 }
 
@@ -1118,12 +1102,11 @@ fn start_race(rooms: &Rooms, key: &str, player_id: &str) {
         if room.owner != player_id || room.state.is_racing() || !all_present_ready(room) {
             return; // non-owner, course déjà lancée, ou ready-check pas encore satisfait
         }
-        // Floor is lava exige deux partants (ADR 0015) : seul, on est DÉJÀ le dernier
-        // vivant, la course serait finie à t=0. `StartRace` ne vérifiait jusqu'ici aucun
-        // effectif — une Race normale à un joueur est parfaitement jouable. Spam non plus
-        // n'exige rien (ADR 0016) : courir seul contre un seuil ou une horloge reste un
-        // jeu, il n'y a pas d'élimination qui le viderait de son sens.
-        if room.game_mode == GameMode::FloorIsLava && room.players.len() < MIN_PLAYERS {
+        // Effectif minimum du Mode de jeu (`GameModeRules::min_players_to_start`, #128) :
+        // Floor is lava exige deux partants (ADR 0015, seul on est DÉJÀ le dernier vivant,
+        // la course serait finie à t=0) ; Normal et Spam n'exigent rien de plus qu'un seul
+        // présent (ADR 0016 : courir seul contre un seuil ou une horloge reste un jeu).
+        if room.players.len() < rules(room.game_mode).min_players_to_start {
             return;
         }
         let start = now_epoch_ms();
@@ -1184,8 +1167,9 @@ fn relay_progress(rooms: &Rooms, key: &str, player_id: &str, chars_done: u32, re
             RaceState::Racing { racers, .. } => racers.iter().any(|r| r == player_id),
             RaceState::Lobby => false,
         };
-        if is_racer && room.game_mode == GameMode::Spam && reps >= room.spam_threshold {
-            stop_spam(room);
+        // `GameModeRules::on_progress` (#128) : no-op hors Spam, vérifie le seuil sous Spam.
+        if is_racer {
+            rules(room.game_mode).on_progress(room, reps);
         }
     }
 }
@@ -1342,23 +1326,19 @@ fn finish_race(
     // Sous Spam le texte cible est INFINI (ADR 0016) : plutôt que de deviner une longueur
     // d'avance, le recompute reconstruit exactement ce qu'il faut de mot répété pour
     // couvrir CE log. Un espace journalisé verrouille au plus un mot, donc leur nombre
-    // borne la pile ; le +1 couvre la répétition en cours, jamais verrouillée.
+    // borne la pile ; le +1 couvre la répétition en cours, jamais verrouillée. Identité
+    // pour les autres modes (`GameModeRules::recompute_target_text`, #128).
     //
     // Surprovisionner est sans effet sur les chiffres : `replay_target` ne compte Extra et
     // Missed que sur les mots ATTEINTS, et un mot cible jamais atteint n'entre ni dans le
     // WPM ni dans l'accuracy. Le plafond, lui, n'est pas cosmétique — le log vient du
     // client, et sans borne un log gonflé d'espaces ferait allouer un texte arbitraire.
-    let target_text = if game_mode == GameMode::Spam {
-        let locks = keystrokes.iter().filter(|k| k.ctrl.is_none() && k.k == " ").count();
-        spam_text(spam_word_of(&target_text), (locks + 1).min(SPAM_MAX_WORDS))
-    } else {
-        target_text
-    };
+    let target_text = rules(game_mode).recompute_target_text(&target_text, &keystrokes);
 
-    // Compté AVANT le recompute, qui prend possession des keystrokes. `None` hors Spam :
-    // c'est aussi à ça que le podium reconnaît le mode (ADR 0016).
-    let spam = (game_mode == GameMode::Spam)
-        .then(|| count_reps(spam_word_of(&target_text), &keystrokes));
+    // Compté AVANT le recompute, qui prend possession des keystrokes. `(None, 0)` hors
+    // Spam : c'est aussi à ça que le podium reconnaît le mode (ADR 0016 ; `score_extra`,
+    // #128).
+    let (reps, spam_partial) = rules(game_mode).score_extra(&target_text, &keystrokes);
 
     // Sérialisé avant le recompute (qui prend possession des keystrokes).
     let keystroke_log = serde_json::to_string(&keystrokes).unwrap_or_else(|_| "[]".to_string());
@@ -1391,8 +1371,8 @@ fn finish_race(
             failed_percent: None,
             // Renseigné par `record_finish`, qui est le seul à savoir qui a brûlé.
             burned_at_ms: None,
-            reps: spam.map(|c| c.reps),
-            spam_partial: spam.map_or(0, |c| c.partial),
+            reps,
+            spam_partial,
             per_second: sb.per_second.clone(),
         },
         retained_log,
@@ -1406,9 +1386,9 @@ fn finish_race(
     // sauvegardé pour qui est arrivé » — ici personne n'arrive. Le recompute a bien eu
     // lieu, mais il reste en mémoire, pour le podium et le duel. C'est le seul `if` que la
     // décision coûte : le log passant par `Finish`, ce chemin serait sinon emprunté par
-    // tout le monde. Écrit en « != Normal » pour qu'un troisième Mode de jeu hérite du bon
-    // défaut sans qu'on ait à y penser.
-    if game_mode != GameMode::Normal {
+    // tout le monde. `GameModeRules::persists_run` (#128) porte ce défaut, un quatrième
+    // Mode de jeu en hérite sans qu'on ait à y penser.
+    if !rules(game_mode).persists_run {
         return outcome == FinishOutcome::RaceOver;
     }
 
@@ -1469,53 +1449,18 @@ fn end_race(room: &mut Room) {
     // tous, et on ne finit qu'à 100 % exact, donc les caractères corrects sont identiques
     // entre finisseurs. Le tri est STABLE : deux entrées de queue gardent leur ordre
     // d'arrivée relatif, jamais départagées par le pourcentage d'échec.
+    // Le classement propre à chaque mode (WPM décroissant / ordre des décès inversé /
+    // répétitions décroissantes) vit dans `GameModeRules::rank_cmp` (#128) — `is_tail`
+    // reste appliqué ICI, une seule fois pour les trois, plutôt que recopié dans chacun.
     let mut results = finishers.clone();
-    match room.game_mode {
-        GameMode::Normal => results.sort_by(|a, b| {
-            is_tail(a)
-                .cmp(&is_tail(b))
-                .then(b.wpm.partial_cmp(&a.wpm).unwrap_or(std::cmp::Ordering::Equal))
-        }),
-        // Floor is lava classe à l'ORDRE DES DÉCÈS INVERSÉ (ADR 0015), jamais au WPM :
-        // classer au WPM remettrait devant un joueur qu'on vient d'éliminer, c'est-à-dire
-        // annulerait l'élimination qu'on vient de jouer. Le survivant (jamais brûlé) passe
-        // devant tout le monde ; abandons et échecs Master gardent leur rang de queue.
-        GameMode::FloorIsLava => results.sort_by(|a, b| {
-            is_tail(a)
-                .cmp(&is_tail(b))
-                .then(a.burned_at_ms.is_some().cmp(&b.burned_at_ms.is_some()))
-                .then(
-                    b.burned_at_ms
-                        .unwrap_or(0.0)
-                        .partial_cmp(&a.burned_at_ms.unwrap_or(0.0))
-                        .unwrap_or(std::cmp::Ordering::Equal),
-                )
-        }),
-        // Spam classe au NOMBRE DE RÉPÉTITIONS correctes (ADR 0016), recompté par le
-        // serveur sur chaque log — jamais au compte déclaré qui a claqué l'arrêt, sans
-        // quoi mentir sur `Progress` suffirait à gagner. Départage : les caractères
-        // corrects de la répétition en cours, pour qu'un Player en train d'en taper une au
-        // moment du clap ne soit pas à égalité avec un Player resté sur un buffer vide.
-        // `Option` s'ordonne `None < Some`, donc un abandon ne peut pas remonter — et il
-        // est déjà repoussé en queue par `is_tail`.
-        GameMode::Spam => results.sort_by(|a, b| {
-            is_tail(a)
-                .cmp(&is_tail(b))
-                .then(b.reps.cmp(&a.reps))
-                .then(b.spam_partial.cmp(&a.spam_partial))
-        }),
-    }
+    let mode = room.game_mode;
+    results.sort_by(|a, b| is_tail(a).cmp(&is_tail(b)).then(rules(mode).rank_cmp(a, b)));
     // Play of the Game (ADR 0011) : le serveur choisit le duel et n'expédie QUE ses deux
-    // logs, jamais les huit. `None` = pas de duel → le bouton est absent du podium.
-    // En floor is lava la proximité se mesure en WPM (ADR 0015) — les décès tombant sur un
-    // métronome, leur écart ne dit rien de la proximité.
-    // Spam est logé à la même enseigne : tout le monde s'arrête au MÊME instant (le seuil
-    // ou le plafond claquent pour tous à la fois), donc les `duration_ms` y sont
-    // quasi-identiques et `duel()` déclarerait un photo-finish entre huit joueurs.
-    let pick = match room.game_mode {
-        GameMode::Normal => duel(&results),
-        GameMode::FloorIsLava | GameMode::Spam => duel_by_wpm(&results),
-    };
+    // logs, jamais les huit. `None` = pas de duel → le bouton est absent du podium. Quelle
+    // grandeur mesure la proximité (`GameModeRules::duel`, #128) : en floor is lava et
+    // Spam les décès/arrêts tombent sur un métronome ou un signal partagé, l'écart de
+    // durée n'y dit rien — WPM sert de proximité dans les deux cas.
+    let pick = rules(mode).duel(&results);
     let play_of_the_game = pick.map(|(i, j)| {
         let a = results[i].player_id.clone();
         let b = results[j].player_id.clone();
@@ -1532,25 +1477,15 @@ fn end_race(room: &mut Room) {
     // Nouvelle manche = nouvelle confirmation (issue #63) : les prêts de la manche
     // précédente ne valent pas pour celle-ci, même pour un présent qui n'a pas bougé.
     room.ready.clear();
-    // Texte neuf IMMÉDIAT, et toujours des mots : la Room doit rester jouable sans
-    // aller-retour réseau (l'owner peut relancer dès l'écran RaceOver). Si la Source est
-    // Quote, `spawn_refresh_text` remplace ce texte dès que la citation arrive — c'est
-    // l'appelant qui le déclenche, une fois le verrou relâché.
-    // `effective_source` : sous floor is lava la revanche repart sur 200 mots, pas sur la
-    // Source du lobby — sinon la manche suivante retrouverait une ligne d'arrivée.
-    // Sous Spam elle repart sur le mot répété, et sur un mot par défaut RETIRÉ (ADR 0016) :
-    // deux manches d'affilée ne doivent pas tomber sur le même mot.
-    if room.game_mode == GameMode::Spam {
-        refresh_spam_text(room);
-    } else {
-        let count = match effective_source(room) {
-            TextSource::Words { count } => count,
-            TextSource::Quote => ROOM_WORD_COUNT,
-        };
-        let (seed, text) = words_text(count);
-        room.seed = seed;
-        room.target_text = text;
-    }
+    // Texte neuf IMMÉDIAT, et toujours jouable sans aller-retour réseau (l'owner peut
+    // relancer dès l'écran RaceOver). Si la Source est Quote, `spawn_refresh_text`
+    // remplace ce texte dès que la citation arrive — c'est l'appelant qui le déclenche,
+    // une fois le verrou relâché. `GameModeRules::rematch_text` (#128) : sous floor is
+    // lava la revanche repart sur 200 mots, pas sur la Source du lobby — sinon la manche
+    // suivante retrouverait une ligne d'arrivée. Sous Spam elle repart sur le mot répété,
+    // et sur un mot par défaut RETIRÉ (ADR 0016) : deux manches d'affilée ne doivent pas
+    // tomber sur le même mot.
+    rules(mode).rematch_text(room);
     let _ = room.tx.send(room_state(room));
 }
 
@@ -2259,10 +2194,10 @@ mod tests {
         // Avant le premier intervalle plein : personne. La première élimination tombe à
         // t = intervalle, pas plus tôt (ADR 0015 : le classement doit avoir le temps de
         // se former, la mesure est mauvaise dans les toutes premières secondes).
-        lava_tick(&rooms, t0 + 9_999);
+        game_mode_tick(&rooms, t0 + 9_999);
         assert!(burned_of(&rooms, "c1").is_empty());
 
-        lava_tick(&rooms, t0 + 10_000);
+        game_mode_tick(&rooms, t0 + 10_000);
         let burned = burned_of(&rooms, "c1");
         assert_eq!(burned.len(), 1);
         assert_eq!(burned[0].0, "p2"); // le moins avancé
@@ -2275,7 +2210,7 @@ mod tests {
         // `n × intervalle`, sinon le classement et l'affichage dériveraient.
         let rooms = new_rooms();
         let t0 = lava_race(&rooms, &["p1", "p2"], 5, &[("p1", 100), ("p2", 10)]);
-        lava_tick(&rooms, t0 + 5_900); // scan 900 ms en retard
+        game_mode_tick(&rooms, t0 + 5_900); // scan 900 ms en retard
         assert_eq!(burned_of(&rooms, "c1")[0].1, 5_000.0);
     }
 
@@ -2290,7 +2225,7 @@ mod tests {
             5,
             &[("p1", 100), ("p2", 10), ("p3", 20), ("p4", 30)],
         );
-        lava_tick(&rooms, t0 + 15_500); // 3 intervalles écoulés, aucun scan avant
+        game_mode_tick(&rooms, t0 + 15_500); // 3 intervalles écoulés, aucun scan avant
         let burned = burned_of(&rooms, "c1");
         // Les trois tics dus sont joués d'affilée, du moins avancé au plus avancé, et
         // chacun garde SON instant logique — pas celui du scan qui les a rattrapés.
@@ -2305,7 +2240,7 @@ mod tests {
     fn egalite_au_tic_les_deux_brulent() {
         let rooms = new_rooms();
         let t0 = lava_race(&rooms, &["p1", "p2", "p3"], 10, &[("p1", 100), ("p2", 20), ("p3", 20)]);
-        lava_tick(&rooms, t0 + 10_000);
+        game_mode_tick(&rooms, t0 + 10_000);
         let burned = burned_of(&rooms, "c1");
         assert_eq!(burned.len(), 2); // aucun départage honnête n'existe
         assert_eq!(burned[0].1, burned[1].1); // même instant
@@ -2315,7 +2250,7 @@ mod tests {
     fn les_deux_derniers_ex_aequo_brulent_ensemble_et_personne_ne_gagne() {
         let rooms = new_rooms();
         let t0 = lava_race(&rooms, &["p1", "p2"], 10, &[("p1", 40), ("p2", 40)]);
-        lava_tick(&rooms, t0 + 10_000);
+        game_mode_tick(&rooms, t0 + 10_000);
         // « au plus un vivant », pas « exactement un » : zéro survivant est une fin légale.
         assert_eq!(burned_of(&rooms, "c1").len(), 2);
     }
@@ -2324,8 +2259,8 @@ mod tests {
     fn un_seul_vivant_arrete_les_eliminations() {
         let rooms = new_rooms();
         let t0 = lava_race(&rooms, &["p1", "p2"], 10, &[("p1", 100), ("p2", 20)]);
-        lava_tick(&rooms, t0 + 10_000);
-        lava_tick(&rooms, t0 + 60_000); // bien après cinq intervalles
+        game_mode_tick(&rooms, t0 + 10_000);
+        game_mode_tick(&rooms, t0 + 60_000); // bien après cinq intervalles
         assert_eq!(burned_of(&rooms, "c1").len(), 1); // le survivant n'est jamais brûlé
     }
 
@@ -2336,7 +2271,7 @@ mod tests {
         let rooms = new_rooms();
         let t0 = lava_race(&rooms, &["p1", "p2"], 10, &[("p1", 10), ("p2", 50)]);
         relay_progress(&rooms, "c1", "p2", 5, 0); // paquet en retard
-        lava_tick(&rooms, t0 + 10_000);
+        game_mode_tick(&rooms, t0 + 10_000);
         assert_eq!(burned_of(&rooms, "c1")[0].0, "p1");
     }
 
@@ -2345,7 +2280,7 @@ mod tests {
         let rooms = new_rooms();
         let t0 = lava_race(&rooms, &["p1", "p2", "p3"], 10, &[("p1", 100), ("p2", 10), ("p3", 60)]);
         forfeit_race(&rooms, "c1", "p2"); // le moins avancé s'en va de lui-même
-        lava_tick(&rooms, t0 + 10_000);
+        game_mode_tick(&rooms, t0 + 10_000);
         let burned = burned_of(&rooms, "c1");
         assert_eq!(burned.len(), 1);
         assert_eq!(burned[0].0, "p3"); // p2 n'est plus un vivant : il n'est pas re-tué
@@ -2442,7 +2377,7 @@ mod tests {
         // le pose lui-même sur le résultat qui revient par `Finish`.
         let rooms = new_rooms();
         let t0 = lava_race(&rooms, &["p1", "p2"], 10, &[("p1", 100), ("p2", 10)]);
-        lava_tick(&rooms, t0 + 10_000);
+        game_mode_tick(&rooms, t0 + 10_000);
         record(&rooms, "c1", done("p2", 25.0)); // le client renvoie juste son log
         let burned_at = match &rooms.lock().unwrap().get("c1").unwrap().state {
             RaceState::Racing { finishers, .. } => finishers[0].burned_at_ms,
@@ -2458,7 +2393,7 @@ mod tests {
         // repeindre cet Abandon en Brûlé.
         let rooms = new_rooms();
         let t0 = lava_race(&rooms, &["p1", "p2"], 10, &[("p1", 100), ("p2", 10)]);
-        lava_tick(&rooms, t0 + 10_000);
+        game_mode_tick(&rooms, t0 + 10_000);
         assert_eq!(burned_of(&rooms, "c1"), vec![("p2".to_string(), 10_000.0)]);
 
         record(&rooms, "c1", RaceResult::forfeited("p2"));
@@ -2609,9 +2544,9 @@ mod tests {
         let rooms = new_rooms();
         let t0 = spam_race(&rooms, &["p1", "p2"], 10, 15);
         let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
-        spam_tick(&rooms, t0 + 15_000);
-        spam_tick(&rooms, t0 + 16_000);
-        spam_tick(&rooms, t0 + 17_000);
+        game_mode_tick(&rooms, t0 + 15_000);
+        game_mode_tick(&rooms, t0 + 16_000);
+        game_mode_tick(&rooms, t0 + 17_000);
         relay_progress(&rooms, "c1", "p1", 90, 30); // et le seuil par-dessus
         assert_eq!(stops_seen(&mut rx), 1);
     }
@@ -2626,11 +2561,11 @@ mod tests {
         let countdown = rooms.lock().unwrap().get("c1").unwrap().countdown_s as i64;
         assert!(countdown > 0, "sinon le test ne prouve rien");
 
-        spam_tick(&rooms, t0 + 30_000); // le plafond nu : trop tôt de tout le décompte
+        game_mode_tick(&rooms, t0 + 30_000); // le plafond nu : trop tôt de tout le décompte
         assert!(!stopped(&rooms, "c1"));
-        spam_tick(&rooms, t0 + (30 + countdown) * 1000 - 1_000);
+        game_mode_tick(&rooms, t0 + (30 + countdown) * 1000 - 1_000);
         assert!(!stopped(&rooms, "c1"));
-        spam_tick(&rooms, t0 + (30 + countdown) * 1000);
+        game_mode_tick(&rooms, t0 + (30 + countdown) * 1000);
         assert!(stopped(&rooms, "c1"));
     }
 
@@ -2653,7 +2588,7 @@ mod tests {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
         start_race(&rooms, "c1", "p1"); // Race normale
-        spam_tick(&rooms, now_epoch_ms() + 600_000);
+        game_mode_tick(&rooms, now_epoch_ms() + 600_000);
         assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
     }
 
