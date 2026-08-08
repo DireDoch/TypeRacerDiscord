@@ -575,6 +575,7 @@ button.primary:hover {
    l'écart le plus visible du lot (une checkbox nue du navigateur au milieu de selects
    bordés). L'input reste natif dessous — clavier et lecteur d'écran intacts. */
 .lobby-ctl select,
+.lobby-ctl input[type="text"],
 .lobby-check {
   background: var(--panel);
   border: 1px solid color-mix(in srgb, var(--sub) 45%, transparent);
@@ -586,8 +587,16 @@ button.primary:hover {
   cursor: pointer;
 }
 .lobby-ctl select:hover,
+.lobby-ctl input[type="text"]:hover,
 .lobby-check:hover {
   border-color: var(--main);
+}
+/* Le mot de Spam est du texte à taper : en mono, comme la zone de frappe, et assez
+   étroit pour ne pas pousser les autres réglages hors de leur colonne. */
+.lobby-ctl input[type="text"] {
+  cursor: text;
+  font-family: var(--font-mono);
+  width: min(11rem, 100%);
 }
 .lobby-check {
   display: inline-flex;
@@ -977,6 +986,15 @@ button.primary:hover {
 .live-bar .live-lava {
   margin-left: 0.8rem;
   color: var(--error);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Spam (ADR 0016) : les deux façons de gagner s'affichent côte à côte — les répétitions
+   et le temps restant. En accent plutôt qu'en rouge : contrairement au feu, aucune des
+   deux n'annonce une élimination, elles annoncent la fin de la course. */
+.live-bar .live-spam {
+  margin-left: 0.8rem;
+  color: var(--main);
   font-variant-numeric: tabular-nums;
 }
 

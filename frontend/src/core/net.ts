@@ -33,6 +33,12 @@ export interface RaceResult {
    *  survivant ou n'importe quelle arrivée d'une Race normale. Un Brûlé porte un VRAI
    *  score partiel, contrairement à un Abandon ou à un Échec Master. */
   burnedAtMs: number | null;
+  /** Répétitions correctes sous le Mode de jeu Spam (ADR 0016), recomptées par le SERVEUR
+   *  sur le log contre sa propre copie du mot — jamais le compte déclaré en course. C'est
+   *  ce qui CLASSE dans ce mode, et ce que le podium affiche en gros à la place du Gap.
+   *  `null` hors Spam — et c'est aussi à ça que le podium reconnaît le mode, sans qu'aucun
+   *  champ de mode n'ait à voyager jusqu'à lui (même astuce que `burnedAtMs`). */
+  reps: number | null;
   perSecond: PerSecondPoint[];
 }
 
@@ -74,10 +80,20 @@ export const COUNTDOWN_VALUES = [3, 5, 7, 10] as const;
  * de texte, ni une Difficulté (condition d'échec INDIVIDUELLE — l'élimination, elle, est
  * comparative). Un seul à la fois : ce sont des règles de victoire, elles ne se cumulent pas.
  */
-export type GameMode = "normal" | "floorIsLava";
+export type GameMode = "normal" | "floorIsLava" | "spam";
 
 /** Miroir de `ws/mod.rs` : intervalles d'élimination réglables. 10 = défaut. */
 export const LAVA_INTERVAL_VALUES = [5, 10, 15, 20] as const;
+
+/** Miroir de `ws/mod.rs` : seuils de répétitions réglables en Spam. 20 = défaut. */
+export const SPAM_THRESHOLD_VALUES = [10, 20, 30, 50] as const;
+
+/** Miroir de `ws/mod.rs` : plafonds de temps réglables en Spam, plafonnés à 60 s
+ *  (ADR 0016) — au-delà, la seconde façon de gagner cesse d'en être une. 30 = défaut. */
+export const SPAM_TIME_CAP_VALUES = [15, 30, 45, 60] as const;
+
+/** Miroir de `ws/mod.rs` : longueur max d'un mot personnalisé. Le serveur revalide. */
+export const SPAM_WORD_MAX_LEN = 20;
 
 /**
  * La Display identity annoncée à la Room. `playerId` reste la vérité durable (il possède
@@ -127,8 +143,20 @@ export type ClientEvent =
   | { type: "SetGameMode"; mode: GameMode }
   // owner uniquement, hors course, 5/10/15/20 (le serveur rejette le reste). Inerte en normal.
   | { type: "SetLavaInterval"; seconds: number }
+  // owner uniquement, hors course (ADR 0016). `null` = mot par défaut (tiré de la liste
+  // de la Source `Mots`). Sinon un mot VALIDÉ côté serveur : non vide, sans espace,
+  // ≤ 20 caractères — un espace ferait silencieusement plusieurs mots cibles.
+  | { type: "SetSpamWord"; word: string | null }
+  // owner uniquement, hors course, 10/20/30/50 (le serveur rejette le reste). Inerte hors spam.
+  | { type: "SetSpamThreshold"; count: number }
+  // owner uniquement, hors course, 15/30/45/60 (le serveur rejette le reste). Inerte hors spam.
+  | { type: "SetSpamTimeCap"; seconds: number }
   | { type: "StartRace" } // owner uniquement (le serveur rejette les autres)
-  | { type: "Progress"; charsDone: number }
+  // `reps` : répétitions correctes DÉCLARÉES sous Spam (ADR 0016), 0 partout ailleurs.
+  // `charsDone` ne pourrait pas les porter — un mot faux avance les caractères sans être
+  // une répétition. Déclaratif, mais il ne fait qu'ARRÊTER la course : le classement vient
+  // du recompute serveur au Finish.
+  | { type: "Progress"; charsDone: number; reps: number }
   // Le serveur possède seed/texte/config : Finish n'envoie que le log + la durée.
   | { type: "Finish"; keystrokes: Keystroke[]; endedAtMs: number }
   // Abandon VOLONTAIRE de la course en cours — le joueur RESTE au lobby (distinct de
@@ -163,9 +191,19 @@ export type ServerEvent =
       gameMode: GameMode;
       /** Intervalle d'élimination de floor is lava, en secondes. Inerte en `normal`. */
       lavaIntervalS: number;
+      /** Mot personnalisé de Spam, ou `null` quand la Room utilise le mot par défaut. Le
+       *  mot RÉELLEMENT en jeu se lit toujours dans `targetText` (il en est la répétition) ;
+       *  ce champ ne dit que ce que l'hôte a choisi, pour redessiner son champ de saisie. */
+      spamWord: string | null;
+      /** Seuil de répétitions qui gagne la Race. Inerte hors `spam`. */
+      spamThreshold: number;
+      /** Plafond de temps de Spam, en secondes. Inerte hors `spam`. */
+      spamTimeCapS: number;
     }
   | { type: "RaceStart"; startAtEpochMs: number }
-  | { type: "PlayerProgress"; playerId: string; charsDone: number }
+  // `reps` porte le compte de répétitions sous Spam (ADR 0016), 0 partout ailleurs —
+  // c'est ce que la piste affiche à la place du WPM dans ce mode.
+  | { type: "PlayerProgress"; playerId: string; charsDone: number; reps: number }
   // `forfeit` : abandon — la piste affiche « abandon » plutôt que « 0 wpm ». `failedPercent`
   // (ADR 0013) affiche « échec (X%) » à la place — jamais les deux en même temps.
   | { type: "PlayerFinished"; playerId: string; wpm: number; forfeit: boolean; failedPercent: number | null }
@@ -174,6 +212,12 @@ export type ServerEvent =
   // peuvent tomber sur le même tic (égalité : les deux brûlent). Le survivant n'a pas
   // d'événement à lui — il déduit sa victoire de ce qu'il ne reste que lui de vivant.
   | { type: "PlayerBurned"; playerId: string; atMs: number }
+  // Arrêt d'une Race sous Spam (ADR 0016) : quelqu'un a verrouillé le seuil, ou le plafond
+  // de temps a expiré — un seul message pour les deux, le mode ne les distingue pas non
+  // plus. Diffusé UNE fois à TOUT LE MONDE (contrairement à PlayerBurned, qui vise un
+  // joueur) : c'est ce message qui demande à chacun son log. Il ne désigne AUCUN vainqueur,
+  // délibérément — le classement arrive juste après, dans RaceOver, recompté par le serveur.
+  | { type: "SpamStop" }
   // L'ORDRE DU TABLEAU EST LE CLASSEMENT — pas de champ d'ordre séparé (ADR 0010).
   // `playOfTheGame` porte les deux logs du duel le plus serré, ou `null` s'il n'y en a
   // pas eu (< 2 finisseurs, ou meilleur écart > 2 s) — le bouton est alors absent (ADR 0011).

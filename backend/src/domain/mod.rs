@@ -7,5 +7,6 @@
 pub mod analysis;
 pub mod difficulty;
 pub mod replay;
+pub mod spam;
 pub mod text_gen;
 pub mod types;

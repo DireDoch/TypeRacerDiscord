@@ -25,6 +25,9 @@ import {
   LAVA_INTERVAL_VALUES,
   ROOM_DIFFICULTIES,
   ROOM_SIZES,
+  SPAM_THRESHOLD_VALUES,
+  SPAM_TIME_CAP_VALUES,
+  SPAM_WORD_MAX_LEN,
   WORDS_LENGTHS,
   type ClientEvent,
   type Difficulty,
@@ -97,6 +100,12 @@ export class Race {
   private gameMode: GameMode = "normal";
   /** Intervalle d'élimination de floor is lava, en secondes. Inerte en `normal`. */
   private lavaIntervalS = 10;
+  /** Mot personnalisé de Spam (réglage de l'hôte, ADR 0016), `null` = mot par défaut. */
+  private spamWord: string | null = null;
+  /** Seuil de répétitions qui gagne la Race. Inerte hors `spam`. */
+  private spamThreshold = 20;
+  /** Plafond de temps de Spam, en secondes. Inerte hors `spam`. */
+  private spamTimeCapS = 30;
   /** Message affiché en phase "failed" (code inconnu, Room pleine). */
   private failure = "";
 
@@ -119,6 +128,9 @@ export class Race {
   /** Joueurs BRÛLÉS (ADR 0015) avec l'instant du décès en ms — la piste affiche
    *  « brûlé à X s » et embrase leur ligne. Sert aussi à savoir qui est encore vivant. */
   private burned = new Map<string, number>();
+  /** Répétitions diffusées par joueur sous Spam (ADR 0016) — la grandeur qui décide de la
+   *  victoire, donc celle que la piste affiche à la place du WPM dans ce mode. */
+  private reps = new Map<string, number>();
   /** Résultats complets de la dernière course, DANS L'ORDRE DU CLASSEMENT (ADR 0010). */
   private results: RaceResult[] = [];
   /** Le duel le plus serré (ADR 0011), ou `null` s'il n'y en a pas eu → bouton absent. */
@@ -196,8 +208,18 @@ export class Race {
         this.difficulty = e.difficulty;
         this.gameMode = e.gameMode;
         this.lavaIntervalS = e.lavaIntervalS;
-        this.targetText = e.targetText;
-        this.targetWords = e.targetText.split(" ").filter((w) => w.length > 0);
+        this.spamWord = e.spamWord;
+        this.spamThreshold = e.spamThreshold;
+        this.spamTimeCapS = e.spamTimeCapS;
+        // Le texte n'est PAS repris pendant qu'on court. Le serveur ne le change jamais
+        // en course, mais un rejoignant fait re-diffuser `RoomState` — et sous Spam le
+        // client a rallongé son texte lui-même (`topUpSpamText`) : le reprendre du
+        // serveur le retronquerait à sa longueur de départ, sous les doigts du joueur et
+        // sous le curseur de `FreeInput`, qui tient ce tableau par référence.
+        if (this.phase !== "countdown" && this.phase !== "running") {
+          this.targetText = e.targetText;
+          this.targetWords = e.targetText.split(" ").filter((w) => w.length > 0);
+        }
         // Duel à l'écran : on met à jour les données (join/leave du lobby d'après-course)
         // mais on NE re-render PAS — sinon on effacerait le Play of the Game en pleine lecture.
         if (this.potgStop) return;
@@ -217,6 +239,15 @@ export class Race {
         break;
       case "PlayerProgress":
         this.progress.set(e.playerId, e.charsDone);
+        this.reps.set(e.playerId, e.reps);
+        if (this.phase === "running") this.renderBars();
+        break;
+      // Spam terminé (ADR 0016) : seuil atteint par quelqu'un, ou plafond de temps expiré
+      // — le message ne dit pas lequel, et personne n'a besoin de le savoir pour arrêter
+      // de taper. Même geste que le brûlé de floor is lava : on livre son log et on
+      // attend RaceOver, qui porte le seul classement qui compte (recompté par le serveur).
+      case "SpamStop":
+        this.stopAndSubmit();
         if (this.phase === "running") this.renderBars();
         break;
       case "PlayerFinished":
@@ -307,6 +338,7 @@ export class Race {
     this.forfeited.clear();
     this.failedPercents.clear();
     this.burned.clear();
+    this.reps.clear();
     this.playOfTheGame = null;
     // Contrôleur neuf dès le décompte : le texte ENTIER s'affiche vierge (le joueur lit
     // le début pendant l'attente) — indispensable après une revanche (état stale).
@@ -340,6 +372,37 @@ export class Race {
     if (this.phase !== "running") return;
     this.renderBars();
     this.rafId = requestAnimationFrame(() => this.loop());
+  }
+
+  /**
+   * Mes répétitions correctes sous Spam (ADR 0016). Se RELIT de la pile `locked` à chaque
+   * appel, jamais un compteur incrémenté à part qui pourrait diverger du buffer réel —
+   * c'est ce qui fait marcher Backspace au milieu d'une répétition sans code nouveau.
+   * 0 hors Spam, où la notion n'existe pas.
+   */
+  private myReps(): number {
+    if (this.gameMode !== "spam") return 0;
+    return spamReps(this.targetWords[0] ?? "", this.controller.view());
+  }
+
+  /**
+   * Allonge le texte de Spam quand le curseur approche de sa fin (ADR 0016) — c'est ça,
+   * « texte infini » : le mot est le même à chaque position, donc le client n'a rien à
+   * demander au serveur pour continuer. Même idée que le Time infini du solo, sans le
+   * générateur : il n'y a pas de suite pseudo-aléatoire à poursuivre, juste un mot.
+   *
+   * MUTE le tableau au lieu de le remplacer : `FreeInput` le tient par référence, donc la
+   * rallonge lui est visible sans le reconstruire — le reconstruire perdrait la pile de
+   * mots déjà verrouillés, c'est-à-dire toutes les répétitions déjà acquises.
+   */
+  private topUpSpamText(): void {
+    if (this.gameMode !== "spam") return;
+    const word = this.targetWords[0];
+    if (word === undefined) return;
+    const n = spamRefill(this.targetWords.length, this.controller.view().wordIndex);
+    if (n === 0) return;
+    for (let i = 0; i < n; i++) this.targetWords.push(word);
+    this.targetText = this.targetWords.join(" ");
   }
 
   /** charsDone = mots verrouillés (+ espaces) + préfixe correct du mot courant. */
@@ -379,14 +442,23 @@ export class Race {
     // fini, et le fil ne porte plus une trame par caractère. Ma propre barre, elle, ne
     // change pas de rythme — elle lit `charsDone()` en local à chaque rendu et ignore
     // complètement ce que ce protocole diffuse.
+    // Sous Spam, le texte s'allonge AVANT le rendu et avant tout calcul de progression :
+    // le curseur ne doit jamais se retrouver au-delà de la fin du tableau.
+    this.topUpSpamText();
+
     const locked = this.controller.view().lockedWords.length;
     if (locked !== this.lastLockedSent) {
       this.lastLockedSent = locked;
-      this.socket?.send({ type: "Progress", charsDone: this.charsDone() });
+      // Un verrouillage est exactement l'instant où une répétition se termine : c'est
+      // pourquoi le seuil de Spam se vérifie côté serveur sur CE message (ADR 0016),
+      // plutôt qu'au tic du watchdog, qui le ferait traîner d'une seconde.
+      this.socket?.send({ type: "Progress", charsDone: this.charsDone(), reps: this.myReps() });
     }
 
     // Fin de course : uniquement quand TOUT le texte est exact (flux jamais bloqué,
-    // mais il faut avoir corrigé ses fautes pour terminer).
+    // mais il faut avoir corrigé ses fautes pour terminer). Sous Spam et floor is lava
+    // c'est inatteignable par construction — le texte n'a pas de fin —, et c'est le
+    // serveur qui arrête la course (`SpamStop`, `PlayerBurned`).
     if (raceComplete(this.targetWords, this.controller.view())) {
       this.doneLocal = true;
       this.socket?.send({ type: "Finish", keystrokes: this.log, endedAtMs: this.clock.elapsed() });
@@ -472,6 +544,31 @@ export class Race {
           seconds: Number((e.target as HTMLSelectElement).value),
         }),
       );
+    // `change` et non `input` : on n'envoie pas un réglage de salon à chaque caractère
+    // tapé — le mot part quand l'hôte a fini de le taper (blur ou Entrée).
+    this.root.querySelector<HTMLInputElement>("#spamWord")?.addEventListener("change", (e) => {
+      // Vidé = retour au mot par défaut. Les espaces sont retirés ici pour que « deux
+      // mots » devienne « deuxmots » plutôt que d'être rejeté en silence par le serveur,
+      // qui reste seul juge (il revalide, longueur comprise).
+      const raw = (e.target as HTMLInputElement).value.replace(/\s+/g, "");
+      this.socket?.send({ type: "SetSpamWord", word: raw === "" ? null : raw });
+    });
+    this.root
+      .querySelector<HTMLSelectElement>("#spamThreshold")
+      ?.addEventListener("change", (e) =>
+        this.socket?.send({
+          type: "SetSpamThreshold",
+          count: Number((e.target as HTMLSelectElement).value),
+        }),
+      );
+    this.root
+      .querySelector<HTMLSelectElement>("#spamTimeCap")
+      ?.addEventListener("change", (e) =>
+        this.socket?.send({
+          type: "SetSpamTimeCap",
+          seconds: Number((e.target as HTMLSelectElement).value),
+        }),
+      );
     if (this.phase === "over") {
       wirePodium(this.root, this.podiumOptions());
       this.root
@@ -515,12 +612,13 @@ export class Race {
           this.codeHtml() +
           // Les cinq Réglages de salon dans UNE grille (#95) : c'est le conteneur commun
           // qui les aligne, pas cinq blocs qui se ressemblent de loin.
-          // La Source est MASQUÉE en floor is lava : le mode impose son texte (ADR 0015),
+          // La Source est MASQUÉE dès qu'un Mode de jeu impose son texte (ADR 0015, 0016) :
           // l'afficher laisserait croire qu'on peut encore le choisir.
           `<div class="lobby-settings">${
             this.gameModeHtml() +
             this.lavaIntervalHtml() +
-            (this.gameMode === "floorIsLava" ? "" : this.sourceHtml()) +
+            this.spamSettingsHtml() +
+            (this.gameMode === "normal" ? this.sourceHtml() : "") +
             this.sizeHtml() +
             this.countdownHtml() +
             this.readyCheckHtml() +
@@ -538,7 +636,7 @@ export class Race {
         return `<div class="live-bar" id="liveBar"></div>
           <div class="words-wrap"><div class="words" id="words">${this.wordsAreaHtml()}</div><div class="caret-block"></div></div>
           <div class="bars" id="bars" style="--n:${this.players.length}">${this.barsHtml()}</div>
-          <p class="hint">${this.doneLocal ? "Terminé — en attente des autres…" : "Tape le texte ; corrige tes fautes pour finir"}</p>
+          <p class="hint">${this.doneLocal ? "Terminé — en attente des autres…" : this.runningHint()}</p>
           ${this.forfeitBtnHtml()}`;
       case "over":
         // Revanche : le serveur a déjà re-diffusé un RoomState avec un NOUVEAU texte ;
@@ -551,6 +649,19 @@ export class Race {
           this.exitBtnHtml()
         );
     }
+  }
+
+  /**
+   * La consigne pendant la course. « Corrige tes fautes pour finir » ne vaut que sous
+   * Normal : les deux Modes de jeu n'ont pas de ligne d'arrivée à atteindre, et Spam
+   * demande précisément l'inverse — verrouiller vite, pas finir un texte.
+   */
+  private runningHint(): string {
+    if (this.gameMode === "spam") {
+      return `Répète le mot ; ${this.spamThreshold} répétitions correctes pour gagner`;
+    }
+    if (this.gameMode === "floorIsLava") return "Tape sans t'arrêter : le dernier avance vers le feu";
+    return "Tape le texte ; corrige tes fautes pour finir";
   }
 
   /** Code de partie, affiché à TOUT le lobby : n'importe qui peut inviter, pas que l'hôte. */
@@ -710,6 +821,41 @@ export class Race {
     return lobbyRow("Élimination", LOBBY_TIPS.lava, `<select id="lavaInterval">${opts}</select>`, "lavaInterval");
   }
 
+  /**
+   * Les trois réglages de Spam (ADR 0016) — n'apparaissent QUE sous ce mode. Le mot, le
+   * seuil de répétitions et le plafond de temps : les deux façons de gagner y sont, plus
+   * ce qu'on tape. Même patron que le reste : contrôles pour l'hôte, mention pour les
+   * autres, qui subissent le réglage et doivent le comprendre.
+   */
+  private spamSettingsHtml(): string {
+    if (this.gameMode !== "spam") return "";
+    // Le mot RÉELLEMENT en jeu est celui du texte : sous mot par défaut, `spamWord` est
+    // `null` et seul `targetText` sait lequel le serveur a tiré.
+    const inPlay = this.targetWords[0] ?? "";
+    if (this.me !== this.owner) {
+      return (
+        lobbyRow("Mot", LOBBY_TIPS.spamWord, lobbyValue(inPlay)) +
+        lobbyRow("Objectif", LOBBY_TIPS.spamThreshold, lobbyValue(`${this.spamThreshold} répétitions`)) +
+        lobbyRow("Temps max", LOBBY_TIPS.spamTimeCap, lobbyValue(`${this.spamTimeCapS} s`))
+      );
+    }
+    // `maxlength` natif plutôt qu'un compteur en JS : le navigateur fait déjà respecter la
+    // longueur, et le serveur revalide de toute façon (le champ n'est pas une garantie).
+    const wordCtl = `<input type="text" id="spamWord" value="${escapeText(this.spamWord ?? "")}"
+      placeholder="${escapeText(inPlay)} (aléatoire)" maxlength="${SPAM_WORD_MAX_LEN}" autocomplete="off">`;
+    const thresholdOpts = SPAM_THRESHOLD_VALUES.map(
+      (n) => `<option value="${n}"${n === this.spamThreshold ? " selected" : ""}>${n} répétitions</option>`,
+    ).join("");
+    const capOpts = SPAM_TIME_CAP_VALUES.map(
+      (n) => `<option value="${n}"${n === this.spamTimeCapS ? " selected" : ""}>${n} s</option>`,
+    ).join("");
+    return (
+      lobbyRow("Mot", LOBBY_TIPS.spamWord, wordCtl, "spamWord") +
+      lobbyRow("Objectif", LOBBY_TIPS.spamThreshold, `<select id="spamThreshold">${thresholdOpts}</select>`, "spamThreshold") +
+      lobbyRow("Temps max", LOBBY_TIPS.spamTimeCap, `<select id="spamTimeCap">${capOpts}</select>`, "spamTimeCap")
+    );
+  }
+
   /** Cartes de présence empilées (owner en tête, moi souligné). */
   private cardsHtml(): string {
     const cards = this.players
@@ -782,7 +928,15 @@ export class Race {
         this.gameMode === "floorIsLava" && this.alive().length > 1
           ? `<span class="live-lava">🔥 ${nextBurnIn(this.clock.elapsed(), this.lavaIntervalS)} s</span>`
           : "";
-      live.innerHTML = `<span class="live-wpm">${wpm} wpm</span>${lava}`;
+      // Les DEUX façons de gagner, côte à côte (ADR 0016) : ce qu'il me reste à taper, et
+      // ce qu'il me reste de temps pour le faire. Une seule des deux affichée laisserait
+      // le joueur ignorer laquelle va claquer.
+      const spam =
+        this.gameMode === "spam"
+          ? `<span class="live-spam">${this.myReps()} / ${this.spamThreshold} ×</span>
+             <span class="live-spam">⏱ ${capRemaining(this.clock.elapsed(), this.spamTimeCapS)} s</span>`
+          : "";
+      live.innerHTML = `<span class="live-wpm">${wpm} wpm</span>${lava}${spam}`;
     }
   }
 
@@ -791,7 +945,12 @@ export class Race {
    * ligne d'arrivée. Même donnée que les anciennes barres (`charsDone`), autre costume.
    */
   private barsHtml(): string {
-    const total = Math.max(1, this.targetText.length);
+    // Sous Spam la piste ne se mesure pas en caractères : le texte est infini, une
+    // progression sur sa longueur ne voudrait rien dire et reculerait à chaque rallonge.
+    // Elle se mesure en répétitions sur l'objectif — la grandeur qui décide de la victoire,
+    // donc celle que la piste doit montrer (ADR 0016).
+    const spam = this.gameMode === "spam";
+    const total = spam ? Math.max(1, this.spamThreshold) : Math.max(1, this.targetText.length);
     const elapsed = this.clock.elapsed();
     // Le condamné en sursis (ADR 0015) : marqué EN PERMANENCE, pas seulement au tic.
     // C'est ça, le mode — pas des morts surprises, mais quelques secondes à se voir
@@ -810,11 +969,15 @@ export class Race {
     return this.players
       .map((p) => {
         const isMe = p.playerId === this.me;
-        const done = isMe ? this.charsDone() : this.progress.get(p.playerId) ?? 0;
+        const chars = isMe ? this.charsDone() : this.progress.get(p.playerId) ?? 0;
+        const reps = isMe ? this.myReps() : this.reps.get(p.playerId) ?? 0;
+        const done = spam ? reps : chars;
         const final = this.finished.get(p.playerId);
         const burnedAt = this.burned.get(p.playerId);
         const pct = trackPercent(done, total, {
-          finished: final !== undefined,
+          // Sous Spam, personne n'« arrive » : remplir la piste à fond au PlayerFinished
+          // téléporterait sur la ligne un Devancé qui s'est arrêté à 3 répétitions.
+          finished: final !== undefined && !spam,
           forfeited: this.forfeited.has(p.playerId),
           failed: this.failedPercents.has(p.playerId),
         });
@@ -822,8 +985,9 @@ export class Race {
           this.forfeited.has(p.playerId),
           this.failedPercents.get(p.playerId),
           final,
-          liveWpmOf(done, elapsed),
+          liveWpmOf(chars, elapsed),
           burnedAt,
+          spam ? reps : undefined,
         );
         // La ligne d'un brûlé RESTE à l'écran, carbonisée : voir le cimetière se remplir
         // fait partie du mode. `.burned` porte l'embrasement, `.doomed` le sursis.
@@ -872,7 +1036,10 @@ export class Race {
       };
     this.potgStop = runPlayOfTheGame(this.root, {
       racedWords: this.racedWords,
-      endAtFirst: this.gameMode === "floorIsLava",
+      // Les deux Modes de jeu s'arrêtent sans que personne ne franchisse de ligne : la
+      // fenêtre du duel court avant la sortie la PLUS TÔT des deux, pas avant une seconde
+      // arrivée qui n'existe pas (ADR 0015, 0016).
+      endAtFirst: this.gameMode !== "normal",
       logA: potg.logA,
       playerA: entry(potg.a),
       logB: potg.logB,
@@ -945,6 +1112,8 @@ export function trackLabel(
   finalWpm: number | undefined,
   liveWpm: number,
   burnedAtMs?: number,
+  /** Répétitions sous Spam (ADR 0016) ; `undefined` dans tous les autres modes. */
+  reps?: number,
 ): string {
   // Le brûlé passe AVANT l'arrivée : son log revient par `Finish` (ADR 0015), donc un
   // `PlayerFinished` suit son décès — sans cette priorité, sa ligne redeviendrait
@@ -952,8 +1121,25 @@ export function trackLabel(
   if (burnedAtMs !== undefined) return `brûlé à ${Math.round(burnedAtMs / 1000)} s`;
   if (failedPercent !== undefined) return `échec (${failedPercent}%)`;
   if (forfeited) return "abandon";
+  // Spam : le chiffre de la ligne est le compte de répétitions, jamais un WPM — c'est la
+  // grandeur qui décide de la victoire. Passe AVANT `finalWpm` pour la même raison que le
+  // brûlé : un `PlayerFinished` suit l'arrêt, et la ligne repasserait à « 32 wpm ✓ ».
+  if (reps !== undefined) return `${reps} ×`;
   if (finalWpm !== undefined) return `${finalWpm} wpm ✓`;
   return `${liveWpm} wpm`;
+}
+
+/**
+ * Secondes restantes avant le plafond de temps de Spam (ADR 0016). Dérivé en local du
+ * chrono : le client connaît le plafond depuis le lobby, aucun événement serveur n'est
+ * nécessaire pour l'afficher — l'arrêt réel, lui, vient du serveur (`SpamStop`).
+ *
+ * Compte depuis GO (`clock.start()`, après le décompte), et c'est pour s'aligner sur CE
+ * compteur que `spam_tick` ajoute le décompte à son plafond : le serveur, lui, mesure
+ * depuis `StartRace`, qui tombe un décompte plus tôt. Pure.
+ */
+export function capRemaining(elapsedMs: number, capS: number): number {
+  return Math.max(0, Math.ceil(capS - Math.max(0, elapsedMs) / 1000));
 }
 
 /**
@@ -1013,18 +1199,62 @@ const LOBBY_TIPS = {
   difficulty:
     "Normal : aucune contrainte. Master : la course s'arrête au tout premier caractère mal tapé (avant toute correction possible) — le joueur est classé échec, la course se débloque immédiatement pour les autres.",
   gameMode:
-    "Comment la course se gagne. Normal : le premier à taper tout le texte. Floor is lava : le joueur le moins avancé brûle à intervalle régulier, et le dernier vivant gagne — il n'y a pas de ligne d'arrivée, le texte est trop long pour être fini.",
+    "Comment la course se gagne. Normal : le premier à taper tout le texte. Floor is lava : le joueur le moins avancé brûle à intervalle régulier, et le dernier vivant gagne. Spam : un seul mot, répété sans fin — gagne qui atteint le premier le nombre de répétitions visé, ou qui en a le plus quand le temps est écoulé.",
   lava:
     "Toutes les combien de secondes le joueur le moins avancé est éliminé. La première élimination tombe au bout d'un intervalle complet, jamais avant.",
+  spamWord:
+    "Le mot à répéter. Laissé vide, il est tiré au hasard à chaque manche. Sinon : pas d'espace (ce serait deux mots), 20 caractères au plus — chiffres et ponctuation acceptés.",
+  spamThreshold:
+    "Combien de répétitions correctes il faut verrouiller pour gagner sur-le-champ. Un mot mal tapé ne compte pas ; effacer une répétition la décompte.",
+  spamTimeCap:
+    "Temps maximum de la course. S'il s'écoule avant que quiconque ait atteint l'objectif, c'est celui qui a le plus de répétitions correctes qui gagne.",
 } as const;
 
-/** Les Modes de jeu offerts (ADR 0015). Un seul à la fois : ils ne se cumulent pas. */
-const GAME_MODES: GameMode[] = ["normal", "floorIsLava"];
+/** Les Modes de jeu offerts (ADR 0015, 0016). Un seul à la fois : ils ne se cumulent pas. */
+const GAME_MODES: GameMode[] = ["normal", "floorIsLava", "spam"];
 
 const GAME_MODE_LABELS: Record<GameMode, string> = {
   normal: "Normal",
   floorIsLava: "Floor is lava",
+  spam: "Spam",
 };
+
+/**
+ * De combien de répétitions le client pousse le texte de Spam devant le curseur (ADR 0016).
+ * Assez pour que les lignes visibles soient toujours remplies, et assez pour qu'une rafale
+ * de frappes entre deux rendus ne rattrape jamais la fin du tableau.
+ *
+ * ponytail: le texte n'est jamais élagué par l'arrière, donc `wordsHtml` re-rend tous les
+ * mots déjà tapés à chaque frappe — au plafond de 60 s ça plafonne vers 400 mots, du même
+ * ordre que les 200 mots imposés de floor is lava. Si ça devient visible, c'est une fenêtre
+ * de rendu qu'il faut (ne dessiner que les lignes visibles), pas un lookahead plus petit.
+ */
+const SPAM_LOOKAHEAD = 30;
+
+/**
+ * Combien de répétitions ajouter au texte pour garder `SPAM_LOOKAHEAD` mots devant le
+ * curseur — 0 s'il y a déjà de la marge (ADR 0016). C'est le cœur du « texte infini » :
+ * extrait ici pour être testable, la méthode qui l'appelle ne faisant plus que pousser.
+ *
+ * Le serveur pose `SPAM_LEAD_WORDS` (60) mots au départ ; à partir de là c'est cette
+ * fonction seule qui décide de la longueur, sans jamais rien demander au serveur. Pure.
+ */
+export function spamRefill(length: number, wordIndex: number): number {
+  return wordIndex + SPAM_LOOKAHEAD < length ? 0 : SPAM_LOOKAHEAD;
+}
+
+/**
+ * Répétitions correctes verrouillées (ADR 0016) : les mots de la pile égaux au mot cible.
+ * Une répétition en cours de frappe n'en est pas une — seul un mot verrouillé compte.
+ *
+ * Se relit intégralement de la pile à chaque appel, jamais un compteur tenu à part : c'est
+ * exactement ce qui fait que Backspace (qui rouvre le dernier mot verrouillé) décompte la
+ * répétition sans une ligne de code de plus. Pure.
+ */
+export function spamReps(word: string, view: InputView): number {
+  if (word === "") return 0;
+  return view.lockedWords.filter((w) => w === word).length;
+}
 
 /**
  * Une ligne de Réglage de salon (#95) : libellé + icône « i » à gauche, contrôle à droite.

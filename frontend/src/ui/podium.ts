@@ -68,9 +68,38 @@ export function survivalLabel(results: RaceResult[], i: number): string {
   return `survécu ${Math.round(last / 1000)} s`;
 }
 
+/**
+ * Spam se reconnaît à ses comptes de répétitions (ADR 0016), sans qu'aucun champ de mode
+ * n'ait à voyager jusqu'ici — même astuce que `isLava` : sous ce mode chaque arrivée en
+ * porte un, et il n'y en a jamais ailleurs.
+ */
+export function isSpam(results: RaceResult[]): boolean {
+  return results.some((r) => r.reps !== null);
+}
+
+/**
+ * Le chiffre en tête d'affiche de Spam : le compte BRUT de répétitions correctes, pas le
+ * Gap (ADR 0016). Contrairement à floor is lava, aucune conversion n'est nécessaire — la
+ * grandeur qui décide du classement est directement affichable.
+ *
+ * Le vainqueur est le 1er du tableau, l'ordre ÉTANT le classement (ADR 0010) : soit il a
+ * atteint le seuil, soit le plafond de temps est tombé et il en avait le plus. Tous les
+ * autres sont Devancé — un état terminal qui ne vient ni d'un choix ni d'une faute.
+ */
+export function repsLabel(results: RaceResult[], i: number): string {
+  const r = results[i];
+  if (!r) return "abandon";
+  if (r.failedPercent !== null) return "échec";
+  if (r.forfeit) return "abandon";
+  const n = r.reps ?? 0;
+  const reps = `${n} répétition${n === 1 ? "" : "s"}`;
+  return i === 0 ? `${reps} · vainqueur` : `${reps} · devancé`;
+}
+
 /** `+1.4 s` ; le vainqueur n'a pas d'écart à afficher, il EST la référence. */
 export function gapLabel(results: RaceResult[], i: number): string {
   const r = results[i];
+  if (isSpam(results)) return repsLabel(results, i);
   if (isLava(results)) return survivalLabel(results, i);
   if (r?.failedPercent !== null && r?.failedPercent !== undefined) return "échec";
   const g = gapSeconds(results, i);
