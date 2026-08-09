@@ -9,9 +9,12 @@ import {
   lastPlaced,
   nextBurnIn,
   aliveIds,
+  outpaced,
+  advanceState,
   spamReps,
   capRemaining,
   spamRefill,
+  type RacerState,
 } from "./race";
 import { FreeInput } from "../core/input/free-input";
 import { avatarUrl } from "../discord";
@@ -81,27 +84,26 @@ describe("WPM live de la piste — dérivé de charsDone, jamais transporté", (
 
 describe("trackLabel — un abandon s'affiche « abandon », jamais « 0 wpm »", () => {
   it("abandon : le flag l'emporte, même avec un WPM à 0", () => {
-    expect(trackLabel(true, undefined, 0, 0)).toBe("abandon");
-    expect(trackLabel(true, undefined, 0, 0)).not.toContain("wpm");
+    expect(trackLabel({ kind: "abandoned" }, 0)).toBe("abandon");
+    expect(trackLabel({ kind: "abandoned" }, 0)).not.toContain("wpm");
   });
 
   it("fini pour de vrai : WPM autoritaire coché", () => {
-    expect(trackLabel(false, undefined, 72, 40)).toBe("72 wpm ✓");
+    expect(trackLabel({ kind: "finished", wpm: 72, reps: 0 }, 40)).toBe("72 wpm ✓");
   });
 
   it("en train de courir : WPM live dérivé", () => {
-    expect(trackLabel(false, undefined, undefined, 55)).toBe("55 wpm");
+    expect(trackLabel({ kind: "racing", charsDone: 0, reps: 0 }, 55)).toBe("55 wpm");
   });
 });
 
 describe("trackLabel — un Échec Master (ADR 0013) s'affiche « échec (X%) », distinct de l'abandon", () => {
   it("l'emporte sur tout le reste, même un WPM final présent", () => {
-    expect(trackLabel(false, 42, 72, 40)).toBe("échec (42%)");
+    expect(trackLabel({ kind: "failed", percent: 42 }, 40)).toBe("échec (42%)");
   });
 
-  it("distinct d'un abandon même si les deux flags étaient vrais", () => {
-    expect(trackLabel(true, 42, 0, 0)).toBe("échec (42%)");
-  });
+  // Le cas « abandon ET échec en même temps » n'existe plus : RacerState ne permet plus
+  // de le construire, c'est le type qui l'interdit — plus un ordre de `if` à vérifier.
 });
 
 describe("avatarUrl — on reconstruit l'URL, on ne la transporte jamais", () => {
@@ -122,7 +124,7 @@ describe("avatarUrl — on reconstruit l'URL, on ne la transporte jamais", () =>
 });
 
 describe("trackPercent — le remplissage de la piste", () => {
-  const running = { finished: false, forfeited: false, failed: false };
+  const running: RacerState = { kind: "racing", charsDone: 0, reps: 0 };
 
   it("suit la progression tant qu'on court", () => {
     expect(trackPercent(50, 200, running)).toBe(25);
@@ -132,22 +134,27 @@ describe("trackPercent — le remplissage de la piste", () => {
   it("remplit la piste à l'arrivée, même sans espace après le dernier mot", () => {
     // Depuis #94, Progress ne part qu'au verrouillage d'un mot : `done` est en retard
     // d'un mot quand on finit sans taper d'espace derrière.
-    expect(trackPercent(190, 200, { ...running, finished: true })).toBe(100);
+    expect(trackPercent(190, 200, { kind: "finished", wpm: 40, reps: 0 })).toBe(100);
   });
 
   it("laisse un abandon là où il s'est arrêté", () => {
-    // Un abandon arrive par le MÊME PlayerFinished qu'une arrivée : sans l'exclure, la
-    // voiture se téléporte sur la ligne pendant que l'étiquette dit « abandon ».
-    expect(trackPercent(20, 200, { finished: true, forfeited: true, failed: false })).toBe(10);
+    // RacerState rend « fini ET abandonné » impossible à construire — plus besoin de
+    // l'exclure explicitement, la voiture ne peut plus se téléporter sur cette ligne.
+    expect(trackPercent(20, 200, { kind: "abandoned" })).toBe(10);
   });
 
   it("laisse un échec Master là où il s'est arrêté", () => {
-    expect(trackPercent(6, 200, { finished: true, forfeited: false, failed: true })).toBe(3);
+    expect(trackPercent(6, 200, { kind: "failed", percent: 42 })).toBe(3);
   });
 
   it("ne dépasse jamais 100 % ni ne divise par zéro", () => {
     expect(trackPercent(500, 200, running)).toBe(100);
     expect(trackPercent(0, 0, running)).toBe(0);
+  });
+
+  it("sous Spam, un vrai vainqueur ne téléporte pas — le calcul naturel plafonne déjà seul", () => {
+    expect(trackPercent(20, 20, { kind: "finished", wpm: 60, reps: 20 }, true)).toBe(100);
+    expect(trackPercent(14, 20, { kind: "outpaced", reps: 14 }, true)).toBe(70);
   });
 });
 
@@ -155,18 +162,39 @@ describe("trackPercent — le remplissage de la piste", () => {
 
 describe("trackLabel — un Brûlé passe avant tout le reste", () => {
   it("affiche l'instant du décès, pas un WPM", () => {
-    expect(trackLabel(false, undefined, undefined, 55, 32_000)).toBe("brûlé à 32 s");
+    expect(trackLabel({ kind: "burned", atMs: 32_000 }, 55)).toBe("brûlé à 32 s");
   });
 
-  it("reste « brûlé » même après le PlayerFinished que son log déclenche", () => {
-    // Son log revient par `Finish` (ADR 0015) : un PlayerFinished SUIT toujours son
-    // décès. Sans cette priorité, sa ligne redeviendrait « 32 wpm ✓ » juste après
-    // avoir pris feu.
-    expect(trackLabel(false, undefined, 32, 0, 10_000)).toBe("brûlé à 10 s");
-  });
+  // « reste brûlé après le PlayerFinished que son log déclenche » n'est plus un cas de
+  // trackLabel : `advanceState` garde désormais un état terminal contre tout écrasement
+  // à l'écriture — un `PlayerFinished` en vol ne peut plus reconstruire un état « fini »
+  // par-dessus un « brûlé » déjà posé, donc trackLabel ne voit jamais les deux à la fois.
+  // Voir "advanceState" plus bas pour ce cas précis.
 
   it("arrondit à la seconde", () => {
-    expect(trackLabel(false, undefined, undefined, 0, 7_600)).toBe("brûlé à 8 s");
+    expect(trackLabel({ kind: "burned", atMs: 7_600 }, 0)).toBe("brûlé à 8 s");
+  });
+});
+
+describe("advanceState — un verdict terminal ne se laisse plus écraser (issue #130)", () => {
+  it("pose l'état quand rien n'existe encore", () => {
+    const finished: RacerState = { kind: "finished", wpm: 40, reps: 0 };
+    expect(advanceState(undefined, finished)).toEqual(finished);
+  });
+
+  it("un partant « en course » se laisse remplacer, quel que soit le nouvel état", () => {
+    const racing: RacerState = { kind: "racing", charsDone: 10, reps: 2 };
+    expect(advanceState(racing, { kind: "burned", atMs: 5_000 })).toEqual({
+      kind: "burned",
+      atMs: 5_000,
+    });
+  });
+
+  it("un terminal déjà posé ne se laisse JAMAIS écraser, même par un autre terminal", () => {
+    // Le cas qui a motivé le garde-fou : un PlayerFinished en vol après une brûlure ne
+    // doit jamais faire redevenir « fini » une ligne déjà carbonisée (ADR 0015).
+    const burned: RacerState = { kind: "burned", atMs: 5_000 };
+    expect(advanceState(burned, { kind: "finished", wpm: 40, reps: 0 })).toBe(burned);
   });
 });
 
@@ -198,11 +226,16 @@ describe("aliveIds — le dernier vivant se compte sur les partants figés", () 
     // p3 a rejoint la Room après le RaceStart — il n'apparaît que dans `players`, jamais
     // dans `racers`. S'il fuitait ici, un duel à 2 (p1 vs p2) ne se clôturerait jamais
     // tout seul : il resterait toujours 2 "vivants" (le survivant + le spectateur p3).
-    expect(aliveIds(["p1", "p2"], new Set(["p2"]), new Set())).toEqual(["p1"]);
+    const states = new Map<string, RacerState>([["p2", { kind: "burned", atMs: 1_000 }]]);
+    expect(aliveIds(["p1", "p2"], states)).toEqual(["p1"]);
   });
 
   it("brûlés et sortis (arrivée/abandon/échec) sont tous deux retirés des vivants", () => {
-    expect(aliveIds(["p1", "p2", "p3"], new Set(["p2"]), new Set(["p3"]))).toEqual(["p1"]);
+    const states = new Map<string, RacerState>([
+      ["p2", { kind: "burned", atMs: 1_000 }],
+      ["p3", { kind: "finished", wpm: 40, reps: 0 }],
+    ]);
+    expect(aliveIds(["p1", "p2", "p3"], states)).toEqual(["p1"]);
   });
 });
 
@@ -262,22 +295,56 @@ describe("spamReps + FreeInput — Backspace au milieu d'une répétition (ADR 0
 
 describe("trackLabel — sous Spam la ligne affiche les répétitions, jamais un WPM", () => {
   it("le compte de répétitions remplace le WPM live", () => {
-    expect(trackLabel(false, undefined, undefined, 55, undefined, 14)).toBe("14 ×");
+    expect(trackLabel({ kind: "racing", charsDone: 0, reps: 14 }, 55, 14)).toBe("14 ×");
   });
 
-  it("reste le compte après le PlayerFinished que l'arrêt déclenche", () => {
-    // Même piège que le Brûlé : un PlayerFinished SUIT toujours le SpamStop. Sans la
-    // priorité sur `finalWpm`, la ligne redeviendrait « 72 wpm ✓ » juste après le clap.
-    expect(trackLabel(false, undefined, 72, 55, undefined, 14)).toBe("14 ×");
+  it("reste le compte pour un vrai vainqueur, une fois son PlayerFinished reçu", () => {
+    // Même piège qu'avant : un PlayerFinished SUIT toujours le SpamStop. `spamReps`
+    // continue de l'emporter sur le WPM, même pour l'issue « finished ».
+    expect(trackLabel({ kind: "finished", wpm: 72, reps: 14 }, 55, 14)).toBe("14 ×");
   });
 
   it("zéro répétition reste un compte, pas un repli sur le WPM", () => {
-    expect(trackLabel(false, undefined, 30, 55, undefined, 0)).toBe("0 ×");
+    expect(trackLabel({ kind: "finished", wpm: 30, reps: 0 }, 55, 0)).toBe("0 ×");
+  });
+
+  it("un Devancé affiche son propre compte, sans même passer par spamReps", () => {
+    expect(trackLabel({ kind: "outpaced", reps: 5 }, 3)).toBe("5 ×");
   });
 
   it("abandon et échec l'emportent toujours — ce ne sont pas des Devancé", () => {
-    expect(trackLabel(true, undefined, undefined, 3, undefined, 5)).toBe("abandon");
-    expect(trackLabel(false, 42, undefined, 3, undefined, 5)).toBe("échec (42%)");
+    expect(trackLabel({ kind: "abandoned" }, 3, 5)).toBe("abandon");
+    expect(trackLabel({ kind: "failed", percent: 42 }, 3, 5)).toBe("échec (42%)");
+  });
+});
+
+describe("outpaced — qui est Devancé quand Spam s'arrête (ADR 0016)", () => {
+  it("quelqu'un a atteint le seuil : tous les autres sont Devancé", () => {
+    const racing = [
+      { playerId: "p1", reps: 20 },
+      { playerId: "p2", reps: 12 },
+    ];
+    expect(outpaced(racing, 20).map((r) => r.playerId)).toEqual(["p2"]);
+  });
+
+  it("plafond de temps, personne n'a atteint le seuil : le plus haut compte gagne, le reste est Devancé", () => {
+    const racing = [
+      { playerId: "p1", reps: 15 },
+      { playerId: "p2", reps: 9 },
+    ];
+    expect(outpaced(racing, 20).map((r) => r.playerId)).toEqual(["p2"]);
+  });
+
+  it("égalité au sommet : aucun des ex æquo n'est Devancé", () => {
+    const racing = [
+      { playerId: "p1", reps: 10 },
+      { playerId: "p2", reps: 10 },
+    ];
+    expect(outpaced(racing, 20)).toEqual([]);
+  });
+
+  it("personne encore en course : rien à marquer", () => {
+    expect(outpaced([], 20)).toEqual([]);
   });
 });
 
