@@ -559,84 +559,11 @@ export class Race {
     this.root
       .querySelector<HTMLButtonElement>("#forfeitRace")
       ?.addEventListener("click", () => this.forfeit());
-    this.wireSourceButtons();
-    this.root
-      .querySelector<HTMLSelectElement>("#maxPlayers")
-      ?.addEventListener("change", (e) =>
-        this.socket?.send({
-          type: "SetMaxPlayers",
-          max: Number((e.target as HTMLSelectElement).value),
-        }),
-      );
-    this.root
-      .querySelector<HTMLSelectElement>("#raceCountdown")
-      ?.addEventListener("change", (e) =>
-        this.socket?.send({
-          type: "SetCountdown",
-          seconds: Number((e.target as HTMLSelectElement).value),
-        }),
-      );
-    this.root
-      .querySelector<HTMLInputElement>("#readyCheck")
-      ?.addEventListener("change", (e) =>
-        this.socket?.send({
-          type: "SetReadyCheck",
-          enabled: (e.target as HTMLInputElement).checked,
-        }),
-      );
+    this.wireLobbySettings();
     this.root.querySelector<HTMLButtonElement>("#toggleReady")?.addEventListener("click", () => {
       const me = this.players.find((p) => p.playerId === this.me);
       this.socket?.send({ type: "SetReady", ready: !(me?.ready ?? false) });
     });
-    this.root
-      .querySelector<HTMLSelectElement>("#raceDifficulty")
-      ?.addEventListener("change", (e) =>
-        this.socket?.send({
-          type: "SetDifficulty",
-          difficulty: (e.target as HTMLSelectElement).value as Difficulty,
-        }),
-      );
-    this.root
-      .querySelector<HTMLSelectElement>("#raceGameMode")
-      ?.addEventListener("change", (e) =>
-        this.socket?.send({
-          type: "SetGameMode",
-          mode: (e.target as HTMLSelectElement).value as GameMode,
-        }),
-      );
-    this.root
-      .querySelector<HTMLSelectElement>("#lavaInterval")
-      ?.addEventListener("change", (e) =>
-        this.socket?.send({
-          type: "SetLavaInterval",
-          seconds: Number((e.target as HTMLSelectElement).value),
-        }),
-      );
-    // `change` et non `input` : on n'envoie pas un réglage de salon à chaque caractère
-    // tapé — le mot part quand l'hôte a fini de le taper (blur ou Entrée).
-    this.root.querySelector<HTMLInputElement>("#spamWord")?.addEventListener("change", (e) => {
-      // Vidé = retour au mot par défaut. Les espaces sont retirés ici pour que « deux
-      // mots » devienne « deuxmots » plutôt que d'être rejeté en silence par le serveur,
-      // qui reste seul juge (il revalide, longueur comprise).
-      const raw = (e.target as HTMLInputElement).value.replace(/\s+/g, "");
-      this.socket?.send({ type: "SetSpamWord", word: raw === "" ? null : raw });
-    });
-    this.root
-      .querySelector<HTMLSelectElement>("#spamThreshold")
-      ?.addEventListener("change", (e) =>
-        this.socket?.send({
-          type: "SetSpamThreshold",
-          count: Number((e.target as HTMLSelectElement).value),
-        }),
-      );
-    this.root
-      .querySelector<HTMLSelectElement>("#spamTimeCap")
-      ?.addEventListener("change", (e) =>
-        this.socket?.send({
-          type: "SetSpamTimeCap",
-          seconds: Number((e.target as HTMLSelectElement).value),
-        }),
-      );
     if (this.phase === "over") {
       wirePodium(this.root, this.podiumOptions());
       this.root
@@ -649,23 +576,41 @@ export class Race {
     if (wordsEl) placeCaret(wordsEl);
   }
 
-  /** Passer à `words` conserve la longueur courante, sinon on retombe sur la médiane. */
-  private wireSourceButtons(): void {
-    const send = (source: TextSource): void =>
-      this.socket?.send({ type: "SetTextSource", source });
-    this.root.querySelectorAll<HTMLButtonElement>("[data-src]").forEach((b) => {
-      b.addEventListener("click", () =>
-        send(
-          b.dataset.src === "quote"
-            ? { kind: "quote" }
-            : { kind: "words", count: currentCount(this.textSource) },
-        ),
-      );
+  /**
+   * Délégué UNIQUE pour les dix Réglages de salon (issue #131) — remplace les dix blocs
+   * `querySelector` + `addEventListener` d'avant, un par réglage. `data-row` porte la clé
+   * de la ligne déclarée dans `lobbyRows()`, qui seule sait quel `ClientEvent` construire :
+   * ce délégué ne connaît que « quelle ligne, quelle valeur brute », jamais le protocole.
+   *
+   * Deux familles d'interaction natives à couvrir, donc deux écouteurs : `click` pour les
+   * boutons segmentés (Texte), dont `data-value` porte déjà la valeur choisie ; `change`
+   * pour `select`/case à cocher/texte, où c'est `target.value` (ou `.checked`) qui la porte.
+   * Un seul re-render régénère les deux à chaque fois — pas de recâblage à part.
+   */
+  private wireLobbySettings(): void {
+    const panel = this.root.querySelector<HTMLElement>(".lobby-settings");
+    if (!panel) return;
+    const dispatch = (rowId: string, raw: string): void => {
+      const row = this.lobbyRows().find((r) => r.id === rowId);
+      if (row) this.socket?.send(row.set(raw));
+    };
+    panel.addEventListener("click", (event) => {
+      const target = (event.target as HTMLElement).closest<HTMLElement>("[data-row][data-value]");
+      if (target?.dataset.row && target.dataset.value !== undefined) {
+        dispatch(target.dataset.row, target.dataset.value);
+      }
     });
-    this.root.querySelectorAll<HTMLButtonElement>("[data-len]").forEach((b) => {
-      b.addEventListener("click", () =>
-        send({ kind: "words", count: Number(b.dataset.len) }),
-      );
+    // `change` et non `input` : on n'envoie pas un réglage de salon à chaque caractère
+    // tapé — le mot de Spam part au blur/à l'Entrée, pas frappe par frappe (ADR 0016).
+    panel.addEventListener("change", (event) => {
+      const target = event.target as HTMLInputElement | HTMLSelectElement;
+      const rowId = target.dataset.row;
+      if (!rowId) return;
+      const raw =
+        target instanceof HTMLInputElement && target.type === "checkbox"
+          ? String(target.checked)
+          : target.value;
+      dispatch(rowId, raw);
     });
   }
 
@@ -678,20 +623,12 @@ export class Race {
       case "lobby":
         return (
           this.codeHtml() +
-          // Les cinq Réglages de salon dans UNE grille (#95) : c'est le conteneur commun
-          // qui les aligne, pas cinq blocs qui se ressemblent de loin.
-          // La Source est MASQUÉE dès qu'un Mode de jeu impose son texte (ADR 0015, 0016) :
-          // l'afficher laisserait croire qu'on peut encore le choisir.
-          `<div class="lobby-settings">${
-            this.gameModeHtml() +
-            this.lavaIntervalHtml() +
-            this.spamSettingsHtml() +
-            (this.gameMode === "normal" ? this.sourceHtml() : "") +
-            this.sizeHtml() +
-            this.countdownHtml() +
-            this.readyCheckHtml() +
-            this.difficultyHtml()
-          }</div>` +
+          // Les Réglages de salon se DÉCLARENT (`lobbyRows()`, sur le modèle de
+          // `settings.ts:sections()`) et se rendent dans UNE grille (#95, issue #131) —
+          // c'est le conteneur commun qui les aligne, pas dix méthodes qui se ressemblent
+          // de loin. La Source est absente de la liste dès qu'un Mode de jeu impose son
+          // texte (ADR 0015, 0016) : l'afficher laisserait croire qu'on peut encore le choisir.
+          `<div class="lobby-settings">${this.lobbyRows().map(lobbyRowHtml).join("")}</div>` +
           this.cardsHtml() +
           this.readyBtnHtml() +
           this.startBtnHtml() +
@@ -739,189 +676,185 @@ export class Race {
   }
 
   /**
-   * Réglage de la Source de texte (ADR 0009). Boutons pour l'hôte, simple mention pour
-   * les autres : ils doivent SAVOIR ce qui les attend sans pouvoir le changer.
-   * La longueur n'existe que pour `words` — celle d'une Quote appartient à la citation.
+   * Les Réglages de salon, DÉCLARÉS (issue #131, sur le modèle de `settings.ts:sections()`)
+   * plutôt que codés un par un : une entrée par ligne, `lobbyRowHtml` fait le rendu (pur,
+   * testé sans DOM) et `wireLobbySettings` le câblage (un délégué unique). `locked` porte
+   * UNE FOIS la règle « lecture seule pour les non-hôtes », recopiée dix fois avant.
+   *
+   * L'ordre de la liste EST l'ordre d'affichage — Mode de jeu d'abord, puis les réglages
+   * propres à un Mode de jeu (Élimination sous floor is lava ; Mot/Objectif/Temps max sous
+   * Spam), puis Texte (absent dès qu'un Mode de jeu impose son texte, ADR 0015/0016), puis
+   * les quatre réglages communs.
    */
-  private sourceHtml(): string {
-    const src = this.textSource;
-    if (this.me !== this.owner) {
-      return lobbyRow("Texte", LOBBY_TIPS.source, lobbyValue(sourceLabel(src)));
+  private lobbyRows(): LobbyRow[] {
+    const isOwner = this.me === this.owner;
+    const rows: LobbyRow[] = [
+      {
+        id: "raceGameMode",
+        label: "Mode de jeu",
+        tip: LOBBY_TIPS.gameMode,
+        locked: !isOwner,
+        readOnly: GAME_MODE_LABELS[this.gameMode],
+        control: {
+          kind: "select",
+          value: this.gameMode,
+          options: GAME_MODES.map((m) => ({ value: m, label: GAME_MODE_LABELS[m] })),
+        },
+        set: (v) => ({ type: "SetGameMode", mode: v as GameMode }),
+      },
+    ];
+    if (this.gameMode === "floorIsLava") {
+      rows.push({
+        id: "lavaInterval",
+        label: "Élimination",
+        tip: LOBBY_TIPS.lava,
+        locked: !isOwner,
+        readOnly: `toutes les ${this.lavaIntervalS} s`,
+        control: {
+          kind: "select",
+          value: String(this.lavaIntervalS),
+          options: LAVA_INTERVAL_VALUES.map((n) => ({ value: String(n), label: `toutes les ${n} s` })),
+        },
+        set: (v) => ({ type: "SetLavaInterval", seconds: Number(v) }),
+      });
     }
-    const on = (active: boolean) => (active ? ' class="on"' : "");
-    const lengths =
-      src.kind === "words"
-        ? `<div class="lobby-seg">${WORDS_LENGTHS.map(
-            (n, i) =>
-              `<button data-len="${n}"${on(src.count === n)}>${LENGTH_LABELS[i]} ${n}</button>`,
-          ).join("")}</div>`
-        : "";
-    return lobbyRow(
-      "Texte",
-      LOBBY_TIPS.source,
-      `<div class="lobby-seg">
-        <button data-src="quote"${on(src.kind === "quote")}>Citation</button>
-        <button data-src="words"${on(src.kind === "words")}>Mots</button>
-      </div>${lengths}`,
-    );
-  }
-
-  /**
-   * Taille max de la Room (issue #62). `select` natif plutôt que sept boutons : choisir
-   * une valeur dans une plage est exactement ce que l'élément natif fait, clavier et
-   * lecteur d'écran compris. Les non-hôtes lisent le compte : ils subissent le réglage.
-   */
-  private sizeHtml(): string {
-    const taken = this.players.length;
-    if (this.me !== this.owner) {
-      return lobbyRow("Salon", LOBBY_TIPS.size, lobbyValue(`${taken}/${this.maxPlayers} joueurs`));
-    }
-    const opts = ROOM_SIZES.map(
-      (n) =>
-        `<option value="${n}"${n === this.maxPlayers ? " selected" : ""}>${n} joueurs</option>`,
-    ).join("");
-    return lobbyRow(
-      "Salon",
-      LOBBY_TIPS.size,
-      `<select id="maxPlayers">${opts}</select><span class="lobby-note">${taken} présents</span>`,
-      "maxPlayers",
-    );
-  }
-
-  /**
-   * Durée du décompte avant le départ (issue #61). Même patron que la taille max :
-   * `select` natif pour l'hôte, simple mention pour les autres — ils subissent le réglage.
-   */
-  private countdownHtml(): string {
-    if (this.me !== this.owner) {
-      return lobbyRow("Décompte", LOBBY_TIPS.countdown, lobbyValue(`${this.countdownS} s`));
-    }
-    const opts = COUNTDOWN_VALUES.map(
-      (n) => `<option value="${n}"${n === this.countdownS ? " selected" : ""}>${n} s</option>`,
-    ).join("");
-    return lobbyRow(
-      "Décompte",
-      LOBBY_TIPS.countdown,
-      `<select id="raceCountdown">${opts}</select>`,
-      "raceCountdown",
-    );
-  }
-
-  /**
-   * Ready-check (issue #63) : case à cocher pour l'hôte, simple mention pour les autres —
-   * même patron que les autres réglages de salon.
-   */
-  private readyCheckHtml(): string {
-    if (this.me !== this.owner) {
-      return lobbyRow(
-        "Ready-check",
-        LOBBY_TIPS.ready,
-        lobbyValue(this.readyCheck ? "Activé" : "Désactivé"),
+    if (this.gameMode === "spam") {
+      // Le mot RÉELLEMENT en jeu est celui du texte : sous mot par défaut, `spamWord` est
+      // `null` et seul `targetText` sait lequel le serveur a tiré.
+      const inPlay = this.targetWords[0] ?? "";
+      rows.push(
+        {
+          id: "spamWord",
+          label: "Mot",
+          tip: LOBBY_TIPS.spamWord,
+          locked: !isOwner,
+          readOnly: inPlay,
+          control: {
+            kind: "text",
+            value: this.spamWord ?? "",
+            placeholder: `${inPlay} (aléatoire)`,
+            maxLength: SPAM_WORD_MAX_LEN,
+          },
+          set: spamWordEvent,
+        },
+        {
+          id: "spamThreshold",
+          label: "Objectif",
+          tip: LOBBY_TIPS.spamThreshold,
+          locked: !isOwner,
+          readOnly: `${this.spamThreshold} répétitions`,
+          control: {
+            kind: "select",
+            value: String(this.spamThreshold),
+            options: SPAM_THRESHOLD_VALUES.map((n) => ({ value: String(n), label: `${n} répétitions` })),
+          },
+          set: (v) => ({ type: "SetSpamThreshold", count: Number(v) }),
+        },
+        {
+          id: "spamTimeCap",
+          label: "Temps max",
+          tip: LOBBY_TIPS.spamTimeCap,
+          locked: !isOwner,
+          readOnly: `${this.spamTimeCapS} s`,
+          control: {
+            kind: "select",
+            value: String(this.spamTimeCapS),
+            options: SPAM_TIME_CAP_VALUES.map((n) => ({ value: String(n), label: `${n} s` })),
+          },
+          set: (v) => ({ type: "SetSpamTimeCap", seconds: Number(v) }),
+        },
       );
     }
-    // La case n'est plus une checkbox nue : `.lobby-check` lui donne la même bordure et
-    // le même fond que les `select` voisins (#95). L'input reste natif dessous — clavier
-    // et lecteur d'écran inchangés, seule la peinture change.
-    return lobbyRow(
-      "Ready-check",
-      LOBBY_TIPS.ready,
-      `<label class="lobby-check">
-        <input type="checkbox" id="readyCheck"${this.readyCheck ? " checked" : ""}>
-        <span>${this.readyCheck ? "Activé" : "Désactivé"}</span>
-      </label>`,
+    if (this.gameMode === "normal") {
+      const src = this.textSource;
+      rows.push({
+        id: "textSource",
+        label: "Texte",
+        tip: LOBBY_TIPS.source,
+        locked: !isOwner,
+        readOnly: sourceLabel(src),
+        control: {
+          kind: "segmented",
+          value: src.kind,
+          options: [
+            { value: "quote", label: "Citation" },
+            { value: "words", label: "Mots" },
+          ],
+          // La longueur n'existe que pour `words` — celle d'une Quote lui appartient.
+          extra:
+            src.kind === "words"
+              ? {
+                  value: String(src.count),
+                  options: WORDS_LENGTHS.map((n, i) => ({ value: String(n), label: `${LENGTH_LABELS[i]} ${n}` })),
+                }
+              : undefined,
+        },
+        // `currentCount(this.textSource)` : le repli quand on bascule sur « Mots » sans
+        // avoir cliqué une longueur précise (garde la longueur courante, ou la médiane
+        // si on vient de Citation, qui n'en a pas).
+        set: (v) => textSourceEvent(v, currentCount(this.textSource)),
+      });
+    }
+    rows.push(
+      {
+        id: "maxPlayers",
+        label: "Salon",
+        tip: LOBBY_TIPS.size,
+        locked: !isOwner,
+        readOnly: `${this.players.length}/${this.maxPlayers} joueurs`,
+        note: isOwner ? `${this.players.length} présents` : undefined,
+        control: {
+          kind: "select",
+          value: String(this.maxPlayers),
+          options: ROOM_SIZES.map((n) => ({ value: String(n), label: `${n} joueurs` })),
+        },
+        set: (v) => ({ type: "SetMaxPlayers", max: Number(v) }),
+      },
+      {
+        id: "raceCountdown",
+        label: "Décompte",
+        tip: LOBBY_TIPS.countdown,
+        locked: !isOwner,
+        readOnly: `${this.countdownS} s`,
+        control: {
+          kind: "select",
+          value: String(this.countdownS),
+          options: COUNTDOWN_VALUES.map((n) => ({ value: String(n), label: `${n} s` })),
+        },
+        set: (v) => ({ type: "SetCountdown", seconds: Number(v) }),
+      },
+      {
+        id: "readyCheck",
+        label: "Ready-check",
+        tip: LOBBY_TIPS.ready,
+        locked: !isOwner,
+        readOnly: this.readyCheck ? "Activé" : "Désactivé",
+        control: { kind: "toggle", value: this.readyCheck, onLabel: "Activé", offLabel: "Désactivé" },
+        set: (v) => ({ type: "SetReadyCheck", enabled: v === "true" }),
+      },
+      {
+        id: "raceDifficulty",
+        label: "Difficulté",
+        tip: LOBBY_TIPS.difficulty,
+        locked: !isOwner,
+        readOnly: DIFFICULTY_LABELS[this.difficulty],
+        control: {
+          kind: "select",
+          value: this.difficulty,
+          options: ROOM_DIFFICULTIES.map((d) => ({ value: d, label: DIFFICULTY_LABELS[d] })),
+        },
+        set: (v) => ({ type: "SetDifficulty", difficulty: v as Difficulty }),
+      },
     );
+    return rows;
   }
 
-  /** Bouton pour se marquer prêt/pas prêt — seulement visible quand le réglage est actif. */
+  /** Bouton pour se marquer prêt/pas prêt — seulement visible quand le réglage est actif.
+   *  PAS un Réglage de salon (`lobbyRows()`) : personnel à chaque joueur, pas owner-only. */
   private readyBtnHtml(): string {
     if (!this.readyCheck) return "";
     const ready = this.players.find((p) => p.playerId === this.me)?.ready ?? false;
     return `<button id="toggleReady" class="${ready ? "on" : ""}">${ready ? "Prêt ✓" : "Se dire prêt"}</button>`;
-  }
-
-  /**
-   * Difficulté de la Room (issue #71, ADR 0013) : Normal | Master seulement — Expert
-   * n'est pas un Réglage de salon, sa condition de déclenchement y est inatteignable.
-   * Même patron que les autres réglages : `select` pour l'hôte, mention pour les autres.
-   */
-  private difficultyHtml(): string {
-    if (this.me !== this.owner) {
-      return lobbyRow(
-        "Difficulté",
-        LOBBY_TIPS.difficulty,
-        lobbyValue(DIFFICULTY_LABELS[this.difficulty]),
-      );
-    }
-    const opts = ROOM_DIFFICULTIES.map(
-      (d) => `<option value="${d}"${d === this.difficulty ? " selected" : ""}>${DIFFICULTY_LABELS[d]}</option>`,
-    ).join("");
-    return lobbyRow(
-      "Difficulté",
-      LOBBY_TIPS.difficulty,
-      `<select id="raceDifficulty">${opts}</select>`,
-      "raceDifficulty",
-    );
-  }
-
-  /**
-   * Mode de jeu (ADR 0015) : comment la course se GAGNE. Même patron que les autres
-   * réglages — `select` pour l'hôte, mention pour les autres, qui le subissent.
-   */
-  private gameModeHtml(): string {
-    if (this.me !== this.owner) {
-      return lobbyRow("Mode de jeu", LOBBY_TIPS.gameMode, lobbyValue(GAME_MODE_LABELS[this.gameMode]));
-    }
-    const opts = GAME_MODES.map(
-      (m) => `<option value="${m}"${m === this.gameMode ? " selected" : ""}>${GAME_MODE_LABELS[m]}</option>`,
-    ).join("");
-    return lobbyRow("Mode de jeu", LOBBY_TIPS.gameMode, `<select id="raceGameMode">${opts}</select>`, "raceGameMode");
-  }
-
-  /** Intervalle d'élimination — n'apparaît QUE quand floor is lava est choisi. */
-  private lavaIntervalHtml(): string {
-    if (this.gameMode !== "floorIsLava") return "";
-    if (this.me !== this.owner) {
-      return lobbyRow("Élimination", LOBBY_TIPS.lava, lobbyValue(`toutes les ${this.lavaIntervalS} s`));
-    }
-    const opts = LAVA_INTERVAL_VALUES.map(
-      (n) => `<option value="${n}"${n === this.lavaIntervalS ? " selected" : ""}>toutes les ${n} s</option>`,
-    ).join("");
-    return lobbyRow("Élimination", LOBBY_TIPS.lava, `<select id="lavaInterval">${opts}</select>`, "lavaInterval");
-  }
-
-  /**
-   * Les trois réglages de Spam (ADR 0016) — n'apparaissent QUE sous ce mode. Le mot, le
-   * seuil de répétitions et le plafond de temps : les deux façons de gagner y sont, plus
-   * ce qu'on tape. Même patron que le reste : contrôles pour l'hôte, mention pour les
-   * autres, qui subissent le réglage et doivent le comprendre.
-   */
-  private spamSettingsHtml(): string {
-    if (this.gameMode !== "spam") return "";
-    // Le mot RÉELLEMENT en jeu est celui du texte : sous mot par défaut, `spamWord` est
-    // `null` et seul `targetText` sait lequel le serveur a tiré.
-    const inPlay = this.targetWords[0] ?? "";
-    if (this.me !== this.owner) {
-      return (
-        lobbyRow("Mot", LOBBY_TIPS.spamWord, lobbyValue(inPlay)) +
-        lobbyRow("Objectif", LOBBY_TIPS.spamThreshold, lobbyValue(`${this.spamThreshold} répétitions`)) +
-        lobbyRow("Temps max", LOBBY_TIPS.spamTimeCap, lobbyValue(`${this.spamTimeCapS} s`))
-      );
-    }
-    // `maxlength` natif plutôt qu'un compteur en JS : le navigateur fait déjà respecter la
-    // longueur, et le serveur revalide de toute façon (le champ n'est pas une garantie).
-    const wordCtl = `<input type="text" id="spamWord" value="${escapeText(this.spamWord ?? "")}"
-      placeholder="${escapeText(inPlay)} (aléatoire)" maxlength="${SPAM_WORD_MAX_LEN}" autocomplete="off">`;
-    const thresholdOpts = SPAM_THRESHOLD_VALUES.map(
-      (n) => `<option value="${n}"${n === this.spamThreshold ? " selected" : ""}>${n} répétitions</option>`,
-    ).join("");
-    const capOpts = SPAM_TIME_CAP_VALUES.map(
-      (n) => `<option value="${n}"${n === this.spamTimeCapS ? " selected" : ""}>${n} s</option>`,
-    ).join("");
-    return (
-      lobbyRow("Mot", LOBBY_TIPS.spamWord, wordCtl, "spamWord") +
-      lobbyRow("Objectif", LOBBY_TIPS.spamThreshold, `<select id="spamThreshold">${thresholdOpts}</select>`, "spamThreshold") +
-      lobbyRow("Temps max", LOBBY_TIPS.spamTimeCap, `<select id="spamTimeCap">${capOpts}</select>`, "spamTimeCap")
-    );
   }
 
   /** Cartes de présence empilées (owner en tête, moi souligné). */
@@ -1269,9 +1202,9 @@ export function nextBurnIn(elapsedMs: number, intervalS: number): number {
 const LENGTH_LABELS = ["Court", "Normal", "Long"] as const;
 
 /**
- * Explications des cinq Réglages de salon (#95), servies par l'icône « i ». Elles vivent
- * ici, à côté des méthodes qui dessinent les réglages, pour qu'ajouter un réglage sans son
- * explication saute aux yeux.
+ * Explications des Réglages de salon (#95), servies par l'icône « i ». Depuis #131 c'est
+ * `lobbyRows()` qui les associe à leur ligne — elles vivent ici, à part, seulement parce
+ * que ce sont de longs paragraphes qui alourdiraient la déclaration si on les y recopiait.
  */
 const LOBBY_TIPS = {
   source:
@@ -1341,34 +1274,118 @@ export function spamReps(word: string, view: InputView): number {
   return view.lockedWords.filter((w) => w === word).length;
 }
 
+// ----------------------------------------------------------------------------
+//  Réglages de salon (issue #131) — modèle de ligne, sur le patron de settings.ts, adapté
+//  à la disposition du lobby (icône « i » plutôt que description toujours visible : le
+//  lobby est un panneau compact à côté de la piste, pas un écran dédié). Rendu PUR, testé
+//  sans DOM comme `settings.test.ts`.
+// ----------------------------------------------------------------------------
+
+/** Une paire valeur/libellé, pour les options d'un `select` ou d'un groupe segmenté. */
+interface LobbyOption {
+  value: string;
+  label: string;
+}
+
+/**
+ * Quatre familles suffisent à tous les Réglages de salon actuels — `text` est le
+ * cinquième kind que `settings.ts` n'a pas (le mot de Spam) : né ici, comme les autres
+ * sont nés de leur première Preference (issue #131).
+ *
+ * `segmented.extra` : un second groupe de boutons, sous le premier, dans le MÊME contrôle
+ * — le seul besoin actuel est Texte (la longueur, seulement sous « Mots »). Généraliser un
+ * champ optionnel plutôt qu'un kind à part évite de dupliquer tout le reste de la ligne
+ * (label, tip, locked) pour un contrôle qui reste sémantiquement UNE seule ligne.
+ */
+export type LobbyControl =
+  | { kind: "select"; value: string; options: LobbyOption[] }
+  | { kind: "segmented"; value: string; options: LobbyOption[]; extra?: { value: string; options: LobbyOption[] } }
+  | { kind: "toggle"; value: boolean; onLabel: string; offLabel: string }
+  | { kind: "text"; value: string; placeholder: string; maxLength: number };
+
+/**
+ * Une ligne de Réglage de salon : libellé + explication + contrôle, la règle « lecture
+ * seule pour les non-hôtes » (`locked`) et l'événement à émettre (`set`) — déclarée une
+ * fois, plus une méthode de rendu ET un bloc de câblage par réglage (issue #131).
+ */
+export interface LobbyRow {
+  /** DOM id du contrôle ET clé que le délégué unique lit dans `data-row`. */
+  id: string;
+  label: string;
+  tip: string;
+  locked: boolean;
+  /** Mention affichée à la place du contrôle quand `locked`. */
+  readOnly: string;
+  control: LobbyControl;
+  /** Complément affiché après le contrôle, propriétaire seulement (ex. « 6 présents »). */
+  note?: string;
+  set: (raw: string) => ClientEvent;
+}
+
+/** Un groupe de boutons segmentés — Texte en superpose deux dans le même contrôle. */
+function lobbySegHtml(rowId: string, value: string, options: LobbyOption[]): string {
+  return `<div class="lobby-seg">${options
+    .map(
+      (o) =>
+        `<button data-row="${rowId}" data-value="${o.value}"${o.value === value ? ' class="on"' : ""}>${o.label}</button>`,
+    )
+    .join("")}</div>`;
+}
+
+function lobbyControlHtml(row: LobbyRow): string {
+  const c = row.control;
+  switch (c.kind) {
+    case "select": {
+      const opts = c.options
+        .map((o) => `<option value="${o.value}"${o.value === c.value ? " selected" : ""}>${o.label}</option>`)
+        .join("");
+      return `<select id="${row.id}" data-row="${row.id}">${opts}</select>`;
+    }
+    case "segmented":
+      return lobbySegHtml(row.id, c.value, c.options) + (c.extra ? lobbySegHtml(row.id, c.extra.value, c.extra.options) : "");
+    case "toggle":
+      // La case n'est pas une checkbox nue : `.lobby-check` lui donne la même bordure et
+      // le même fond que les `select` voisins (#95). L'input reste natif dessous.
+      return `<label class="lobby-check">
+        <input type="checkbox" id="${row.id}" data-row="${row.id}"${c.value ? " checked" : ""}>
+        <span>${c.value ? c.onLabel : c.offLabel}</span>
+      </label>`;
+    case "text":
+      // `maxlength` natif plutôt qu'un compteur en JS : le navigateur fait déjà respecter
+      // la longueur, et le serveur revalide de toute façon (le champ n'est pas une garantie).
+      return `<input type="text" id="${row.id}" data-row="${row.id}" value="${escapeText(c.value)}"
+        placeholder="${escapeText(c.placeholder)}" maxlength="${c.maxLength}" autocomplete="off">`;
+  }
+}
+
 /**
  * Une ligne de Réglage de salon (#95) : libellé + icône « i » à gauche, contrôle à droite.
- * Ce patron unique est ce qui ALIGNE les cinq réglages — avant, chacun réutilisait `.hint`
+ * Ce patron unique est ce qui ALIGNE les réglages — avant, chacun réutilisait `.hint`
  * (pensée pour un paragraphe centré isolé) et retombait où il pouvait.
  *
  * Les non-hôtes reçoivent la valeur en lecture seule dans la même colonne, à la même
  * place, avec la même explication : ils subissent le réglage, ils doivent le comprendre.
  *
- * `forId` relie le libellé à son contrôle quand celui-ci est un `select` ; le Ready-check
- * s'en passe, son `<label>` enveloppe déjà sa case.
+ * Le libellé pointe son contrôle par `for=` sauf pour un `toggle` (son `<label>` enveloppe
+ * déjà sa case) et un `segmented` (des boutons, pas un champ de formulaire) — et jamais en
+ * lecture seule, où il n'y a plus de contrôle à pointer. Pure.
  */
-function lobbyRow(label: string, tip: string, control: string, forId?: string): string {
-  const name = forId
-    ? `<label for="${forId}">${escapeText(label)}</label>`
-    : `<span>${escapeText(label)}</span>`;
+export function lobbyRowHtml(row: LobbyRow): string {
+  const selfLabeled = row.locked || row.control.kind === "toggle" || row.control.kind === "segmented";
+  const name = selfLabeled
+    ? `<span>${escapeText(row.label)}</span>`
+    : `<label for="${row.id}">${escapeText(row.label)}</label>`;
+  const ctl = row.locked
+    ? `<span class="lobby-value">${escapeText(row.readOnly)}</span>`
+    : lobbyControlHtml(row) + (row.note ? `<span class="lobby-note">${escapeText(row.note)}</span>` : "");
   // L'explication est un <button> et non un <span> : c'est ce qui la rend atteignable au
   // TAP (le focus l'ouvre) et au clavier, sans une ligne de JS. Le survol la donne à la
   // souris, le focus au doigt — deux pseudo-classes, aucun écouteur.
   return `<div class="lobby-row">
     <div class="lobby-key">${name}<button type="button" class="info"
-      aria-label="Explication : ${escapeText(label)}">i<span class="tip" role="tooltip">${escapeText(tip)}</span></button></div>
-    <div class="lobby-ctl">${control}</div>
+      aria-label="Explication : ${escapeText(row.label)}">i<span class="tip" role="tooltip">${escapeText(row.tip)}</span></button></div>
+    <div class="lobby-ctl">${ctl}</div>
   </div>`;
-}
-
-/** Valeur d'un réglage en lecture seule (vue des non-hôtes) — même colonne, même ligne. */
-function lobbyValue(v: string): string {
-  return `<span class="lobby-value">${escapeText(v)}</span>`;
 }
 
 /** Libellés de Difficulté (issue #71) — Expert n'apparaît dans aucun `select` de Room,
@@ -1383,6 +1400,28 @@ export function currentCount(src: TextSource): number {
 /** Mention lue par les non-hôtes : ils subissent le réglage, ils doivent le voir. */
 export function sourceLabel(src: TextSource): string {
   return src.kind === "quote" ? "Citation" : `Mots (${src.count})`;
+}
+
+/**
+ * `ClientEvent` du contrôle segmenté « Texte » (issue #131) — un délégué générique lit une
+ * valeur brute, seule cette ligne sait la traduire. `v` vaut "quote", "words" (bascule
+ * sans longueur précise — `fallbackCount` reprend la longueur courante, la médiane venant
+ * d'une Citation qui n'en a pas), ou une longueur cliquée dans le second groupe. Pure.
+ */
+export function textSourceEvent(v: string, fallbackCount: number): ClientEvent {
+  if (v === "quote") return { type: "SetTextSource", source: { kind: "quote" } };
+  if (v === "words") return { type: "SetTextSource", source: { kind: "words", count: fallbackCount } };
+  return { type: "SetTextSource", source: { kind: "words", count: Number(v) } };
+}
+
+/**
+ * `ClientEvent` du champ « Mot » de Spam (issue #131). Vidé = retour au mot par défaut.
+ * Les espaces sont retirés pour que « deux mots » devienne « deuxmots » plutôt que d'être
+ * rejeté en silence par le serveur, qui reste seul juge (il revalide, longueur comprise). Pure.
+ */
+export function spamWordEvent(v: string): ClientEvent {
+  const word = v.replace(/\s+/g, "");
+  return { type: "SetSpamWord", word: word === "" ? null : word };
 }
 
 /**

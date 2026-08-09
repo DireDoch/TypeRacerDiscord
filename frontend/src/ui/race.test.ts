@@ -14,7 +14,11 @@ import {
   spamReps,
   capRemaining,
   spamRefill,
+  lobbyRowHtml,
+  textSourceEvent,
+  spamWordEvent,
   type RacerState,
+  type LobbyRow,
 } from "./race";
 import { FreeInput } from "../core/input/free-input";
 import { avatarUrl } from "../discord";
@@ -403,5 +407,192 @@ describe("nextBurnIn — le décompte avant la prochaine brûlure", () => {
       expect(n).toBeGreaterThanOrEqual(1);
       expect(n).toBeLessThanOrEqual(5);
     }
+  });
+});
+
+// --- Réglages de salon (issue #131) -------------------------------------------
+
+describe("lobbyRowHtml — libellé, explication (icône) et contrôle, comme settings.ts mais sans DOM", () => {
+  const selectRow: LobbyRow = {
+    id: "raceGameMode",
+    label: "Mode de jeu",
+    tip: "Comment la course se gagne.",
+    locked: false,
+    readOnly: "Normal",
+    control: {
+      kind: "select",
+      value: "spam",
+      options: [
+        { value: "normal", label: "Normal" },
+        { value: "spam", label: "Spam" },
+      ],
+    },
+    set: (v) => ({ type: "SetGameMode", mode: v as "normal" | "spam" | "floorIsLava" }),
+  };
+
+  it("rend le libellé lié par `for`, et l'explication dans l'icône « i », pas sous le libellé", () => {
+    const html = lobbyRowHtml(selectRow);
+    expect(html).toContain('<label for="raceGameMode">Mode de jeu</label>');
+    expect(html).toContain('class="tip"');
+    expect(html).toContain("Comment la course se gagne.");
+    expect(html).not.toContain('class="set-desc"'); // pas la disposition de settings.ts
+  });
+
+  it("un `select` marque la valeur courante `selected`, les autres non", () => {
+    const html = lobbyRowHtml(selectRow);
+    expect(html).toMatch(/<option value="spam" selected>Spam<\/option>/);
+    expect(html).not.toMatch(/<option value="normal" selected>/);
+  });
+
+  it("verrouillé (non-hôte) : une mention en lecture seule remplace le contrôle", () => {
+    const html = lobbyRowHtml({ ...selectRow, locked: true });
+    expect(html).toContain('<span class="lobby-value">Normal</span>');
+    expect(html).not.toContain("<select");
+    // Plus de contrôle à pointer : le libellé n'est plus un `<label for=…>`.
+    expect(html).toContain("<span>Mode de jeu</span>");
+  });
+
+  it("un `toggle` s'étiquette lui-même (son `<label>` enveloppe déjà sa case)", () => {
+    const html = lobbyRowHtml({
+      id: "readyCheck",
+      label: "Ready-check",
+      tip: "…",
+      locked: false,
+      readOnly: "Désactivé",
+      control: { kind: "toggle", value: true, onLabel: "Activé", offLabel: "Désactivé" },
+      set: (v) => ({ type: "SetReadyCheck", enabled: v === "true" }),
+    });
+    expect(html).toContain("<span>Ready-check</span>");
+    expect(html).not.toContain("<label for=");
+    expect(html).toContain('type="checkbox"');
+    expect(html).toContain("checked");
+    expect(html).toContain(">Activé<");
+  });
+
+  it("un `text` rend un champ natif avec son placeholder et sa longueur max", () => {
+    const html = lobbyRowHtml({
+      id: "spamWord",
+      label: "Mot",
+      tip: "…",
+      locked: false,
+      readOnly: "go",
+      control: { kind: "text", value: "", placeholder: "go (aléatoire)", maxLength: 20 },
+      set: (v) => ({ type: "SetSpamWord", word: v || null }),
+    });
+    expect(html).toContain('type="text"');
+    expect(html).toContain('placeholder="go (aléatoire)"');
+    expect(html).toContain('maxlength="20"');
+  });
+
+  it("un `segmented` ne s'étiquette pas par `for` (ce sont des boutons, pas un champ)", () => {
+    const html = lobbyRowHtml({
+      id: "textSource",
+      label: "Texte",
+      tip: "…",
+      locked: false,
+      readOnly: "Citation",
+      control: {
+        kind: "segmented",
+        value: "quote",
+        options: [
+          { value: "quote", label: "Citation" },
+          { value: "words", label: "Mots" },
+        ],
+      },
+      set: () => ({ type: "SetTextSource", source: { kind: "quote" } }),
+    });
+    expect(html).toContain("<span>Texte</span>");
+    expect(html).toMatch(/data-row="textSource" data-value="quote" class="on"/);
+    expect(html).toMatch(/data-row="textSource" data-value="words">/);
+  });
+
+  it("un `segmented` avec `extra` rend un second groupe de boutons, sous le premier", () => {
+    const html = lobbyRowHtml({
+      id: "textSource",
+      label: "Texte",
+      tip: "…",
+      locked: false,
+      readOnly: "Mots (30)",
+      control: {
+        kind: "segmented",
+        value: "words",
+        options: [
+          { value: "quote", label: "Citation" },
+          { value: "words", label: "Mots" },
+        ],
+        extra: {
+          value: "30",
+          options: [
+            { value: "15", label: "Court 15" },
+            { value: "30", label: "Normal 30" },
+            { value: "50", label: "Long 50" },
+          ],
+        },
+      },
+      set: () => ({ type: "SetTextSource", source: { kind: "quote" } }),
+    });
+    expect((html.match(/class="lobby-seg"/g) ?? []).length).toBe(2);
+    expect(html).toMatch(/data-value="30" class="on"/);
+  });
+
+  it("un `segmented` sans `extra` ne rend qu'un seul groupe — pas de longueur pour une Citation", () => {
+    const html = lobbyRowHtml({
+      id: "textSource",
+      label: "Texte",
+      tip: "…",
+      locked: false,
+      readOnly: "Citation",
+      control: {
+        kind: "segmented",
+        value: "quote",
+        options: [
+          { value: "quote", label: "Citation" },
+          { value: "words", label: "Mots" },
+        ],
+      },
+      set: () => ({ type: "SetTextSource", source: { kind: "quote" } }),
+    });
+    expect((html.match(/class="lobby-seg"/g) ?? []).length).toBe(1);
+  });
+
+  it("`note` ne s'affiche qu'à côté d'un contrôle actif, jamais en lecture seule", () => {
+    const withNote: LobbyRow = { ...selectRow, note: "6 présents" };
+    expect(lobbyRowHtml(withNote)).toContain('<span class="lobby-note">6 présents</span>');
+    expect(lobbyRowHtml({ ...withNote, locked: true })).not.toContain("lobby-note");
+  });
+});
+
+describe("textSourceEvent — l'événement de la ligne Texte (issue #131)", () => {
+  it("« quote » : bascule sur Citation, sans longueur", () => {
+    expect(textSourceEvent("quote", 30)).toEqual({ type: "SetTextSource", source: { kind: "quote" } });
+  });
+
+  it("« words » (bascule sans longueur précise) : reprend le repli fourni", () => {
+    expect(textSourceEvent("words", 50)).toEqual({
+      type: "SetTextSource",
+      source: { kind: "words", count: 50 },
+    });
+  });
+
+  it("une longueur cliquée l'emporte sur le repli", () => {
+    expect(textSourceEvent("15", 50)).toEqual({
+      type: "SetTextSource",
+      source: { kind: "words", count: 15 },
+    });
+  });
+});
+
+describe("spamWordEvent — l'événement du champ Mot de Spam (issue #131)", () => {
+  it("les espaces sont retirés : « deux mots » devient « deuxmots »", () => {
+    expect(spamWordEvent("deux mots")).toEqual({ type: "SetSpamWord", word: "deuxmots" });
+  });
+
+  it("vidé (ou tout-espaces) : retour au mot par défaut, `null`", () => {
+    expect(spamWordEvent("")).toEqual({ type: "SetSpamWord", word: null });
+    expect(spamWordEvent("   ")).toEqual({ type: "SetSpamWord", word: null });
+  });
+
+  it("un mot sans espace passe tel quel", () => {
+    expect(spamWordEvent("go")).toEqual({ type: "SetSpamWord", word: "go" });
   });
 });
