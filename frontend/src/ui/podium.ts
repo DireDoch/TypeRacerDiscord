@@ -13,7 +13,7 @@
 //  d'une course meurt avec sa Room).
 // =============================================================================
 
-import type { PlayerEntry, RaceResult } from "../core/net";
+import type { GameMode, PlayerEntry, RaceResult } from "../core/net";
 import { avatarUrl } from "../discord";
 import { drawChart } from "./results";
 import { escapeText } from "./typing-zone";
@@ -96,11 +96,23 @@ export function repsLabel(results: RaceResult[], i: number): string {
   return i === 0 ? `${reps} · vainqueur` : `${reps} · devancé`;
 }
 
-/** `+1.4 s` ; le vainqueur n'a pas d'écart à afficher, il EST la référence. */
-export function gapLabel(results: RaceResult[], i: number): string {
+/**
+ * `+1.4 s` ; le vainqueur n'a pas d'écart à afficher, il EST la référence.
+ *
+ * `gameMode`, quand fourni, TRANCHE — `isSpam`/`isLava` ne servent alors plus que de
+ * repli. `results` seul est ambigu dans un cas rare mais réel (#148) : une Race Floor is
+ * lava close par le watchdog de durée sans qu'AUCUNE élimination n'ait eu lieu (le second
+ * partant part avant le premier tic, puis son propre client ne détecte jamais qu'il est
+ * seul) a un `burnedAtMs` nul partout, identique en tous points à une Race normale
+ * abandonnée. Aucune combinaison de champs de `RaceResult` ne lève cette ambiguïté —
+ * seul un signal extérieur au contenu le peut.
+ */
+export function gapLabel(results: RaceResult[], i: number, gameMode?: GameMode): string {
   const r = results[i];
-  if (isSpam(results)) return repsLabel(results, i);
-  if (isLava(results)) return survivalLabel(results, i);
+  const spam = gameMode ? gameMode === "spam" : isSpam(results);
+  const lava = gameMode ? gameMode === "floorIsLava" : isLava(results);
+  if (spam) return repsLabel(results, i);
+  if (lava) return survivalLabel(results, i);
   if (r?.failedPercent !== null && r?.failedPercent !== undefined) return "échec";
   const g = gapSeconds(results, i);
   if (g === null) return "abandon";
@@ -112,6 +124,8 @@ export interface PodiumOptions {
   /** Présents, pour retrouver nom et avatar. Un partant déjà reparti n'y est plus. */
   players: PlayerEntry[];
   me: string;
+  /** Tranche `gapLabel` quand `results` seul est ambigu — voir sa doc (#148). */
+  gameMode: GameMode;
 }
 
 export function podiumHtml(o: PodiumOptions): string {
@@ -133,7 +147,7 @@ function stepHtml(o: PodiumOptions, i: number): string {
     <span class="podium-medal">${MEDALS[i]}</span>
     ${avatarHtml(o, r.playerId)}
     <span class="podium-name">${escapeText(nameOf(o, r.playerId))}</span>
-    <span class="podium-gap">${gapLabel(o.results, i)}</span>
+    <span class="podium-gap">${gapLabel(o.results, i, o.gameMode)}</span>
     <span class="podium-stats">${statsLabel(r)}</span>
   </button>`;
 }
@@ -145,7 +159,7 @@ function rowHtml(o: PodiumOptions, i: number): string {
     <span class="podium-rank">${isTail(r) ? "—" : `${i + 1}.`}</span>
     ${avatarHtml(o, r.playerId)}
     <span class="podium-name">${escapeText(nameOf(o, r.playerId))}</span>
-    <span class="podium-gap">${gapLabel(o.results, i)}</span>
+    <span class="podium-gap">${gapLabel(o.results, i, o.gameMode)}</span>
     <span class="podium-stats">${statsLabel(r)}</span>
   </button>`;
 }

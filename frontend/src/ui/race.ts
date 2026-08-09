@@ -831,7 +831,12 @@ export class Race {
   }
 
   private podiumOptions(): PodiumOptions {
-    return { results: this.state.results, players: this.state.players, me: this.me };
+    return {
+      results: this.state.results,
+      players: this.state.players,
+      me: this.me,
+      gameMode: this.state.gameMode,
+    };
   }
 
   /** Bouton du duel — présent seulement quand le serveur a désigné un Play of the Game. */

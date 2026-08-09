@@ -23,6 +23,7 @@ import type {
   ServerEvent,
   TextSource,
 } from "./net";
+import type { Keystroke } from "./types";
 
 export type Phase = "connecting" | "lobby" | "countdown" | "running" | "over" | "failed";
 
@@ -34,10 +35,10 @@ export type Phase = "connecting" | "lobby" | "countdown" | "running" | "over" | 
 export type RacerState =
   | { kind: "racing"; charsDone: number; reps: number }
   | { kind: "finished"; wpm: number; reps: number }
-  | { kind: "abandoned" }
-  | { kind: "failed"; percent: number }
-  | { kind: "burned"; atMs: number }
-  | { kind: "outpaced"; reps: number };
+  | { kind: "abandoned"; charsDone: number }
+  | { kind: "failed"; percent: number; charsDone: number }
+  | { kind: "burned"; atMs: number; charsDone: number }
+  | { kind: "outpaced"; reps: number; charsDone: number };
 
 /** Pose `next` SAUF si `cur` est déjà un état terminal (issue #130). */
 export function advanceState(cur: RacerState | undefined, next: RacerState): RacerState {
@@ -51,9 +52,14 @@ function repsOf(state: RacerState): number {
     : 0;
 }
 
-/** `charsDone` d'un état, 0 là où il n'a pas de sens (fini, abandon, échec, brûlé). */
+/**
+ * `charsDone` d'un état — la position de la voiture. Figée à la dernière valeur connue
+ * pour un abandon/échec/brûlé/Devancé (issue #146 : elle ne doit PAS retomber à 0 en
+ * sortant de course, la barre reste où le joueur s'est arrêté). 0 seulement pour `finished`
+ * — sans objet, `trackPercent` remplit la piste à 100 % par un autre chemin pour ce cas.
+ */
 export function charsOf(state: RacerState): number {
-  return state.kind === "racing" ? state.charsDone : 0;
+  return state.kind === "finished" ? 0 : state.charsDone;
 }
 
 /** Les vivants (ADR 0015) : `racers` doit être la liste FIGÉE au RaceStart. */
@@ -190,9 +196,27 @@ function applySpamStop(state: RaceState, ctx: ReduceContext): RaceState {
   }
   const states = new Map(state.states);
   for (const r of outpaced(racing, state.spamThreshold)) {
-    states.set(r.playerId, { kind: "outpaced", reps: r.reps });
+    states.set(r.playerId, { kind: "outpaced", reps: r.reps, charsDone: charsOf(stateOf(state, r.playerId)) });
   }
   return { ...state, states };
+}
+
+/** Mots verrouillés d'un log (espace hors contrôle) — même règle que le recompute
+ *  serveur (`ws/game_mode.rs`, `SPAM.recompute_target_text`). */
+function lockedWordCount(log: Keystroke[]): number {
+  return log.filter((k) => k.k === " " && k.ctrl === undefined).length;
+}
+
+/**
+ * `racedWords` d'un Play of the Game sous Spam : dimensionné sur les DEUX logs du duel
+ * (`+1` pour le mot en cours au moment de l'arrivée), pas sur le `targetWords` local du
+ * spectateur — dont la longueur ne reflète que SA PROPRE frappe (issue #147). Un
+ * spectateur qui a peu tapé verrait sinon `FreeInput` retomber sur un mot vide dès que
+ * le duel dépasse ce qu'il a lui-même atteint.
+ */
+function spamRacedWords(word: string, potg: PlayOfTheGame): string[] {
+  const needed = Math.max(lockedWordCount(potg.logA), lockedWordCount(potg.logB)) + 1;
+  return new Array(needed).fill(word);
 }
 
 /**
@@ -248,24 +272,32 @@ export function reduce(state: RaceState, event: ServerEvent, ctx: ReduceContext)
       return applySpamStop(state, ctx);
     case "PlayerFinished": {
       const reps = repsFor(state, ctx, event.playerId);
+      const charsDone = charsOf(stateOf(state, event.playerId));
       return advance(
         state,
         event.playerId,
         event.forfeit
-          ? { kind: "abandoned" }
+          ? { kind: "abandoned", charsDone }
           : event.failedPercent !== null
-            ? { kind: "failed", percent: event.failedPercent }
+            ? { kind: "failed", percent: event.failedPercent, charsDone }
             : { kind: "finished", wpm: event.wpm, reps },
       );
     }
     case "PlayerBurned":
-      return advance(state, event.playerId, { kind: "burned", atMs: event.atMs });
+      return advance(state, event.playerId, {
+        kind: "burned",
+        atMs: event.atMs,
+        charsDone: charsOf(stateOf(state, event.playerId)),
+      });
     case "RaceOver":
       return {
         ...state,
         results: event.results,
         playOfTheGame: event.playOfTheGame,
-        racedWords: state.targetWords.slice(),
+        racedWords:
+          state.gameMode === "spam" && event.playOfTheGame
+            ? spamRacedWords(state.targetWords[0] ?? "", event.playOfTheGame)
+            : state.targetWords.slice(),
         phase: "over",
       };
   }
