@@ -85,8 +85,8 @@ describe("WPM live de la piste — dérivé de charsDone, jamais transporté", (
 
 describe("trackLabel — un abandon s'affiche « abandon », jamais « 0 wpm »", () => {
   it("abandon : le flag l'emporte, même avec un WPM à 0", () => {
-    expect(trackLabel({ kind: "abandoned" }, 0)).toBe("abandon");
-    expect(trackLabel({ kind: "abandoned" }, 0)).not.toContain("wpm");
+    expect(trackLabel({ kind: "abandoned", charsDone: 0 }, 0)).toBe("abandon");
+    expect(trackLabel({ kind: "abandoned", charsDone: 0 }, 0)).not.toContain("wpm");
   });
 
   it("fini pour de vrai : WPM autoritaire coché", () => {
@@ -100,7 +100,7 @@ describe("trackLabel — un abandon s'affiche « abandon », jamais « 0 wpm »"
 
 describe("trackLabel — un Échec Master (ADR 0013) s'affiche « échec (X%) », distinct de l'abandon", () => {
   it("l'emporte sur tout le reste, même un WPM final présent", () => {
-    expect(trackLabel({ kind: "failed", percent: 42 }, 40)).toBe("échec (42%)");
+    expect(trackLabel({ kind: "failed", percent: 42, charsDone: 0 }, 40)).toBe("échec (42%)");
   });
 
   // Le cas « abandon ET échec en même temps » n'existe plus : RacerState ne permet plus
@@ -141,11 +141,11 @@ describe("trackPercent — le remplissage de la piste", () => {
   it("laisse un abandon là où il s'est arrêté", () => {
     // RacerState rend « fini ET abandonné » impossible à construire — plus besoin de
     // l'exclure explicitement, la voiture ne peut plus se téléporter sur cette ligne.
-    expect(trackPercent(20, 200, { kind: "abandoned" })).toBe(10);
+    expect(trackPercent(20, 200, { kind: "abandoned", charsDone: 0 })).toBe(10);
   });
 
   it("laisse un échec Master là où il s'est arrêté", () => {
-    expect(trackPercent(6, 200, { kind: "failed", percent: 42 })).toBe(3);
+    expect(trackPercent(6, 200, { kind: "failed", percent: 42, charsDone: 0 })).toBe(3);
   });
 
   it("ne dépasse jamais 100 % ni ne divise par zéro", () => {
@@ -155,7 +155,7 @@ describe("trackPercent — le remplissage de la piste", () => {
 
   it("sous Spam, un vrai vainqueur ne téléporte pas — le calcul naturel plafonne déjà seul", () => {
     expect(trackPercent(20, 20, { kind: "finished", wpm: 60, reps: 20 }, true)).toBe(100);
-    expect(trackPercent(14, 20, { kind: "outpaced", reps: 14 }, true)).toBe(70);
+    expect(trackPercent(14, 20, { kind: "outpaced", reps: 14, charsDone: 0 }, true)).toBe(70);
   });
 });
 
@@ -163,7 +163,7 @@ describe("trackPercent — le remplissage de la piste", () => {
 
 describe("trackLabel — un Brûlé passe avant tout le reste", () => {
   it("affiche l'instant du décès, pas un WPM", () => {
-    expect(trackLabel({ kind: "burned", atMs: 32_000 }, 55)).toBe("brûlé à 32 s");
+    expect(trackLabel({ kind: "burned", atMs: 32_000, charsDone: 0 }, 55)).toBe("brûlé à 32 s");
   });
 
   // « reste brûlé après le PlayerFinished que son log déclenche » n'est plus un cas de
@@ -173,7 +173,7 @@ describe("trackLabel — un Brûlé passe avant tout le reste", () => {
   // Voir "advanceState" plus bas pour ce cas précis.
 
   it("arrondit à la seconde", () => {
-    expect(trackLabel({ kind: "burned", atMs: 7_600 }, 0)).toBe("brûlé à 8 s");
+    expect(trackLabel({ kind: "burned", atMs: 7_600, charsDone: 0 }, 0)).toBe("brûlé à 8 s");
   });
 });
 
@@ -185,16 +185,17 @@ describe("advanceState — un verdict terminal ne se laisse plus écraser (issue
 
   it("un partant « en course » se laisse remplacer, quel que soit le nouvel état", () => {
     const racing: RacerState = { kind: "racing", charsDone: 10, reps: 2 };
-    expect(advanceState(racing, { kind: "burned", atMs: 5_000 })).toEqual({
+    expect(advanceState(racing, { kind: "burned", atMs: 5_000, charsDone: 10 })).toEqual({
       kind: "burned",
       atMs: 5_000,
+      charsDone: 10,
     });
   });
 
   it("un terminal déjà posé ne se laisse JAMAIS écraser, même par un autre terminal", () => {
     // Le cas qui a motivé le garde-fou : un PlayerFinished en vol après une brûlure ne
     // doit jamais faire redevenir « fini » une ligne déjà carbonisée (ADR 0015).
-    const burned: RacerState = { kind: "burned", atMs: 5_000 };
+    const burned: RacerState = { kind: "burned", atMs: 5_000, charsDone: 10 };
     expect(advanceState(burned, { kind: "finished", wpm: 40, reps: 0 })).toBe(burned);
   });
 });
@@ -227,13 +228,13 @@ describe("aliveIds — le dernier vivant se compte sur les partants figés", () 
     // p3 a rejoint la Room après le RaceStart — il n'apparaît que dans `players`, jamais
     // dans `racers`. S'il fuitait ici, un duel à 2 (p1 vs p2) ne se clôturerait jamais
     // tout seul : il resterait toujours 2 "vivants" (le survivant + le spectateur p3).
-    const states = new Map<string, RacerState>([["p2", { kind: "burned", atMs: 1_000 }]]);
+    const states = new Map<string, RacerState>([["p2", { kind: "burned", atMs: 1_000, charsDone: 0 }]]);
     expect(aliveIds(["p1", "p2"], states)).toEqual(["p1"]);
   });
 
   it("brûlés et sortis (arrivée/abandon/échec) sont tous deux retirés des vivants", () => {
     const states = new Map<string, RacerState>([
-      ["p2", { kind: "burned", atMs: 1_000 }],
+      ["p2", { kind: "burned", atMs: 1_000, charsDone: 0 }],
       ["p3", { kind: "finished", wpm: 40, reps: 0 }],
     ]);
     expect(aliveIds(["p1", "p2", "p3"], states)).toEqual(["p1"]);
@@ -310,12 +311,12 @@ describe("trackLabel — sous Spam la ligne affiche les répétitions, jamais un
   });
 
   it("un Devancé affiche son propre compte, sans même passer par spamReps", () => {
-    expect(trackLabel({ kind: "outpaced", reps: 5 }, 3)).toBe("5 ×");
+    expect(trackLabel({ kind: "outpaced", reps: 5, charsDone: 0 }, 3)).toBe("5 ×");
   });
 
   it("abandon et échec l'emportent toujours — ce ne sont pas des Devancé", () => {
-    expect(trackLabel({ kind: "abandoned" }, 3, 5)).toBe("abandon");
-    expect(trackLabel({ kind: "failed", percent: 42 }, 3, 5)).toBe("échec (42%)");
+    expect(trackLabel({ kind: "abandoned", charsDone: 0 }, 3, 5)).toBe("abandon");
+    expect(trackLabel({ kind: "failed", percent: 42, charsDone: 0 }, 3, 5)).toBe("échec (42%)");
   });
 });
 

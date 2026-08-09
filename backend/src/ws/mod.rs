@@ -560,7 +560,14 @@ fn spawn_refresh_text(rooms: Rooms, key: RoomKey, quotes: Arc<QuoteClient>) {
         }
         room.seed = seed;
         room.target_text = text;
-        room.text_source = effective;
+        // Le mode courant peut avoir changé pendant l'aller-retour : on relit sa règle
+        // maintenant, pas celle lue au début de la tâche (#145). Seul un mode dont
+        // `persists_source` est vrai (Normal) voit son texte résolu écrit dans
+        // `room.text_source` — Floor is lava y écrirait le `Words{LAVA_WORD_COUNT}` qu'il
+        // impose, effaçant la Source choisie par l'owner.
+        if rules(room.game_mode).persists_source() {
+            room.text_source = effective;
+        }
         let _ = room.tx.send(room_state(room));
     });
 }
@@ -2193,6 +2200,27 @@ mod tests {
         // La Source du lobby est gardée, pas écrasée : elle reprend effet au retour.
         set_game_mode(&rooms, "c1", "p1", GameMode::Normal);
         assert_eq!(pending_source(&rooms, "c1"), Some(TextSource::Words { count: 15 }));
+    }
+
+    #[tokio::test]
+    async fn passer_en_floor_is_lava_n_ecrase_pas_la_source_choisie() {
+        // Exerce le chemin RÉEL de #145 — l'écriture async de `spawn_refresh_text`, que
+        // `handle_socket` déclenche systématiquement après un `SetGameMode` accepté — pas
+        // seulement `pending_source` synchrone (déjà vérifié ci-dessus), qui avait laissé
+        // passer la régression.
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        set_text_source(&rooms, "c1", "p1", TextSource::Words { count: 15 });
+        set_game_mode(&rooms, "c1", "p1", GameMode::FloorIsLava);
+
+        let quotes = Arc::new(QuoteClient::from_env());
+        spawn_refresh_text(rooms.clone(), "c1".to_string(), quotes);
+        // Aucune E/S sur ce chemin (Floor is lava ne demande jamais de Quote) : la tâche
+        // se termine dès qu'elle est repolled une fois.
+        tokio::task::yield_now().await;
+        tokio::task::yield_now().await;
+
+        assert_eq!(source_of(&rooms, "c1"), TextSource::Words { count: 15 });
     }
 
     /// Un Brûlé : ce que `record_finish` produit une fois le log recompté.

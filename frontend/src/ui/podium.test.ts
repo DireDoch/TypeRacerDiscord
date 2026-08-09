@@ -155,6 +155,15 @@ describe("survivalLabel — le temps de survie remplace le Gap (ADR 0015)", () =
     expect(b.wpm).toBeGreaterThan(0);
     expect(b.forfeit).toBe(false);
   });
+
+  it("sans aucune brûlure (watchdog de durée, #148), l'inférence se trompe — gameMode la corrige", () => {
+    // Le second partant est parti avant le premier tic ; le survivant se voit seul et
+    // finit normalement (aucune brûlure n'est jamais enregistrée). Rien dans `results` ne
+    // distingue alors ça d'une Race normale à un seul finisseur.
+    const noBurns = [finished("survivor", 60, 40_000), forfeited("left-early")];
+    expect(gapLabel(noBurns, 0)).toBe("vainqueur"); // sans le champ : l'inférence se trompe
+    expect(gapLabel(noBurns, 0, "floorIsLava")).toBe("survécu 0 s"); // avec : le mode tranche
+  });
 });
 
 // --- Spam (ADR 0016) ----------------------------------------------------------

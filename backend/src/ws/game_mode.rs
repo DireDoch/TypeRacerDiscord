@@ -52,6 +52,12 @@ pub struct GameModeRules {
     /// La Source à regénérer de façon ASYNCHRONE (`spawn_refresh_text`, peut demander un
     /// fetch réseau pour une Quote) — `None` si ce mode produit son texte lui-même.
     pending_source: fn(&Room) -> Option<TextSource>,
+    /// Le résultat de `pending_source` doit-il être écrit dans `room.text_source` une fois
+    /// résolu ? Vrai pour Normal seul : `room.text_source` est le Réglage de salon choisi
+    /// par l'owner, pas le texte que ce mode impose. Faux pour Floor is lava, dont le
+    /// `Words{LAVA_WORD_COUNT}` de `pending_source` n'est qu'un texte à générer — l'écrire
+    /// dans `text_source` effacerait le choix de l'owner (bug : #145).
+    persists_source: bool,
     /// Appelé sous verrou juste après un `SetGameMode` accepté vers ce mode. No-op pour
     /// les modes qui suivent la Source (le changement de texte arrive plus tard, via
     /// `spawn_refresh_text` hors verrou) ; régénère tout de suite pour un mode qui produit
@@ -86,6 +92,9 @@ pub struct GameModeRules {
 impl GameModeRules {
     pub fn pending_source(&self, room: &Room) -> Option<TextSource> {
         (self.pending_source)(room)
+    }
+    pub fn persists_source(&self) -> bool {
+        self.persists_source
     }
     pub fn on_mode_switch(&self, room: &mut Room) {
         (self.on_mode_switch)(room)
@@ -128,6 +137,7 @@ const NORMAL: GameModeRules = GameModeRules {
     persists_run: true,
     accepts_spam_settings: false,
     pending_source: |room| Some(room.text_source),
+    persists_source: true,
     on_mode_switch: noop_switch,
     rematch_text: |room| {
         let count = match room.text_source {
@@ -152,6 +162,7 @@ const FLOOR_IS_LAVA: GameModeRules = GameModeRules {
     persists_run: false,
     accepts_spam_settings: false,
     pending_source: |_room| Some(TextSource::Words { count: LAVA_WORD_COUNT }),
+    persists_source: false,
     on_mode_switch: noop_switch,
     rematch_text: |room| {
         let (seed, text) = words_text(LAVA_WORD_COUNT);
@@ -183,6 +194,7 @@ const SPAM: GameModeRules = GameModeRules {
     persists_run: false,
     accepts_spam_settings: true,
     pending_source: |_room| None,
+    persists_source: false,
     on_mode_switch: refresh_spam_text,
     rematch_text: refresh_spam_text,
     tick: super::spam_tick_room,
