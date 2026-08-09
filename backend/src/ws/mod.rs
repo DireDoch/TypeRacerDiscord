@@ -25,6 +25,7 @@
 pub mod protocol;
 
 mod game_mode;
+mod room_setting;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -36,6 +37,7 @@ use sqlx::sqlite::SqlitePool;
 use tokio::sync::broadcast;
 
 use game_mode::rules;
+use room_setting::{apply_setting, RoomSetting, SettingOutcome};
 
 use crate::domain::difficulty::{detect_difficulty_failure, Difficulty};
 use crate::domain::replay::{compute_scoreboard, ScoreInput};
@@ -267,7 +269,11 @@ pub async fn handle_socket(
         };
         match serde_json::from_str::<ClientEvent>(&text) {
             Ok(ClientEvent::SetTextSource { source }) => {
-                if set_text_source(&rooms, &key, &player_id, source) {
+                // `match` direct sur `SettingOutcome` (ADR 0017) : seul `AppliedNeedsRetext`
+                // déclenche `spawn_refresh_text`, sans passer par un `bool` qui masquerait
+                // la distinction si `RoomSetting::apply` en venait à renvoyer `Applied` ici.
+                let outcome = apply_setting(&rooms, &key, &player_id, RoomSetting::TextSource(source));
+                if outcome == SettingOutcome::AppliedNeedsRetext {
                     spawn_refresh_text(rooms.clone(), key.clone(), quotes.clone());
                 }
             }
@@ -287,9 +293,11 @@ pub async fn handle_socket(
                 set_difficulty(&rooms, &key, &player_id, difficulty);
             }
             Ok(ClientEvent::SetGameMode { mode }) => {
-                // Comme SetTextSource : le mode impose son texte (ADR 0015), il faut donc
-                // le regénérer — hors verrou, la Source peut demander un aller-retour.
-                if set_game_mode(&rooms, &key, &player_id, mode) {
+                // Comme SetTextSource (ADR 0017) : `match` direct sur `SettingOutcome`, pas
+                // sur un `bool`. Le mode impose son texte (ADR 0015) — `AppliedNeedsRetext`
+                // le regénère hors verrou, la Source peut demander un aller-retour.
+                let outcome = apply_setting(&rooms, &key, &player_id, RoomSetting::GameMode(mode));
+                if outcome == SettingOutcome::AppliedNeedsRetext {
                     spawn_refresh_text(rooms.clone(), key.clone(), quotes.clone());
                 }
             }
@@ -514,18 +522,6 @@ fn spam_word_of(target_text: &str) -> &str {
     target_text.split(' ').next().unwrap_or("")
 }
 
-/// Valide un mot personnalisé (ADR 0016). Frontière de confiance : la valeur vient du
-/// client et s'impose aux sept autres.
-///
-/// Pas d'espace — il transformerait silencieusement « un mot répété » en plusieurs mots
-/// cibles et casserait le comptage des répétitions. Chiffres et ponctuation à l'intérieur
-/// sont acceptés : seule la FORME importe, pas le vocabulaire.
-fn valid_spam_word(word: &str) -> bool {
-    !word.is_empty()
-        && word.chars().count() <= SPAM_WORD_MAX_LEN
-        && !word.chars().any(|c| c.is_whitespace() || c.is_control())
-}
-
 /// Regénère le texte cible d'une Room depuis sa Source, puis re-diffuse `RoomState`.
 ///
 /// Toujours dans une tâche détachée, parce que `Quote` exige un appel réseau et que le
@@ -588,69 +584,29 @@ fn normalize_quote(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// SetTextSource : accepté du seul owner, hors course, et seulement pour une longueur
-/// autorisée. Renvoie `true` si le texte doit être regénéré.
+/// SetTextSource : Réglage de salon (#129). `bool` = accepté, pour les tests — le
+/// dispatch, lui, `match` `SettingOutcome` directement (ADR 0017) : il a besoin de
+/// distinguer `AppliedNeedsRetext` (déclenche `spawn_refresh_text` hors verrou), pas
+/// seulement « accepté ».
 fn set_text_source(rooms: &Rooms, key: &str, player_id: &str, source: TextSource) -> bool {
-    if let TextSource::Words { count } = source {
-        if !WORDS_LENGTHS.contains(&count) {
-            return false; // longueur arbitraire : refusée (elle s'impose aux 7 autres)
-        }
-    }
-    let mut rooms = rooms.lock().unwrap();
-    let Some(room) = rooms.get_mut(key) else { return false };
-    if room.owner != player_id || room.state.is_racing() {
-        return false; // non-owner, ou course en cours : ignoré
-    }
-    room.text_source = source;
-    true
+    apply_setting(rooms, key, player_id, RoomSetting::TextSource(source)).accepted()
 }
 
-/// SetMaxPlayers : accepté du seul owner, hors course, et dans la plage autorisée. Même
-/// frontière de confiance que la Source de texte — la valeur vient du client et s'impose
-/// aux autres. Re-diffuse `RoomState` lui-même (rien à regénérer, contrairement au texte).
+/// SetMaxPlayers : Réglage de salon (#129).
 fn set_max_players(rooms: &Rooms, key: &str, player_id: &str, max: usize) -> bool {
-    if !(MIN_PLAYERS..=MAX_PLAYERS).contains(&max) {
-        return false;
-    }
-    let mut rooms = rooms.lock().unwrap();
-    let Some(room) = rooms.get_mut(key) else { return false };
-    if room.owner != player_id || room.state.is_racing() {
-        return false; // non-owner, ou course en cours : ignoré
-    }
-    room.max_players = max;
-    let _ = room.tx.send(room_state(room));
-    true
+    apply_setting(rooms, key, player_id, RoomSetting::MaxPlayers(max)).accepted()
 }
 
-/// SetCountdown : accepté du seul owner, hors course, et parmi les valeurs autorisées.
-/// Même frontière de confiance que la taille max — re-diffuse `RoomState` lui-même.
+/// SetCountdown : Réglage de salon (#129).
 fn set_countdown(rooms: &Rooms, key: &str, player_id: &str, seconds: u32) -> bool {
-    if !COUNTDOWN_VALUES.contains(&seconds) {
-        return false;
-    }
-    let mut rooms = rooms.lock().unwrap();
-    let Some(room) = rooms.get_mut(key) else { return false };
-    if room.owner != player_id || room.state.is_racing() {
-        return false; // non-owner, ou course en cours : ignoré
-    }
-    room.countdown_s = seconds;
-    let _ = room.tx.send(room_state(room));
-    true
+    apply_setting(rooms, key, player_id, RoomSetting::Countdown(seconds)).accepted()
 }
 
-/// SetReadyCheck : accepté du seul owner, hors course. Vide les prêts déjà marqués à
-/// chaque bascule (ON ou OFF) — une activation repart de zéro, une désactivation ne
-/// laisse pas des prêts stales si le réglage est réactivé plus tard.
+/// SetReadyCheck : Réglage de salon (#129). Vide les prêts déjà marqués à chaque bascule
+/// (ON ou OFF) — une activation repart de zéro, une désactivation ne laisse pas des
+/// prêts stales si le réglage est réactivé plus tard.
 fn set_ready_check(rooms: &Rooms, key: &str, player_id: &str, enabled: bool) -> bool {
-    let mut rooms = rooms.lock().unwrap();
-    let Some(room) = rooms.get_mut(key) else { return false };
-    if room.owner != player_id || room.state.is_racing() {
-        return false; // non-owner, ou course en cours : ignoré
-    }
-    room.ready_check = enabled;
-    room.ready.clear();
-    let _ = room.tx.send(room_state(room));
-    true
+    apply_setting(rooms, key, player_id, RoomSetting::ReadyCheck(enabled)).accepted()
 }
 
 /// SetReady : n'importe quel présent se marque prêt/pas prêt, hors course. Un absent
@@ -677,115 +633,40 @@ fn all_present_ready(room: &Room) -> bool {
     !room.ready_check || room.players.iter().all(|p| room.ready.contains(p))
 }
 
-/// SetDifficulty : accepté du seul owner, hors course, et seulement Normal | Master —
-/// Expert n'est pas un Réglage de salon (ADR 0013), sa condition de déclenchement (mot
-/// soumis faux) est inatteignable dès que Race force la correction avant d'avancer.
+/// SetDifficulty : Réglage de salon (#129) — Expert n'en fait pas partie (ADR 0013),
+/// rejeté par `RoomSetting::value_is_valid`.
 fn set_difficulty(rooms: &Rooms, key: &str, player_id: &str, difficulty: Difficulty) -> bool {
-    if difficulty == Difficulty::Expert {
-        return false;
-    }
-    let mut rooms = rooms.lock().unwrap();
-    let Some(room) = rooms.get_mut(key) else { return false };
-    if room.owner != player_id || room.state.is_racing() {
-        return false;
-    }
-    room.difficulty = difficulty;
-    let _ = room.tx.send(room_state(room));
-    true
+    apply_setting(rooms, key, player_id, RoomSetting::Difficulty(difficulty)).accepted()
 }
 
-/// SetGameMode : accepté du seul owner, hors course (ADR 0015). Renvoie `true` si le
-/// réglage a été accepté — l'appelant regénère alors le texte HORS VERROU, comme après un
-/// changement de Source : basculer vers floor is lava impose un texte de 200 mots,
-/// en revenir rend la Source du lobby à nouveau effective.
+/// SetGameMode : Réglage de salon (#129, ADR 0015). `bool` = accepté, pour les tests —
+/// même remarque que `set_text_source` : le dispatch `match` `SettingOutcome`
+/// directement, lui.
 fn set_game_mode(rooms: &Rooms, key: &str, player_id: &str, mode: GameMode) -> bool {
-    let mut rooms = rooms.lock().unwrap();
-    let Some(room) = rooms.get_mut(key) else { return false };
-    if room.owner != player_id || room.state.is_racing() || room.game_mode == mode {
-        return false;
-    }
-    room.game_mode = mode;
-    // Pose son texte TOUT DE SUITE, sous le verrou, seulement si ce mode se génère
-    // lui-même (Spam) — le `RoomState` diffusé juste après doit déjà porter le mot. Les
-    // autres modes le font regénérer par l'appelant, hors verrou — une citation peut
-    // demander un aller-retour (`GameModeRules::on_mode_switch`, #128).
-    rules(mode).on_mode_switch(room);
-    let _ = room.tx.send(room_state(room));
-    true
+    apply_setting(rooms, key, player_id, RoomSetting::GameMode(mode)).accepted()
 }
 
-/// SetSpamWord : accepté du seul owner, hors course, et seulement pour un mot valide
-/// (ADR 0016). `None` = retour au mot par défaut. Regénère le texte sous le verrou —
-/// le texte EST le mot répété, changer l'un sans l'autre n'a pas de sens.
+/// SetSpamWord : Réglage de salon (#129, ADR 0016) — la garde « refusé hors Spam » et la
+/// régénération synchrone du texte vivent dans `RoomSetting::apply`.
 fn set_spam_word(rooms: &Rooms, key: &str, player_id: &str, word: Option<String>) -> bool {
-    if let Some(w) = &word {
-        if !valid_spam_word(w) {
-            return false; // mot vide, avec espace, ou démesuré : refusé
-        }
-    }
-    let mut rooms = rooms.lock().unwrap();
-    let Some(room) = rooms.get_mut(key) else { return false };
-    // Refusé HORS Spam, contrairement au seuil et au plafond qui, eux, se préparent
-    // d'avance sans rien casser : celui-ci REGÉNÈRE le texte, et l'accepter sous Normal
-    // remplacerait la citation du lobby par 60 répétitions d'un mot. L'UI masque déjà le
-    // champ — mais l'UI n'est pas la frontière de confiance (ADR 0016 ; `GameModeRules`
-    // porte cette garde depuis #128, `accepts_spam_settings`).
-    if room.owner != player_id || room.state.is_racing() || !rules(room.game_mode).accepts_spam_settings {
-        return false;
-    }
-    room.spam_word = word;
-    refresh_spam_text(room);
-    let _ = room.tx.send(room_state(room));
-    true
+    apply_setting(rooms, key, player_id, RoomSetting::SpamWord(word)).accepted()
 }
 
-/// SetSpamThreshold : accepté du seul owner, hors course, parmi `SPAM_THRESHOLD_VALUES`.
-/// Accepté même hors Spam — le réglage est simplement inerte, et le lobby peut le préparer
-/// avant de basculer, comme `SetLavaInterval`. Ne touche pas au texte.
+/// SetSpamThreshold : Réglage de salon (#129). Accepté même hors Spam — le réglage est
+/// simplement inerte, et le lobby peut le préparer avant de basculer.
 fn set_spam_threshold(rooms: &Rooms, key: &str, player_id: &str, count: u32) -> bool {
-    if !SPAM_THRESHOLD_VALUES.contains(&count) {
-        return false;
-    }
-    let mut rooms = rooms.lock().unwrap();
-    let Some(room) = rooms.get_mut(key) else { return false };
-    if room.owner != player_id || room.state.is_racing() {
-        return false;
-    }
-    room.spam_threshold = count;
-    let _ = room.tx.send(room_state(room));
-    true
+    apply_setting(rooms, key, player_id, RoomSetting::SpamThreshold(count)).accepted()
 }
 
-/// SetSpamTimeCap : même patron, parmi `SPAM_TIME_CAP_VALUES`.
+/// SetSpamTimeCap : Réglage de salon (#129), même patron.
 fn set_spam_time_cap(rooms: &Rooms, key: &str, player_id: &str, seconds: u32) -> bool {
-    if !SPAM_TIME_CAP_VALUES.contains(&seconds) {
-        return false;
-    }
-    let mut rooms = rooms.lock().unwrap();
-    let Some(room) = rooms.get_mut(key) else { return false };
-    if room.owner != player_id || room.state.is_racing() {
-        return false;
-    }
-    room.spam_time_cap_s = seconds;
-    let _ = room.tx.send(room_state(room));
-    true
+    apply_setting(rooms, key, player_id, RoomSetting::SpamTimeCap(seconds)).accepted()
 }
 
-/// SetLavaInterval : accepté du seul owner, hors course, parmi `LAVA_INTERVAL_VALUES`.
-/// Accepté même sous `Normal` — le réglage est simplement inerte, et le lobby peut le
-/// préparer avant de basculer. Ne touche pas au texte : seul le rythme change.
+/// SetLavaInterval : Réglage de salon (#129). Accepté même sous `Normal` — le réglage
+/// est simplement inerte, et le lobby peut le préparer avant de basculer.
 fn set_lava_interval(rooms: &Rooms, key: &str, player_id: &str, seconds: u32) -> bool {
-    if !LAVA_INTERVAL_VALUES.contains(&seconds) {
-        return false;
-    }
-    let mut rooms = rooms.lock().unwrap();
-    let Some(room) = rooms.get_mut(key) else { return false };
-    if room.owner != player_id || room.state.is_racing() {
-        return false;
-    }
-    room.lava_interval_s = seconds;
-    let _ = room.tx.send(room_state(room));
-    true
+    apply_setting(rooms, key, player_id, RoomSetting::LavaInterval(seconds)).accepted()
 }
 
 /// Inscrit la présence, s'abonne à la diffusion, puis re-diffuse RoomState à tous. Le
@@ -2314,21 +2195,6 @@ mod tests {
         assert_eq!(pending_source(&rooms, "c1"), Some(TextSource::Words { count: 15 }));
     }
 
-    #[test]
-    fn les_reglages_du_mode_sont_reserves_a_l_owner_et_hors_course() {
-        let rooms = new_rooms();
-        join(&rooms, "c1", "p1");
-        join(&rooms, "c1", "p2");
-        assert!(!set_game_mode(&rooms, "c1", "p2", GameMode::FloorIsLava)); // non-owner
-        assert!(!set_lava_interval(&rooms, "c1", "p2", 5)); // non-owner
-        assert!(!set_lava_interval(&rooms, "c1", "p1", 7)); // hors du jeu de valeurs
-        assert!(set_lava_interval(&rooms, "c1", "p1", 5));
-        assert!(set_game_mode(&rooms, "c1", "p1", GameMode::FloorIsLava));
-        start_race(&rooms, "c1", "p1");
-        assert!(!set_game_mode(&rooms, "c1", "p1", GameMode::Normal)); // pendant la course
-        assert!(!set_lava_interval(&rooms, "c1", "p1", 20));
-    }
-
     /// Un Brûlé : ce que `record_finish` produit une fois le log recompté.
     fn burnt(id: &str, wpm: f64, at_ms: f64) -> RaceResult {
         RaceResult { burned_at_ms: Some(at_ms), ..done(id, wpm) }
@@ -2489,25 +2355,6 @@ mod tests {
         // Chiffres et ponctuation À L'INTÉRIEUR du mot : acceptés, seule la forme compte.
         assert!(set_spam_word(&rooms, "c1", "p1", Some("l33t!".to_string())));
         assert!(set_spam_word(&rooms, "c1", "p1", Some("a".repeat(20))));
-    }
-
-    #[test]
-    fn les_reglages_de_spam_sont_reserves_a_l_owner_et_hors_course() {
-        let rooms = new_rooms();
-        join(&rooms, "c1", "p1");
-        join(&rooms, "c1", "p2");
-        set_game_mode(&rooms, "c1", "p1", GameMode::Spam); // sinon le mot serait refusé pour ça
-        assert!(!set_spam_word(&rooms, "c1", "p2", Some("no".to_string())));
-        assert!(!set_spam_threshold(&rooms, "c1", "p2", 30));
-        assert!(!set_spam_time_cap(&rooms, "c1", "p2", 45));
-        // Valeurs hors paliers : refusées même à l'owner (elles s'imposent aux autres).
-        assert!(!set_spam_threshold(&rooms, "c1", "p1", 17));
-        assert!(!set_spam_time_cap(&rooms, "c1", "p1", 300));
-
-        start_race(&rooms, "c1", "p1");
-        assert!(!set_spam_word(&rooms, "c1", "p1", Some("no".to_string())));
-        assert!(!set_spam_threshold(&rooms, "c1", "p1", 30));
-        assert!(!set_spam_time_cap(&rooms, "c1", "p1", 45));
     }
 
     #[test]
@@ -2752,6 +2599,58 @@ mod tests {
         assert_eq!(s.avatar_hash.as_deref(), Some("a_1234abcd"));
     }
 
+    // --- Réglage de salon (issue #129, ADR 0017) ------------------------------------
+    //
+    // La garde « owner + hors course » vivait dans neuf fonctions `set_*` ; elle vit
+    // maintenant une seule fois dans `room_setting::apply_setting`. Les deux tests
+    // ci-dessous la vérifient UNE fois, sur chaque variante de `RoomSetting`, plutôt que
+    // sept fois sur chaque fonction (les domaines de validité, eux, se testent sans Room
+    // dans `room_setting::tests::domaine_de_validite_de_chaque_reglage`).
+
+    /// Un exemple de chaque Réglage de salon, avec une valeur ACCEPTÉE une fois la garde
+    /// owner/hors-course passée — assez pour couvrir chaque variante par construction
+    /// plutôt que par répétition (`SetReady` en est absent : ADR 0017, ce n'en est pas
+    /// un). Room supposée déjà en Spam pour que `SpamWord` ne se heurte pas à sa 3e garde
+    /// (`accepts_spam_settings`), qui n'est pas ce que ces deux tests mesurent.
+    fn un_reglage_de_chaque_sorte() -> Vec<RoomSetting> {
+        vec![
+            RoomSetting::TextSource(TextSource::Words { count: 15 }),
+            RoomSetting::MaxPlayers(4),
+            RoomSetting::Countdown(3),
+            RoomSetting::ReadyCheck(true),
+            RoomSetting::Difficulty(Difficulty::Master),
+            RoomSetting::GameMode(GameMode::FloorIsLava),
+            RoomSetting::SpamWord(Some("wow".to_string())),
+            RoomSetting::SpamThreshold(30),
+            RoomSetting::SpamTimeCap(45),
+            RoomSetting::LavaInterval(5),
+        ]
+    }
+
+    #[test]
+    fn seul_l_owner_regle_un_reglage_de_salon() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1"); // owner
+        join(&rooms, "c1", "p2");
+        set_game_mode(&rooms, "c1", "p1", GameMode::Spam); // pour que SpamWord soit recevable
+
+        for setting in un_reglage_de_chaque_sorte() {
+            assert_eq!(apply_setting(&rooms, "c1", "p2", setting), SettingOutcome::Rejected);
+        }
+    }
+
+    #[test]
+    fn aucun_reglage_de_salon_ne_change_pendant_une_course() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        set_game_mode(&rooms, "c1", "p1", GameMode::Spam);
+        start_race(&rooms, "c1", "p1");
+
+        for setting in un_reglage_de_chaque_sorte() {
+            assert_eq!(apply_setting(&rooms, "c1", "p1", setting), SettingOutcome::Rejected);
+        }
+    }
+
     // --- Source de texte (ADR 0009) -----------------------------------------------
 
     fn source_of(rooms: &Rooms, key: &str) -> TextSource {
@@ -2770,28 +2669,6 @@ mod tests {
         join(&rooms, "c1", "p1");
         assert_eq!(source_of(&rooms, "c1"), TextSource::Quote);
         assert_eq!(word_count_of(&rooms, "c1"), ROOM_WORD_COUNT as usize);
-    }
-
-    #[test]
-    fn seul_l_owner_regle_la_source() {
-        let rooms = new_rooms();
-        join(&rooms, "c1", "p1"); // owner
-        join(&rooms, "c1", "p2");
-
-        assert!(!set_text_source(&rooms, "c1", "p2", TextSource::Words { count: 15 }));
-        assert_eq!(source_of(&rooms, "c1"), TextSource::Quote); // inchangé
-
-        assert!(set_text_source(&rooms, "c1", "p1", TextSource::Words { count: 15 }));
-        assert_eq!(source_of(&rooms, "c1"), TextSource::Words { count: 15 });
-    }
-
-    #[test]
-    fn la_source_ne_change_pas_pendant_une_course() {
-        let rooms = new_rooms();
-        join(&rooms, "c1", "p1");
-        start_race(&rooms, "c1", "p1");
-        assert!(!set_text_source(&rooms, "c1", "p1", TextSource::Words { count: 50 }));
-        assert_eq!(source_of(&rooms, "c1"), TextSource::Quote);
     }
 
     #[test]
@@ -2925,28 +2802,6 @@ mod tests {
     }
 
     #[test]
-    fn seul_l_owner_regle_la_taille_max() {
-        let rooms = new_rooms();
-        join(&rooms, "c1", "p1"); // owner
-        join(&rooms, "c1", "p2");
-
-        assert!(!set_max_players(&rooms, "c1", "p2", 4));
-        assert_eq!(max_of(&rooms, "c1"), MAX_PLAYERS); // inchangé
-
-        assert!(set_max_players(&rooms, "c1", "p1", 4));
-        assert_eq!(max_of(&rooms, "c1"), 4);
-    }
-
-    #[test]
-    fn la_taille_max_ne_change_pas_pendant_une_course() {
-        let rooms = new_rooms();
-        join(&rooms, "c1", "p1");
-        start_race(&rooms, "c1", "p1");
-        assert!(!set_max_players(&rooms, "c1", "p1", 2));
-        assert_eq!(max_of(&rooms, "c1"), MAX_PLAYERS);
-    }
-
-    #[test]
     fn une_taille_hors_plage_est_refusee() {
         // Frontière de confiance : 0 fermerait la Room, 999 casserait la piste des autres.
         let rooms = new_rooms();
@@ -2993,28 +2848,6 @@ mod tests {
     }
 
     #[test]
-    fn seul_l_owner_regle_le_decompte() {
-        let rooms = new_rooms();
-        join(&rooms, "c1", "p1"); // owner
-        join(&rooms, "c1", "p2");
-
-        assert!(!set_countdown(&rooms, "c1", "p2", 3));
-        assert_eq!(countdown_of(&rooms, "c1"), DEFAULT_COUNTDOWN_S); // inchangé
-
-        assert!(set_countdown(&rooms, "c1", "p1", 3));
-        assert_eq!(countdown_of(&rooms, "c1"), 3);
-    }
-
-    #[test]
-    fn le_decompte_ne_change_pas_pendant_une_course() {
-        let rooms = new_rooms();
-        join(&rooms, "c1", "p1");
-        start_race(&rooms, "c1", "p1");
-        assert!(!set_countdown(&rooms, "c1", "p1", 3));
-        assert_eq!(countdown_of(&rooms, "c1"), DEFAULT_COUNTDOWN_S);
-    }
-
-    #[test]
     fn une_duree_hors_plage_est_refusee() {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
@@ -3030,28 +2863,6 @@ mod tests {
 
     fn ready_check_of(rooms: &Rooms, key: &str) -> bool {
         rooms.lock().unwrap().get(key).unwrap().ready_check
-    }
-
-    #[test]
-    fn seul_l_owner_active_le_ready_check() {
-        let rooms = new_rooms();
-        join(&rooms, "c1", "p1"); // owner
-        join(&rooms, "c1", "p2");
-
-        assert!(!set_ready_check(&rooms, "c1", "p2", true));
-        assert!(!ready_check_of(&rooms, "c1")); // inchangé
-
-        assert!(set_ready_check(&rooms, "c1", "p1", true));
-        assert!(ready_check_of(&rooms, "c1"));
-    }
-
-    #[test]
-    fn le_ready_check_ne_change_pas_pendant_une_course() {
-        let rooms = new_rooms();
-        join(&rooms, "c1", "p1");
-        start_race(&rooms, "c1", "p1");
-        assert!(!set_ready_check(&rooms, "c1", "p1", true));
-        assert!(!ready_check_of(&rooms, "c1"));
     }
 
     #[test]
@@ -3139,34 +2950,12 @@ mod tests {
     }
 
     #[test]
-    fn seul_l_owner_regle_la_difficulte() {
-        let rooms = new_rooms();
-        join(&rooms, "c1", "p1"); // owner
-        join(&rooms, "c1", "p2");
-
-        assert!(!set_difficulty(&rooms, "c1", "p2", Difficulty::Master));
-        assert_eq!(difficulty_of(&rooms, "c1"), Difficulty::Normal);
-
-        assert!(set_difficulty(&rooms, "c1", "p1", Difficulty::Master));
-        assert_eq!(difficulty_of(&rooms, "c1"), Difficulty::Master);
-    }
-
-    #[test]
     fn expert_est_refuse_comme_reglage_de_salon() {
         // Expert n'est pas un Réglage de salon (ADR 0013) : sa condition de déclenchement
         // (mot soumis faux) est inatteignable dès que la course force la correction.
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
         assert!(!set_difficulty(&rooms, "c1", "p1", Difficulty::Expert));
-        assert_eq!(difficulty_of(&rooms, "c1"), Difficulty::Normal);
-    }
-
-    #[test]
-    fn la_difficulte_ne_change_pas_pendant_une_course() {
-        let rooms = new_rooms();
-        join(&rooms, "c1", "p1");
-        start_race(&rooms, "c1", "p1");
-        assert!(!set_difficulty(&rooms, "c1", "p1", Difficulty::Master));
         assert_eq!(difficulty_of(&rooms, "c1"), Difficulty::Normal);
     }
 
