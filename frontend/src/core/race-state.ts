@@ -51,6 +51,11 @@ function repsOf(state: RacerState): number {
     : 0;
 }
 
+/** `charsDone` d'un état, 0 là où il n'a pas de sens (fini, abandon, échec, brûlé). */
+export function charsOf(state: RacerState): number {
+  return state.kind === "racing" ? state.charsDone : 0;
+}
+
 /** Les vivants (ADR 0015) : `racers` doit être la liste FIGÉE au RaceStart. */
 export function aliveIds(racers: string[], states: Map<string, RacerState>): string[] {
   return racers.filter((id) => {
@@ -163,7 +168,10 @@ export interface ReduceContext {
   myReps: number;
 }
 
-function repsFor(state: RaceState, ctx: ReduceContext, playerId: string): number {
+/** Répétitions d'un partant : les SIENNES se relisent toujours en local (`ctx.myReps`,
+ *  plus fraîches que le dernier `Progress` reçu) ; celles des autres viennent de leur
+ *  dernier état connu. */
+export function repsFor(state: RaceState, ctx: ReduceContext, playerId: string): number {
   return playerId === ctx.me ? ctx.myReps : repsOf(stateOf(state, playerId));
 }
 

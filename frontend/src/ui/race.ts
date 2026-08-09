@@ -34,8 +34,6 @@ import {
   type GameMode,
   type Identity,
   type PlayerEntry,
-  type PlayOfTheGame,
-  type RaceResult,
   type ServerEvent,
   type TextSource,
 } from "../core/net";
@@ -44,8 +42,17 @@ import { runPlayOfTheGame } from "./potg";
 import { liveWpm } from "../live-stats";
 import { wordsHtml, placeCaret, escapeText } from "./typing-zone";
 import { avatarUrl, getIdentity, proxyBase, updateActivity } from "../discord";
-
-type Phase = "connecting" | "lobby" | "countdown" | "running" | "over" | "failed";
+import {
+  reduce,
+  initialRaceState,
+  stateOf,
+  charsOf,
+  repsFor,
+  alive,
+  isLastAlive,
+  type RaceState,
+  type RacerState,
+} from "../core/race-state";
 
 /**
  * Comment on entre dans une Room (ADR 0008). Le salon vocal est créé à la volée ; un
@@ -68,42 +75,8 @@ export type RaceIntent =
  */
 export const RACE_COUNTDOWN_S = 7;
 
-/**
- * L'état d'un partant, EXACTEMENT les quatre états terminaux du glossaire (Abandon,
- * Failed, Brûlé, Devancé) plus les deux non-terminaux (en course, arrivé) — un partant ne
- * peut pas être dans deux à la fois, GARANTI PAR LE TYPE au lieu d'un ordre de `if` à
- * documenter. « Devancé » s'anglicise en `outpaced` dans le type (le code est déjà en
- * anglais côté types : `Keystroke`, `RaceResult`) ; CONTEXT.md note le lien avec le terme
- * du glossaire.
- *
- * `reps` sur `finished` : sous Spam, la piste affiche TOUJOURS le compte de répétitions,
- * jamais le WPM (ADR 0016) — y compris pour le vainqueur une fois son `PlayerFinished`
- * reçu. `PlayerFinished` ne porte pas `reps`, donc on le fige ici au moment de la
- * transition plutôt que de le perdre. `0` partout ailleurs, où il ne s'affiche jamais.
- */
-export type RacerState =
-  | { kind: "racing"; charsDone: number; reps: number }
-  | { kind: "finished"; wpm: number; reps: number }
-  | { kind: "abandoned" }
-  | { kind: "failed"; percent: number }
-  | { kind: "burned"; atMs: number }
-  | { kind: "outpaced"; reps: number };
-
-/**
- * Pose `next` SAUF si `cur` est déjà un état terminal — un `PlayerFinished`/`Progress` en
- * vol au moment d'une brûlure/arrêt de Spam ne doit jamais écraser le verdict déjà posé.
- * C'est ce garde-fou, À L'ÉCRITURE, qui remplace l'ordre des `if` de l'ancien `trackLabel`
- * (issue #130) : un seul état vaut, plus une priorité à retenir à la lecture.
- *
- * Sûr précisément parce que le protocole garantit l'ordre : une brûlure (`PlayerBurned`)
- * est TOUJOURS diffusée avant le `Finish` qu'elle déclenche chez la victime (le serveur
- * traite les messages d'une Room en série, sous un seul verrou — ADR 0015), et une
- * connexion WebSocket préserve l'ordre d'émission. Un `PlayerFinished` ne peut donc jamais
- * doubler le `PlayerBurned` du même joueur dans l'autre sens. Pure.
- */
-export function advanceState(cur: RacerState | undefined, next: RacerState): RacerState {
-  return cur === undefined || cur.kind === "racing" ? next : cur;
-}
+// `Phase`, `RacerState` et `advanceState` vivent désormais dans `core/race-state.ts`
+// (issue #132/#139) : c'est l'état piloté par le serveur, plus une décision de vue.
 
 export class Race {
   private me = "";
@@ -112,39 +85,12 @@ export class Race {
   private identity: Identity = { displayName: "", avatarHash: null };
   private socket: RaceSocket | null = null;
 
-  private phase: Phase = "connecting";
-  /** Présents AVEC leur Display identity — c'est ce que la piste dessine. */
-  private players: PlayerEntry[] = [];
-  /** Partants figés au RaceStart (miroir du `racers` serveur) — un rejoignant en cours
-   * de course entre dans `players` mais jamais ici, donc jamais dans `alive()`. */
-  private racers: PlayerEntry[] = [];
-  private owner = "";
-  private targetText = "";
-  private targetWords: string[] = [];
-  /** Code de partie de la Room, `null` pour une Room de salon vocal. */
-  private code: string | null = null;
-  /** Source EFFECTIVE du texte (ADR 0009) — pas celle demandée : un repli se lit ici. */
-  private textSource: TextSource = { kind: "quote" };
-  /** Taille max de la Room (réglage de l'hôte). Défaut = plafond dur du serveur. */
-  private maxPlayers = 8;
-  /** Durée du décompte (réglage de l'hôte, issue #61). Défaut avant le 1er RoomState. */
-  private countdownS = RACE_COUNTDOWN_S;
-  /** Ready-check (réglage de l'hôte, issue #63). Mon état "prêt" vit sur `players[]`. */
-  private readyCheck = false;
-  /** Difficulté de la Room (réglage de l'hôte, issue #71, ADR 0013). */
-  private difficulty: Difficulty = "normal";
-  /** Mode de jeu de la Room (réglage de l'hôte, ADR 0015) — comment la course se gagne. */
-  private gameMode: GameMode = "normal";
-  /** Intervalle d'élimination de floor is lava, en secondes. Inerte en `normal`. */
-  private lavaIntervalS = 10;
-  /** Mot personnalisé de Spam (réglage de l'hôte, ADR 0016), `null` = mot par défaut. */
-  private spamWord: string | null = null;
-  /** Seuil de répétitions qui gagne la Race. Inerte hors `spam`. */
-  private spamThreshold = 20;
-  /** Plafond de temps de Spam, en secondes. Inerte hors `spam`. */
-  private spamTimeCapS = 30;
-  /** Message affiché en phase "failed" (code inconnu, Room pleine). */
-  private failure = "";
+  /** État piloté par le serveur — phase, présents, réglages de Room, `RacerState` par
+   *  joueur, résultats — voir `core/race-state.ts` (issue #132/#139). Transitionne
+   *  UNIQUEMENT via `reduce()`, sauf `phase: "running"` : posé en local par le Countdown
+   *  (aucun ServerEvent ne l'annonce), et le texte de Spam, rallongé en place par
+   *  `topUpSpamText` (FreeInput tient `targetWords` par référence). */
+  private state: RaceState = initialRaceState();
 
   private clock = new RunClock();
   private controller = new FreeInput([]);
@@ -153,18 +99,6 @@ export class Race {
   /** Nombre de mots verrouillés au dernier `Progress` diffusé (#94) — le seul déclencheur. */
   private lastLockedSent = 0;
 
-  /** Un `RacerState` par joueur — un seul état, jamais deux à la fois (issue #130). */
-  private states = new Map<string, RacerState>();
-  /** Résultats complets de la dernière course, DANS L'ORDRE DU CLASSEMENT (ADR 0010). */
-  private results: RaceResult[] = [];
-  /** Le duel le plus serré (ADR 0011), ou `null` s'il n'y en a pas eu → bouton absent. */
-  private playOfTheGame: PlayOfTheGame | null = null;
-  /**
-   * Snapshot des mots de la course JOUÉE, figé à `RaceOver`. Le `RoomState` de revanche
-   * (ordonné APRÈS, garanti par le WebSocket) écrase `targetWords` avec le texte suivant ;
-   * le Play of the Game rejoue les logs contre CE texte-ci, jamais celui de la revanche.
-   */
-  private racedWords: string[] = [];
   /** Handle d'arrêt du Play of the Game : sa présence EST « le duel est à l'écran ». */
   private potgStop: (() => void) | null = null;
   private countdownN = RACE_COUNTDOWN_S;
@@ -219,164 +153,67 @@ export class Race {
 
   // --- Événements serveur -----------------------------------------------------
 
+  /**
+   * `race.ts` ne décide plus la transition d'état — `reduce()` (core/race-state.ts,
+   * issue #132/#140) la porte, pure et testée sans DOM ni WebSocket. Ce qui reste ici :
+   * déclencher les EFFETS que la transition appelle (Countdown, rAF, `socket.send`,
+   * `updateActivity`, `render`) en comparant la phase avant/après.
+   */
   private onEvent(e: ServerEvent): void {
+    const prevPhase = this.state.phase;
+    this.state = reduce(this.state, e, { me: this.me, myReps: this.myReps() });
     switch (e.type) {
       case "RoomState":
-        this.players = e.players;
-        this.owner = e.owner;
-        this.code = e.code;
-        this.textSource = e.textSource;
-        this.maxPlayers = e.maxPlayers;
-        this.countdownS = e.countdownS;
-        this.readyCheck = e.readyCheck;
-        this.difficulty = e.difficulty;
-        this.gameMode = e.gameMode;
-        this.lavaIntervalS = e.lavaIntervalS;
-        this.spamWord = e.spamWord;
-        this.spamThreshold = e.spamThreshold;
-        this.spamTimeCapS = e.spamTimeCapS;
-        // Le texte n'est PAS repris pendant qu'on court. Le serveur ne le change jamais
-        // en course, mais un rejoignant fait re-diffuser `RoomState` — et sous Spam le
-        // client a rallongé son texte lui-même (`topUpSpamText`) : le reprendre du
-        // serveur le retronquerait à sa longueur de départ, sous les doigts du joueur et
-        // sous le curseur de `FreeInput`, qui tient ce tableau par référence.
-        if (this.phase !== "countdown" && this.phase !== "running") {
-          this.targetText = e.targetText;
-          this.targetWords = e.targetText.split(" ").filter((w) => w.length > 0);
-        }
         // Duel à l'écran : on met à jour les données (join/leave du lobby d'après-course)
         // mais on NE re-render PAS — sinon on effacerait le Play of the Game en pleine lecture.
         if (this.potgStop) return;
-        if (this.phase === "connecting") {
-          this.phase = "lobby";
-          updateActivity("lobby");
-        }
+        if (prevPhase === "connecting" && this.state.phase === "lobby") updateActivity("lobby");
         this.render();
         break;
       // Jointure refusée : le socket reste ouvert côté serveur, mais la reprise se fait
       // par le menu (c'est lui qui porte le champ de saisie du code).
       case "RoomNotFound":
-        this.fail("Code de partie inconnu. Vérifie-le auprès de l'hôte.");
-        break;
       case "RoomFull":
-        this.fail("Cette partie est complète (8 joueurs).");
+        this.render();
         break;
       case "RaceStart":
-        this.startCountdown();
+        // Un seul décompte vivant : `reduce` ignore un second RaceStart pendant le
+        // décompte/la course, donc la phase n'a pas bougé — inutile d'y relancer les effets.
+        if (prevPhase !== "countdown" && prevPhase !== "running") this.startCountdown();
         break;
       case "PlayerProgress":
-        // N'écrase jamais un état terminal déjà connu — un Progress attardé (en vol au
-        // moment d'un Finish/Forfeit/Fail/brûlure/arrêt de Spam) ne doit pas ressusciter
-        // « en course » un partant que le serveur a déjà clos.
-        this.advance(e.playerId, { kind: "racing", charsDone: e.charsDone, reps: e.reps });
-        if (this.phase === "running") this.renderBars();
+        if (this.state.phase === "running") this.renderBars();
         break;
       // Spam terminé (ADR 0016) : seuil atteint par quelqu'un, ou plafond de temps expiré
       // — le message ne dit pas lequel, et personne n'a besoin de le savoir pour arrêter
       // de taper. Même geste que le brûlé de floor is lava : on livre son log et on
       // attend RaceOver, qui porte le seul classement qui compte (recompté par le serveur).
       case "SpamStop":
-        this.markOutpaced();
         this.stopAndSubmit();
-        if (this.phase === "running") this.renderBars();
+        if (this.state.phase === "running") this.renderBars();
         break;
-      case "PlayerFinished": {
-        // `reps` sous Spam : PlayerFinished ne le porte pas, on fige le dernier connu au
-        // moment de la transition — sinon la piste retomberait à « 0 × » sur la ligne
-        // d'un vrai vainqueur (voir RacerState).
-        const reps = this.repsFor(e.playerId, this.stateOf(e.playerId));
-        this.advance(
-          e.playerId,
-          e.forfeit
-            ? { kind: "abandoned" }
-            : e.failedPercent !== null
-              ? { kind: "failed", percent: e.failedPercent }
-              : { kind: "finished", wpm: e.wpm, reps },
-        );
+      case "PlayerFinished":
         // Un partant peut aussi sortir par Abandon/Échec Master, pas seulement par le
-        // feu (ADR 0015) — sans ce même réflexe qu'`onBurned`, le survivant ne se
+        // feu (ADR 0015) — sans ce même réflexe que PlayerBurned, le survivant ne se
         // déduirait dernier vivant qu'au watchdog (10 min).
-        if (this.gameMode === "floorIsLava" && this.isLastAlive()) this.stopAndSubmit();
-        if (this.phase === "running") this.renderBars();
+        if (this.state.gameMode === "floorIsLava" && isLastAlive(this.state, this.me)) this.stopAndSubmit();
+        if (this.state.phase === "running") this.renderBars();
         break;
-      }
+      // Élimination floor is lava (ADR 0015). Le serveur a déjà décidé ; ce message dit au
+      // brûlé d'arrêter de taper et de renvoyer son log. Le survivant, lui, n'a pas de
+      // message à lui : il déduit sa victoire de ce qu'il ne reste que lui de vivant, et
+      // envoie le sien de la même façon — sans ça, sa course ne se clôturerait qu'au
+      // watchdog (10 min).
       case "PlayerBurned":
-        this.onBurned(e.playerId, e.atMs);
+        if (e.playerId === this.me || isLastAlive(this.state, this.me)) this.stopAndSubmit();
+        if (this.state.phase === "running") this.renderBars();
         break;
       case "RaceOver":
-        this.results = e.results;
-        this.playOfTheGame = e.playOfTheGame;
-        // Snapshot AVANT que le RoomState de revanche (ordonné après) n'écrase targetWords.
-        this.racedWords = this.targetWords.slice();
-        this.phase = "over";
         updateActivity("lobby"); // podium affiché, mais on est revenu dans la Room
         cancelAnimationFrame(this.rafId);
         this.render();
         break;
     }
-  }
-
-  /**
-   * Élimination floor is lava (ADR 0015). Le serveur a déjà décidé ; ce message dit au
-   * brûlé d'arrêter de taper et de renvoyer son log — d'où le `Finish`, qui veut déjà dire
-   * « voici mon log, j'ai fini ». Le survivant, lui, n'a pas de message à lui : il déduit
-   * sa victoire de ce qu'il ne reste que lui de vivant, et envoie le sien de la même façon.
-   * Sans ça, sa course ne se clôturerait qu'au watchdog.
-   */
-  private onBurned(playerId: string, atMs: number): void {
-    this.advance(playerId, { kind: "burned", atMs });
-    if (playerId === this.me) this.stopAndSubmit();
-    else if (this.isLastAlive()) this.stopAndSubmit();
-    if (this.phase === "running") this.renderBars();
-  }
-
-  /** Lit l'état d'un partant, « en course à zéro » avant son premier signal (ADR 0016
-   *  inclus : personne n'a encore de `reps` avant le premier mot verrouillé). */
-  private stateOf(playerId: string): RacerState {
-    return this.states.get(playerId) ?? { kind: "racing", charsDone: 0, reps: 0 };
-  }
-
-  /** Pose un état via `advanceState` (garde-fou contre un message en vol qui écraserait
-   *  un verdict déjà posé — voir sa doc). */
-  private advance(playerId: string, next: RacerState): void {
-    this.states.set(playerId, advanceState(this.states.get(playerId), next));
-  }
-
-  /** Répétitions d'un partant : les MIENNES se relisent toujours en local (plus fraîches
-   *  que le dernier `Progress` reçu, qui a pu dater d'avant mon dernier mot verrouillé) ;
-   *  celles des autres viennent de leur dernier état connu. */
-  private repsFor(playerId: string, state: RacerState): number {
-    return playerId === this.me ? this.myReps() : repsOf(state);
-  }
-
-  /**
-   * Devancé (ADR 0016) : posé au `SpamStop`, pas déduit à l'affichage — le seul instant où
-   * le client sait qui est encore « en course ». Si quelqu'un a atteint le seuil, tous les
-   * autres sont Devancé ; sinon (plafond de temps, personne ne l'a atteint) c'est le plus
-   * haut compte connu qui gagne (glossaire Spam) et tout le reste est Devancé.
-   */
-  private markOutpaced(): void {
-    const racing: { playerId: string; reps: number }[] = [];
-    for (const p of this.racers) {
-      const s = this.stateOf(p.playerId);
-      if (s.kind !== "racing") continue;
-      racing.push({ playerId: p.playerId, reps: this.repsFor(p.playerId, s) });
-    }
-    for (const r of outpaced(racing, this.spamThreshold)) {
-      this.states.set(r.playerId, { kind: "outpaced", reps: r.reps });
-    }
-  }
-
-  /** Les vivants : partants figés au RaceStart, ni brûlés ni déjà sortis (arrivée,
-   * abandon, échec) — un rejoignant en cours de course n'en fait jamais partie. */
-  private alive(): PlayerEntry[] {
-    const ids = new Set(aliveIds(this.racers.map((p) => p.playerId), this.states));
-    return this.racers.filter((p) => ids.has(p.playerId));
-  }
-
-  private isLastAlive(): boolean {
-    const alive = this.alive();
-    return alive.length === 1 && alive[0].playerId === this.me;
   }
 
   /** Arrête ma saisie et livre mon log — brûlé ou vainqueur, c'est le même geste. */
@@ -386,33 +223,24 @@ export class Race {
     this.socket?.send({ type: "Finish", keystrokes: this.log, endedAtMs: this.clock.elapsed() });
   }
 
-  private fail(message: string): void {
-    this.phase = "failed";
-    this.failure = message;
-    this.render();
-  }
-
   // --- Cycle de course --------------------------------------------------------
 
+  /**
+   * Effets du passage en "countdown" — `reduce` a déjà gelé `racers`/`states`/
+   * `playOfTheGame` et posé la phase ; seul l'appelant (`onEvent`) sait si la transition
+   * a vraiment eu lieu (voir sa garde sur `prevPhase`), donc plus de garde ici.
+   */
   private startCountdown(): void {
     // Un RaceStart reçu pendant le Play of the Game interrompt l'écran : la course prime.
     this.potgStop?.();
     this.potgStop = null;
-    // Un seul décompte vivant : un second RaceStart pendant le décompte/la course est ignoré.
-    if (this.phase === "countdown" || this.phase === "running") return;
-    this.phase = "countdown";
-    this.countdownN = this.countdownS;
-    // Figé ici, pas relu ailleurs : un RoomState reçu pendant la course (un rejoignant)
-    // ne doit pas faire grossir la liste des partants.
-    this.racers = this.players.slice();
-    this.states.clear();
-    this.playOfTheGame = null;
+    this.countdownN = this.state.countdownS;
     // Contrôleur neuf dès le décompte : le texte ENTIER s'affiche vierge (le joueur lit
     // le début pendant l'attente) — indispensable après une revanche (état stale).
     this.doneLocal = false;
-    this.controller = new FreeInput(this.targetWords);
+    this.controller = new FreeInput(this.state.targetWords);
     this.countdown = new Countdown(
-      this.countdownS,
+      this.state.countdownS,
       (n) => {
         this.countdownN = n;
         this.render();
@@ -422,14 +250,16 @@ export class Race {
     this.countdown.start();
   }
 
+  /** `phase: "running"` n'est PAS posé par `reduce` : c'est ce Countdown local qui y
+   *  bascule à zéro, sans qu'aucun ServerEvent ne l'annonce (issue #132/#140). */
   private beginRun(): void {
     this.countdown = null;
-    this.phase = "running";
-    updateActivity(this.gameMode === "normal" ? "race" : this.gameMode);
+    this.state = { ...this.state, phase: "running" };
+    updateActivity(this.state.gameMode === "normal" ? "race" : this.state.gameMode);
     this.doneLocal = false;
     this.log = [];
     this.lastLockedSent = 0; // revanche : sans ça, aucun Progress ne repartirait
-    this.controller = new FreeInput(this.targetWords);
+    this.controller = new FreeInput(this.state.targetWords);
     this.clock.start(); // t=0 (pilotée par RaceStart, plus par un décompte local isolé)
     this.render();
     this.loop();
@@ -437,7 +267,7 @@ export class Race {
 
   /** Boucle d'affichage : rafraîchit mon WPM live tant que je cours. */
   private loop(): void {
-    if (this.phase !== "running") return;
+    if (this.state.phase !== "running") return;
     this.renderBars();
     this.rafId = requestAnimationFrame(() => this.loop());
   }
@@ -449,8 +279,8 @@ export class Race {
    * 0 hors Spam, où la notion n'existe pas.
    */
   private myReps(): number {
-    if (this.gameMode !== "spam") return 0;
-    return spamReps(this.targetWords[0] ?? "", this.controller.view());
+    if (this.state.gameMode !== "spam") return 0;
+    return spamReps(this.state.targetWords[0] ?? "", this.controller.view());
   }
 
   /**
@@ -464,27 +294,27 @@ export class Race {
    * mots déjà verrouillés, c'est-à-dire toutes les répétitions déjà acquises.
    */
   private topUpSpamText(): void {
-    if (this.gameMode !== "spam") return;
-    const word = this.targetWords[0];
+    if (this.state.gameMode !== "spam") return;
+    const word = this.state.targetWords[0];
     if (word === undefined) return;
-    const n = spamRefill(this.targetWords.length, this.controller.view().wordIndex);
+    const n = spamRefill(this.state.targetWords.length, this.controller.view().wordIndex);
     if (n === 0) return;
-    for (let i = 0; i < n; i++) this.targetWords.push(word);
-    this.targetText = this.targetWords.join(" ");
+    for (let i = 0; i < n; i++) this.state.targetWords.push(word);
+    this.state.targetText = this.state.targetWords.join(" ");
   }
 
   /** charsDone = mots verrouillés (+ espaces) + préfixe correct du mot courant. */
   private charsDone(): number {
     const v = this.controller.view();
     const n = v.lockedWords.reduce((a, w) => a + w.length, 0) + v.lockedWords.length;
-    const t = this.targetWords[v.wordIndex] ?? "";
+    const t = this.state.targetWords[v.wordIndex] ?? "";
     let i = 0;
     while (i < v.typed.length && i < t.length && v.typed[i] === t[i]) i++;
     return n + i;
   }
 
   private onKeyDown(e: KeyboardEvent): void {
-    if (this.phase !== "running" || this.doneLocal) return;
+    if (this.state.phase !== "running" || this.doneLocal) return;
     if (e.key !== "Backspace" && e.key !== " " && e.key.length !== 1) return;
     e.preventDefault();
 
@@ -494,8 +324,8 @@ export class Race {
     // Difficulté Master (issue #71, ADR 0013) : détectée localement sur le log free-input,
     // avant tout le reste. Le serveur REJOUE contre son propre texte pour confirmer avant
     // d'enregistrer un Échec — jamais fait confiance sur la seule parole du client.
-    if (this.difficulty === "master") {
-      const fail = detectDifficultyFailure("master", this.targetWords, this.log);
+    if (this.state.difficulty === "master") {
+      const fail = detectDifficultyFailure("master", this.state.targetWords, this.log);
       if (fail) {
         this.doneLocal = true;
         this.socket?.send({ type: "Fail", keystrokes: this.log });
@@ -527,7 +357,7 @@ export class Race {
     // mais il faut avoir corrigé ses fautes pour terminer). Sous Spam et floor is lava
     // c'est inatteignable par construction — le texte n'a pas de fin —, et c'est le
     // serveur qui arrête la course (`SpamStop`, `PlayerBurned`).
-    if (raceComplete(this.targetWords, this.controller.view())) {
+    if (raceComplete(this.state.targetWords, this.controller.view())) {
       this.doneLocal = true;
       this.socket?.send({ type: "Finish", keystrokes: this.log, endedAtMs: this.clock.elapsed() });
     }
@@ -541,7 +371,7 @@ export class Race {
    * ensuite RaceOver comme après une vraie arrivée — d'où le même « en attente des autres… ».
    */
   private forfeit(): void {
-    if (this.phase !== "running" || this.doneLocal) return;
+    if (this.state.phase !== "running" || this.doneLocal) return;
     this.doneLocal = true;
     this.socket?.send({ type: "Forfeit" });
     this.render();
@@ -561,10 +391,10 @@ export class Race {
       ?.addEventListener("click", () => this.forfeit());
     this.wireLobbySettings();
     this.root.querySelector<HTMLButtonElement>("#toggleReady")?.addEventListener("click", () => {
-      const me = this.players.find((p) => p.playerId === this.me);
+      const me = this.state.players.find((p) => p.playerId === this.me);
       this.socket?.send({ type: "SetReady", ready: !(me?.ready ?? false) });
     });
-    if (this.phase === "over") {
+    if (this.state.phase === "over") {
       wirePodium(this.root, this.podiumOptions());
       this.root
         .querySelector<HTMLButtonElement>("#playOfTheGame")
@@ -615,11 +445,11 @@ export class Race {
   }
 
   private bodyHtml(): string {
-    switch (this.phase) {
+    switch (this.state.phase) {
       case "connecting":
         return `<p class="hint">Connexion…</p>`;
       case "failed":
-        return `<p class="hint">${escapeText(this.failure)}</p>` + this.exitBtnHtml();
+        return `<p class="hint">${escapeText(this.state.failure)}</p>` + this.exitBtnHtml();
       case "lobby":
         return (
           this.codeHtml() +
@@ -640,7 +470,7 @@ export class Race {
       case "running":
         return `<div class="live-bar" id="liveBar"></div>
           <div class="words-wrap"><div class="words" id="words">${this.wordsAreaHtml()}</div><div class="caret-block"></div></div>
-          <div class="bars" id="bars" style="--n:${this.players.length}">${this.barsHtml()}</div>
+          <div class="bars" id="bars" style="--n:${this.state.players.length}">${this.barsHtml()}</div>
           <p class="hint">${this.doneLocal ? "Terminé — en attente des autres…" : this.runningHint()}</p>
           ${this.forfeitBtnHtml()}`;
       case "over":
@@ -662,17 +492,17 @@ export class Race {
    * demande précisément l'inverse — verrouiller vite, pas finir un texte.
    */
   private runningHint(): string {
-    if (this.gameMode === "spam") {
-      return `Répète le mot ; ${this.spamThreshold} répétitions correctes pour gagner`;
+    if (this.state.gameMode === "spam") {
+      return `Répète le mot ; ${this.state.spamThreshold} répétitions correctes pour gagner`;
     }
-    if (this.gameMode === "floorIsLava") return "Tape sans t'arrêter : le dernier avance vers le feu";
+    if (this.state.gameMode === "floorIsLava") return "Tape sans t'arrêter : le dernier avance vers le feu";
     return "Tape le texte ; corrige tes fautes pour finir";
   }
 
   /** Code de partie, affiché à TOUT le lobby : n'importe qui peut inviter, pas que l'hôte. */
   private codeHtml(): string {
-    if (this.code === null) return "";
-    return `<p class="race-code">Code de partie : <strong>${escapeText(this.code)}</strong></p>`;
+    if (this.state.code === null) return "";
+    return `<p class="race-code">Code de partie : <strong>${escapeText(this.state.code)}</strong></p>`;
   }
 
   /**
@@ -687,41 +517,41 @@ export class Race {
    * les quatre réglages communs.
    */
   private lobbyRows(): LobbyRow[] {
-    const isOwner = this.me === this.owner;
+    const isOwner = this.me === this.state.owner;
     const rows: LobbyRow[] = [
       {
         id: "raceGameMode",
         label: "Mode de jeu",
         tip: LOBBY_TIPS.gameMode,
         locked: !isOwner,
-        readOnly: GAME_MODE_LABELS[this.gameMode],
+        readOnly: GAME_MODE_LABELS[this.state.gameMode],
         control: {
           kind: "select",
-          value: this.gameMode,
+          value: this.state.gameMode,
           options: GAME_MODES.map((m) => ({ value: m, label: GAME_MODE_LABELS[m] })),
         },
         set: (v) => ({ type: "SetGameMode", mode: v as GameMode }),
       },
     ];
-    if (this.gameMode === "floorIsLava") {
+    if (this.state.gameMode === "floorIsLava") {
       rows.push({
         id: "lavaInterval",
         label: "Élimination",
         tip: LOBBY_TIPS.lava,
         locked: !isOwner,
-        readOnly: `toutes les ${this.lavaIntervalS} s`,
+        readOnly: `toutes les ${this.state.lavaIntervalS} s`,
         control: {
           kind: "select",
-          value: String(this.lavaIntervalS),
+          value: String(this.state.lavaIntervalS),
           options: LAVA_INTERVAL_VALUES.map((n) => ({ value: String(n), label: `toutes les ${n} s` })),
         },
         set: (v) => ({ type: "SetLavaInterval", seconds: Number(v) }),
       });
     }
-    if (this.gameMode === "spam") {
+    if (this.state.gameMode === "spam") {
       // Le mot RÉELLEMENT en jeu est celui du texte : sous mot par défaut, `spamWord` est
       // `null` et seul `targetText` sait lequel le serveur a tiré.
-      const inPlay = this.targetWords[0] ?? "";
+      const inPlay = this.state.targetWords[0] ?? "";
       rows.push(
         {
           id: "spamWord",
@@ -731,7 +561,7 @@ export class Race {
           readOnly: inPlay,
           control: {
             kind: "text",
-            value: this.spamWord ?? "",
+            value: this.state.spamWord ?? "",
             placeholder: `${inPlay} (aléatoire)`,
             maxLength: SPAM_WORD_MAX_LEN,
           },
@@ -742,10 +572,10 @@ export class Race {
           label: "Objectif",
           tip: LOBBY_TIPS.spamThreshold,
           locked: !isOwner,
-          readOnly: `${this.spamThreshold} répétitions`,
+          readOnly: `${this.state.spamThreshold} répétitions`,
           control: {
             kind: "select",
-            value: String(this.spamThreshold),
+            value: String(this.state.spamThreshold),
             options: SPAM_THRESHOLD_VALUES.map((n) => ({ value: String(n), label: `${n} répétitions` })),
           },
           set: (v) => ({ type: "SetSpamThreshold", count: Number(v) }),
@@ -755,18 +585,18 @@ export class Race {
           label: "Temps max",
           tip: LOBBY_TIPS.spamTimeCap,
           locked: !isOwner,
-          readOnly: `${this.spamTimeCapS} s`,
+          readOnly: `${this.state.spamTimeCapS} s`,
           control: {
             kind: "select",
-            value: String(this.spamTimeCapS),
+            value: String(this.state.spamTimeCapS),
             options: SPAM_TIME_CAP_VALUES.map((n) => ({ value: String(n), label: `${n} s` })),
           },
           set: (v) => ({ type: "SetSpamTimeCap", seconds: Number(v) }),
         },
       );
     }
-    if (this.gameMode === "normal") {
-      const src = this.textSource;
+    if (this.state.gameMode === "normal") {
+      const src = this.state.textSource;
       rows.push({
         id: "textSource",
         label: "Texte",
@@ -789,10 +619,10 @@ export class Race {
                 }
               : undefined,
         },
-        // `currentCount(this.textSource)` : le repli quand on bascule sur « Mots » sans
+        // `currentCount(this.state.textSource)` : le repli quand on bascule sur « Mots » sans
         // avoir cliqué une longueur précise (garde la longueur courante, ou la médiane
         // si on vient de Citation, qui n'en a pas).
-        set: (v) => textSourceEvent(v, currentCount(this.textSource)),
+        set: (v) => textSourceEvent(v, currentCount(this.state.textSource)),
       });
     }
     rows.push(
@@ -801,11 +631,11 @@ export class Race {
         label: "Salon",
         tip: LOBBY_TIPS.size,
         locked: !isOwner,
-        readOnly: `${this.players.length}/${this.maxPlayers} joueurs`,
-        note: isOwner ? `${this.players.length} présents` : undefined,
+        readOnly: `${this.state.players.length}/${this.state.maxPlayers} joueurs`,
+        note: isOwner ? `${this.state.players.length} présents` : undefined,
         control: {
           kind: "select",
-          value: String(this.maxPlayers),
+          value: String(this.state.maxPlayers),
           options: ROOM_SIZES.map((n) => ({ value: String(n), label: `${n} joueurs` })),
         },
         set: (v) => ({ type: "SetMaxPlayers", max: Number(v) }),
@@ -815,10 +645,10 @@ export class Race {
         label: "Décompte",
         tip: LOBBY_TIPS.countdown,
         locked: !isOwner,
-        readOnly: `${this.countdownS} s`,
+        readOnly: `${this.state.countdownS} s`,
         control: {
           kind: "select",
-          value: String(this.countdownS),
+          value: String(this.state.countdownS),
           options: COUNTDOWN_VALUES.map((n) => ({ value: String(n), label: `${n} s` })),
         },
         set: (v) => ({ type: "SetCountdown", seconds: Number(v) }),
@@ -828,8 +658,8 @@ export class Race {
         label: "Ready-check",
         tip: LOBBY_TIPS.ready,
         locked: !isOwner,
-        readOnly: this.readyCheck ? "Activé" : "Désactivé",
-        control: { kind: "toggle", value: this.readyCheck, onLabel: "Activé", offLabel: "Désactivé" },
+        readOnly: this.state.readyCheck ? "Activé" : "Désactivé",
+        control: { kind: "toggle", value: this.state.readyCheck, onLabel: "Activé", offLabel: "Désactivé" },
         set: (v) => ({ type: "SetReadyCheck", enabled: v === "true" }),
       },
       {
@@ -837,10 +667,10 @@ export class Race {
         label: "Difficulté",
         tip: LOBBY_TIPS.difficulty,
         locked: !isOwner,
-        readOnly: DIFFICULTY_LABELS[this.difficulty],
+        readOnly: DIFFICULTY_LABELS[this.state.difficulty],
         control: {
           kind: "select",
-          value: this.difficulty,
+          value: this.state.difficulty,
           options: ROOM_DIFFICULTIES.map((d) => ({ value: d, label: DIFFICULTY_LABELS[d] })),
         },
         set: (v) => ({ type: "SetDifficulty", difficulty: v as Difficulty }),
@@ -852,20 +682,20 @@ export class Race {
   /** Bouton pour se marquer prêt/pas prêt — seulement visible quand le réglage est actif.
    *  PAS un Réglage de salon (`lobbyRows()`) : personnel à chaque joueur, pas owner-only. */
   private readyBtnHtml(): string {
-    if (!this.readyCheck) return "";
-    const ready = this.players.find((p) => p.playerId === this.me)?.ready ?? false;
+    if (!this.state.readyCheck) return "";
+    const ready = this.state.players.find((p) => p.playerId === this.me)?.ready ?? false;
     return `<button id="toggleReady" class="${ready ? "on" : ""}">${ready ? "Prêt ✓" : "Se dire prêt"}</button>`;
   }
 
   /** Cartes de présence empilées (owner en tête, moi souligné). */
   private cardsHtml(): string {
-    const cards = this.players
+    const cards = this.state.players
       .map((p) => {
-        const isOwner = p.playerId === this.owner;
+        const isOwner = p.playerId === this.state.owner;
         const isMe = p.playerId === this.me;
         const tags = [isOwner ? "owner" : "", isMe ? "me" : ""].filter(Boolean).join(" ");
         const label = isMe ? `${p.displayName} (toi)` : p.displayName;
-        const readyTag = this.readyCheck ? (p.ready ? " ✓" : " ⌛") : "";
+        const readyTag = this.state.readyCheck ? (p.ready ? " ✓" : " ⌛") : "";
         return `<div class="card ${tags}">${avatarHtml(p)} ${escapeText(label)}${
           isOwner ? " 👑" : ""
         }${readyTag}</div>`;
@@ -875,11 +705,11 @@ export class Race {
   }
 
   private startBtnHtml(): string {
-    if (this.me === this.owner) {
+    if (this.me === this.state.owner) {
       // Floor is lava exige deux partants (ADR 0015) : seul, on est déjà le dernier
       // vivant. Le serveur refuse en silence — le bouton doit donc dire pourquoi, sinon
       // l'hôte clique dans le vide sans comprendre.
-      if (this.gameMode === "floorIsLava" && this.players.length < 2) {
+      if (this.state.gameMode === "floorIsLava" && this.state.players.length < 2) {
         return `<button id="startRace" disabled>Démarrer la course</button>
           <p class="hint">Floor is lava demande au moins deux joueurs — seul, tu es déjà le dernier vivant.</p>`;
       }
@@ -908,7 +738,7 @@ export class Race {
   }
 
   private wordsAreaHtml(): string {
-    return wordsHtml(this.targetWords, this.controller.view(), !this.doneLocal);
+    return wordsHtml(this.state.targetWords, this.controller.view(), !this.doneLocal);
   }
 
   private renderBars(): void {
@@ -917,25 +747,25 @@ export class Race {
       // `--n` = le nombre de pistes à faire tenir (#96) : c'est lui qui décide de la
       // hauteur des jauges. Il est reposé ici parce qu'un joueur peut quitter la Room
       // en pleine course, et que la piste doit alors se ré-agrandir.
-      bars.style.setProperty("--n", String(this.players.length));
+      bars.style.setProperty("--n", String(this.state.players.length));
       bars.innerHTML = this.barsHtml();
     }
     const live = this.root.querySelector<HTMLElement>("#liveBar");
     if (live) {
-      const wpm = this.doneLocal ? 0 : liveWpm(this.targetWords, this.controller.view(), this.clock.elapsed());
+      const wpm = this.doneLocal ? 0 : liveWpm(this.state.targetWords, this.controller.view(), this.clock.elapsed());
       // Le décompte avant la prochaine brûlure : c'est lui qui rend le mode angoissant.
       // Tant qu'il reste quelqu'un à éliminer — sinon la course est déjà jouée.
       const lava =
-        this.gameMode === "floorIsLava" && this.alive().length > 1
-          ? `<span class="live-lava">🔥 ${nextBurnIn(this.clock.elapsed(), this.lavaIntervalS)} s</span>`
+        this.state.gameMode === "floorIsLava" && alive(this.state).length > 1
+          ? `<span class="live-lava">🔥 ${nextBurnIn(this.clock.elapsed(), this.state.lavaIntervalS)} s</span>`
           : "";
       // Les DEUX façons de gagner, côte à côte (ADR 0016) : ce qu'il me reste à taper, et
       // ce qu'il me reste de temps pour le faire. Une seule des deux affichée laisserait
       // le joueur ignorer laquelle va claquer.
       const spam =
-        this.gameMode === "spam"
-          ? `<span class="live-spam">${this.myReps()} / ${this.spamThreshold} ×</span>
-             <span class="live-spam">⏱ ${capRemaining(this.clock.elapsed(), this.spamTimeCapS)} s</span>`
+        this.state.gameMode === "spam"
+          ? `<span class="live-spam">${this.myReps()} / ${this.state.spamThreshold} ×</span>
+             <span class="live-spam">⏱ ${capRemaining(this.clock.elapsed(), this.state.spamTimeCapS)} s</span>`
           : "";
       live.innerHTML = `<span class="live-wpm">${wpm} wpm</span>${lava}${spam}`;
     }
@@ -950,29 +780,30 @@ export class Race {
     // progression sur sa longueur ne voudrait rien dire et reculerait à chaque rallonge.
     // Elle se mesure en répétitions sur l'objectif — la grandeur qui décide de la victoire,
     // donc celle que la piste doit montrer (ADR 0016).
-    const spam = this.gameMode === "spam";
-    const total = spam ? Math.max(1, this.spamThreshold) : Math.max(1, this.targetText.length);
+    const spam = this.state.gameMode === "spam";
+    const total = spam ? Math.max(1, this.state.spamThreshold) : Math.max(1, this.state.targetText.length);
     const elapsed = this.clock.elapsed();
     // Le condamné en sursis (ADR 0015) : marqué EN PERMANENCE, pas seulement au tic.
     // C'est ça, le mode — pas des morts surprises, mais quelques secondes à se voir
     // dernier en tapant plus vite. Calculé en local sur la même règle que le serveur ;
     // mon propre `charsDone` est plus frais que celui qu'il a reçu, donc c'est un
     // avertissement, jamais un verdict.
+    const ctx = { me: this.me, myReps: this.myReps() };
     const doomed =
-      this.gameMode === "floorIsLava" && this.phase === "running"
+      this.state.gameMode === "floorIsLava" && this.state.phase === "running"
         ? lastPlaced(
-            this.alive().map((p) => ({
+            alive(this.state).map((p) => ({
               playerId: p.playerId,
-              done: p.playerId === this.me ? this.charsDone() : charsOf(this.stateOf(p.playerId)),
+              done: p.playerId === this.me ? this.charsDone() : charsOf(stateOf(this.state, p.playerId)),
             })),
           )
         : new Set<string>();
-    return this.players
+    return this.state.players
       .map((p) => {
         const isMe = p.playerId === this.me;
-        const state = this.stateOf(p.playerId);
+        const state = stateOf(this.state, p.playerId);
         const chars = isMe ? this.charsDone() : charsOf(state);
-        const reps = this.repsFor(p.playerId, state);
+        const reps = repsFor(this.state, ctx, p.playerId);
         const done = spam ? reps : chars;
         // Sous Spam, personne n'« arrive » : remplir la piste à fond au PlayerFinished
         // téléporterait sur la ligne un Devancé qui s'est arrêté à 3 répétitions — le
@@ -1000,12 +831,12 @@ export class Race {
   }
 
   private podiumOptions(): PodiumOptions {
-    return { results: this.results, players: this.players, me: this.me };
+    return { results: this.state.results, players: this.state.players, me: this.me };
   }
 
   /** Bouton du duel — présent seulement quand le serveur a désigné un Play of the Game. */
   private potgBtnHtml(): string {
-    return this.playOfTheGame ? `<button id="playOfTheGame" class="on">Play of the Game</button>` : "";
+    return this.state.playOfTheGame ? `<button id="playOfTheGame" class="on">Play of the Game</button>` : "";
   }
 
   /**
@@ -1015,21 +846,21 @@ export class Race {
    * le podium (phase toujours "over").
    */
   private openPotg(): void {
-    const potg = this.playOfTheGame;
+    const potg = this.state.playOfTheGame;
     if (!potg) return;
     const entry = (id: string): PlayerEntry =>
-      this.players.find((p) => p.playerId === id) ?? {
+      this.state.players.find((p) => p.playerId === id) ?? {
         playerId: id,
         displayName: id, // parti depuis : on retombe sur le snowflake, comme le podium
         avatarHash: null,
         ready: false,
       };
     this.potgStop = runPlayOfTheGame(this.root, {
-      racedWords: this.racedWords,
+      racedWords: this.state.racedWords,
       // Les deux Modes de jeu s'arrêtent sans que personne ne franchisse de ligne : la
       // fenêtre du duel court avant la sortie la PLUS TÔT des deux, pas avant une seconde
       // arrivée qui n'existe pas (ADR 0015, 0016).
-      endAtFirst: this.gameMode !== "normal",
+      endAtFirst: this.state.gameMode !== "normal",
       logA: potg.logA,
       playerA: entry(potg.a),
       logB: potg.logB,
@@ -1067,18 +898,6 @@ function avatarHtml(p: PlayerEntry, cls = "car"): string {
 export function liveWpmOf(charsDone: number, elapsedMs: number): number {
   if (elapsedMs <= 0) return 0;
   return Math.round(charsDone / 5 / (elapsedMs / 60000));
-}
-
-/** `charsDone` d'un état, 0 hors « en course » (le seul où il existe). */
-function charsOf(state: RacerState): number {
-  return state.kind === "racing" ? state.charsDone : 0;
-}
-
-/** `reps` d'un état, 0 là où il n'a pas de sens (abandon, échec, brûlé). */
-function repsOf(state: RacerState): number {
-  return state.kind === "racing" || state.kind === "finished" || state.kind === "outpaced"
-    ? state.reps
-    : 0;
 }
 
 /**
@@ -1155,35 +974,7 @@ export function lastPlaced(alive: { playerId: string; done: number }[]): Set<str
   return new Set(alive.filter((a) => a.done === least).map((a) => a.playerId));
 }
 
-/**
- * Les vivants (ADR 0015) : `racers` doit être la liste FIGÉE au RaceStart, jamais les
- * présents courants — un rejoignant en cours de course ne doit jamais s'y compter, ni
- * comme candidat au feu, ni comme le dernier vivant qui clôt la course.
- */
-export function aliveIds(racers: string[], states: Map<string, RacerState>): string[] {
-  return racers.filter((id) => {
-    const s = states.get(id);
-    return s === undefined || s.kind === "racing";
-  });
-}
-
-/**
- * Qui est Devancé quand Spam s'arrête (ADR 0016) — parmi ceux ENCORE en course à cet
- * instant. Si quelqu'un a atteint le seuil, c'est lui le vainqueur et tous les autres sont
- * Devancé. Sinon (plafond de temps écoulé, personne ne l'a atteint) le glossaire tranche :
- * « qui en a le plus quand le temps est écoulé » gagne — c'est donc le plus haut compte
- * CONNU qui fait office de seuil, et tout le reste est Devancé. Les ex æquo au sommet ne
- * sont jamais Devancé (même règle que `lastPlaced` : aucun départage n'est honnête). Pure.
- */
-export function outpaced(
-  racing: { playerId: string; reps: number }[],
-  threshold: number,
-): { playerId: string; reps: number }[] {
-  if (racing.length === 0) return [];
-  const reachedThreshold = racing.some((r) => r.reps >= threshold);
-  const bar = reachedThreshold ? threshold : Math.max(...racing.map((r) => r.reps));
-  return racing.filter((r) => r.reps < bar);
-}
+// `aliveIds` et `outpaced` vivent désormais dans `core/race-state.ts` (issue #132/#140).
 
 /**
  * Secondes avant la prochaine élimination (ADR 0015). Dérivé en local de
@@ -1389,7 +1180,7 @@ export function lobbyRowHtml(row: LobbyRow): string {
 }
 
 /** Libellés de Difficulté (issue #71) — Expert n'apparaît dans aucun `select` de Room,
- *  mais reste couvert ici : `this.difficulty` a le type `Difficulty` au complet. */
+ *  mais reste couvert ici : `this.state.difficulty` a le type `Difficulty` au complet. */
 const DIFFICULTY_LABELS: Record<Difficulty, string> = { normal: "Normal", expert: "Expert", master: "Master" };
 
 /** Longueur à reprendre quand on (re)passe sur `words`. Médiane par défaut. */
