@@ -8,18 +8,15 @@ import {
   trackPercent,
   lastPlaced,
   nextBurnIn,
-  aliveIds,
-  outpaced,
-  advanceState,
   spamReps,
   capRemaining,
   spamRefill,
   lobbyRowHtml,
   textSourceEvent,
   spamWordEvent,
-  type RacerState,
   type LobbyRow,
 } from "./race";
+import { aliveIds, outpaced, advanceState, type RacerState } from "../core/race-state";
 import { FreeInput } from "../core/input/free-input";
 import { avatarUrl } from "../discord";
 import { WORDS_LENGTHS } from "../core/net";
