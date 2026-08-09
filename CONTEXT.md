@@ -56,7 +56,7 @@ The second Mode de jeu: one word — the party leader's pick from the existing w
 _Avoid_: Répétition, Boucle, Repeat mode, Loop mode.
 
 **Devancé**:
-The terminal state for a Player still typing when the Spam Mode de jeu stops — beaten by a Player reaching the repetition threshold first, or caught by the time cap running out, one term for both, the way Spam itself doesn't distinguish them. Like Brûlé, it comes from comparison or a clock, never from the Player's own choice (Abandon) or their own mistake (Failed). The server partially recomputes their Keystroke log against its own copy of the word to know their final repetition count, which ranks them — never persisted.
+The terminal state for a Player still typing when the Spam Mode de jeu stops — beaten by a Player reaching the repetition threshold first, or caught by the time cap running out, one term for both, the way Spam itself doesn't distinguish them. Like Brûlé, it comes from comparison or a clock, never from the Player's own choice (Abandon) or their own mistake (Failed). The server partially recomputes their Keystroke log against its own copy of the word to know their final repetition count, which ranks them — never persisted. Client-side, the type is English like the rest of the wire vocabulary (`Keystroke`, `RaceResult`): `RacerState`'s variant is named `outpaced` (`frontend/src/ui/race.ts`), not `Devancé` — same term, anglicized, decided in the issue #130 grilling session. Derived at `SpamStop`, not deduced at render time: whoever hasn't reached the threshold known at that instant is Outpaced; the winner of a time-cap stop (nobody reached it, highest count wins) is `finished`, never `outpaced`.
 _Avoid_: Perdant, Éliminé, Timeout, DNF, Failed, Abandon.
 
 **Setting**:

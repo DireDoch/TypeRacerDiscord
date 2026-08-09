@@ -68,6 +68,43 @@ export type RaceIntent =
  */
 export const RACE_COUNTDOWN_S = 7;
 
+/**
+ * L'état d'un partant, EXACTEMENT les quatre états terminaux du glossaire (Abandon,
+ * Failed, Brûlé, Devancé) plus les deux non-terminaux (en course, arrivé) — un partant ne
+ * peut pas être dans deux à la fois, GARANTI PAR LE TYPE au lieu d'un ordre de `if` à
+ * documenter. « Devancé » s'anglicise en `outpaced` dans le type (le code est déjà en
+ * anglais côté types : `Keystroke`, `RaceResult`) ; CONTEXT.md note le lien avec le terme
+ * du glossaire.
+ *
+ * `reps` sur `finished` : sous Spam, la piste affiche TOUJOURS le compte de répétitions,
+ * jamais le WPM (ADR 0016) — y compris pour le vainqueur une fois son `PlayerFinished`
+ * reçu. `PlayerFinished` ne porte pas `reps`, donc on le fige ici au moment de la
+ * transition plutôt que de le perdre. `0` partout ailleurs, où il ne s'affiche jamais.
+ */
+export type RacerState =
+  | { kind: "racing"; charsDone: number; reps: number }
+  | { kind: "finished"; wpm: number; reps: number }
+  | { kind: "abandoned" }
+  | { kind: "failed"; percent: number }
+  | { kind: "burned"; atMs: number }
+  | { kind: "outpaced"; reps: number };
+
+/**
+ * Pose `next` SAUF si `cur` est déjà un état terminal — un `PlayerFinished`/`Progress` en
+ * vol au moment d'une brûlure/arrêt de Spam ne doit jamais écraser le verdict déjà posé.
+ * C'est ce garde-fou, À L'ÉCRITURE, qui remplace l'ordre des `if` de l'ancien `trackLabel`
+ * (issue #130) : un seul état vaut, plus une priorité à retenir à la lecture.
+ *
+ * Sûr précisément parce que le protocole garantit l'ordre : une brûlure (`PlayerBurned`)
+ * est TOUJOURS diffusée avant le `Finish` qu'elle déclenche chez la victime (le serveur
+ * traite les messages d'une Room en série, sous un seul verrou — ADR 0015), et une
+ * connexion WebSocket préserve l'ordre d'émission. Un `PlayerFinished` ne peut donc jamais
+ * doubler le `PlayerBurned` du même joueur dans l'autre sens. Pure.
+ */
+export function advanceState(cur: RacerState | undefined, next: RacerState): RacerState {
+  return cur === undefined || cur.kind === "racing" ? next : cur;
+}
+
 export class Race {
   private me = "";
   private channelId = "";
@@ -116,21 +153,8 @@ export class Race {
   /** Nombre de mots verrouillés au dernier `Progress` diffusé (#94) — le seul déclencheur. */
   private lastLockedSent = 0;
 
-  /** charsDone diffusé par joueur (barres, non autoritaire). */
-  private progress = new Map<string, number>();
-  /** WPM autoritaire par joueur ayant fini (signal LIVE, pour la piste). */
-  private finished = new Map<string, number>();
-  /** Joueurs ayant ABANDONNÉ — la piste affiche « abandon », jamais leur « 0 wpm ». */
-  private forfeited = new Set<string>();
-  /** Joueurs ayant ÉCHOUÉ (Master, ADR 0013), avec leur pourcentage — la piste affiche
-   *  « échec (X%) », jamais « abandon » ni leur « 0 wpm ». */
-  private failedPercents = new Map<string, number>();
-  /** Joueurs BRÛLÉS (ADR 0015) avec l'instant du décès en ms — la piste affiche
-   *  « brûlé à X s » et embrase leur ligne. Sert aussi à savoir qui est encore vivant. */
-  private burned = new Map<string, number>();
-  /** Répétitions diffusées par joueur sous Spam (ADR 0016) — la grandeur qui décide de la
-   *  victoire, donc celle que la piste affiche à la place du WPM dans ce mode. */
-  private reps = new Map<string, number>();
+  /** Un `RacerState` par joueur — un seul état, jamais deux à la fois (issue #130). */
+  private states = new Map<string, RacerState>();
   /** Résultats complets de la dernière course, DANS L'ORDRE DU CLASSEMENT (ADR 0010). */
   private results: RaceResult[] = [];
   /** Le duel le plus serré (ADR 0011), ou `null` s'il n'y en a pas eu → bouton absent. */
@@ -241,8 +265,10 @@ export class Race {
         this.startCountdown();
         break;
       case "PlayerProgress":
-        this.progress.set(e.playerId, e.charsDone);
-        this.reps.set(e.playerId, e.reps);
+        // N'écrase jamais un état terminal déjà connu — un Progress attardé (en vol au
+        // moment d'un Finish/Forfeit/Fail/brûlure/arrêt de Spam) ne doit pas ressusciter
+        // « en course » un partant que le serveur a déjà clos.
+        this.advance(e.playerId, { kind: "racing", charsDone: e.charsDone, reps: e.reps });
         if (this.phase === "running") this.renderBars();
         break;
       // Spam terminé (ADR 0016) : seuil atteint par quelqu'un, ou plafond de temps expiré
@@ -250,19 +276,30 @@ export class Race {
       // de taper. Même geste que le brûlé de floor is lava : on livre son log et on
       // attend RaceOver, qui porte le seul classement qui compte (recompté par le serveur).
       case "SpamStop":
+        this.markOutpaced();
         this.stopAndSubmit();
         if (this.phase === "running") this.renderBars();
         break;
-      case "PlayerFinished":
-        this.finished.set(e.playerId, e.wpm);
-        if (e.forfeit) this.forfeited.add(e.playerId);
-        if (e.failedPercent !== null) this.failedPercents.set(e.playerId, e.failedPercent);
+      case "PlayerFinished": {
+        // `reps` sous Spam : PlayerFinished ne le porte pas, on fige le dernier connu au
+        // moment de la transition — sinon la piste retomberait à « 0 × » sur la ligne
+        // d'un vrai vainqueur (voir RacerState).
+        const reps = this.repsFor(e.playerId, this.stateOf(e.playerId));
+        this.advance(
+          e.playerId,
+          e.forfeit
+            ? { kind: "abandoned" }
+            : e.failedPercent !== null
+              ? { kind: "failed", percent: e.failedPercent }
+              : { kind: "finished", wpm: e.wpm, reps },
+        );
         // Un partant peut aussi sortir par Abandon/Échec Master, pas seulement par le
         // feu (ADR 0015) — sans ce même réflexe qu'`onBurned`, le survivant ne se
         // déduirait dernier vivant qu'au watchdog (10 min).
         if (this.gameMode === "floorIsLava" && this.isLastAlive()) this.stopAndSubmit();
         if (this.phase === "running") this.renderBars();
         break;
+      }
       case "PlayerBurned":
         this.onBurned(e.playerId, e.atMs);
         break;
@@ -287,22 +324,53 @@ export class Race {
    * Sans ça, sa course ne se clôturerait qu'au watchdog.
    */
   private onBurned(playerId: string, atMs: number): void {
-    this.burned.set(playerId, atMs);
+    this.advance(playerId, { kind: "burned", atMs });
     if (playerId === this.me) this.stopAndSubmit();
     else if (this.isLastAlive()) this.stopAndSubmit();
     if (this.phase === "running") this.renderBars();
   }
 
+  /** Lit l'état d'un partant, « en course à zéro » avant son premier signal (ADR 0016
+   *  inclus : personne n'a encore de `reps` avant le premier mot verrouillé). */
+  private stateOf(playerId: string): RacerState {
+    return this.states.get(playerId) ?? { kind: "racing", charsDone: 0, reps: 0 };
+  }
+
+  /** Pose un état via `advanceState` (garde-fou contre un message en vol qui écraserait
+   *  un verdict déjà posé — voir sa doc). */
+  private advance(playerId: string, next: RacerState): void {
+    this.states.set(playerId, advanceState(this.states.get(playerId), next));
+  }
+
+  /** Répétitions d'un partant : les MIENNES se relisent toujours en local (plus fraîches
+   *  que le dernier `Progress` reçu, qui a pu dater d'avant mon dernier mot verrouillé) ;
+   *  celles des autres viennent de leur dernier état connu. */
+  private repsFor(playerId: string, state: RacerState): number {
+    return playerId === this.me ? this.myReps() : repsOf(state);
+  }
+
+  /**
+   * Devancé (ADR 0016) : posé au `SpamStop`, pas déduit à l'affichage — le seul instant où
+   * le client sait qui est encore « en course ». Si quelqu'un a atteint le seuil, tous les
+   * autres sont Devancé ; sinon (plafond de temps, personne ne l'a atteint) c'est le plus
+   * haut compte connu qui gagne (glossaire Spam) et tout le reste est Devancé.
+   */
+  private markOutpaced(): void {
+    const racing: { playerId: string; reps: number }[] = [];
+    for (const p of this.racers) {
+      const s = this.stateOf(p.playerId);
+      if (s.kind !== "racing") continue;
+      racing.push({ playerId: p.playerId, reps: this.repsFor(p.playerId, s) });
+    }
+    for (const r of outpaced(racing, this.spamThreshold)) {
+      this.states.set(r.playerId, { kind: "outpaced", reps: r.reps });
+    }
+  }
+
   /** Les vivants : partants figés au RaceStart, ni brûlés ni déjà sortis (arrivée,
    * abandon, échec) — un rejoignant en cours de course n'en fait jamais partie. */
   private alive(): PlayerEntry[] {
-    const ids = new Set(
-      aliveIds(
-        this.racers.map((p) => p.playerId),
-        this.burned,
-        this.finished,
-      ),
-    );
+    const ids = new Set(aliveIds(this.racers.map((p) => p.playerId), this.states));
     return this.racers.filter((p) => ids.has(p.playerId));
   }
 
@@ -337,12 +405,7 @@ export class Race {
     // Figé ici, pas relu ailleurs : un RoomState reçu pendant la course (un rejoignant)
     // ne doit pas faire grossir la liste des partants.
     this.racers = this.players.slice();
-    this.progress.clear();
-    this.finished.clear();
-    this.forfeited.clear();
-    this.failedPercents.clear();
-    this.burned.clear();
-    this.reps.clear();
+    this.states.clear();
     this.playOfTheGame = null;
     // Contrôleur neuf dès le décompte : le texte ENTIER s'affiche vierge (le joueur lit
     // le début pendant l'attente) — indispensable après une revanche (état stale).
@@ -967,40 +1030,29 @@ export class Race {
         ? lastPlaced(
             this.alive().map((p) => ({
               playerId: p.playerId,
-              done: p.playerId === this.me ? this.charsDone() : this.progress.get(p.playerId) ?? 0,
+              done: p.playerId === this.me ? this.charsDone() : charsOf(this.stateOf(p.playerId)),
             })),
           )
         : new Set<string>();
     return this.players
       .map((p) => {
         const isMe = p.playerId === this.me;
-        const chars = isMe ? this.charsDone() : this.progress.get(p.playerId) ?? 0;
-        const reps = isMe ? this.myReps() : this.reps.get(p.playerId) ?? 0;
+        const state = this.stateOf(p.playerId);
+        const chars = isMe ? this.charsDone() : charsOf(state);
+        const reps = this.repsFor(p.playerId, state);
         const done = spam ? reps : chars;
-        const final = this.finished.get(p.playerId);
-        const burnedAt = this.burned.get(p.playerId);
-        const pct = trackPercent(done, total, {
-          // Sous Spam, personne n'« arrive » : remplir la piste à fond au PlayerFinished
-          // téléporterait sur la ligne un Devancé qui s'est arrêté à 3 répétitions.
-          finished: final !== undefined && !spam,
-          forfeited: this.forfeited.has(p.playerId),
-          failed: this.failedPercents.has(p.playerId),
-        });
-        const label = trackLabel(
-          this.forfeited.has(p.playerId),
-          this.failedPercents.get(p.playerId),
-          final,
-          liveWpmOf(chars, elapsed),
-          burnedAt,
-          spam ? reps : undefined,
-        );
+        // Sous Spam, personne n'« arrive » : remplir la piste à fond au PlayerFinished
+        // téléporterait sur la ligne un Devancé qui s'est arrêté à 3 répétitions — le
+        // calcul naturel (reps / seuil) suffit déjà, il plafonne tout seul à 100 %.
+        const pct = trackPercent(done, total, state, spam);
+        const label = trackLabel(state, liveWpmOf(chars, elapsed), spam ? reps : undefined);
         // La ligne d'un brûlé RESTE à l'écran, carbonisée : voir le cimetière se remplir
         // fait partie du mode. `.burned` porte l'embrasement, `.doomed` le sursis.
         const classes = [
           "bar",
           isMe ? "me" : "",
-          final !== undefined ? "done" : "",
-          burnedAt !== undefined ? "burned" : "",
+          state.kind !== "racing" ? "done" : "",
+          state.kind === "burned" ? "burned" : "",
           doomed.has(p.playerId) ? "doomed" : "",
         ]
           .filter(Boolean)
@@ -1084,54 +1136,65 @@ export function liveWpmOf(charsDone: number, elapsedMs: number): number {
   return Math.round(charsDone / 5 / (elapsedMs / 60000));
 }
 
+/** `charsDone` d'un état, 0 hors « en course » (le seul où il existe). */
+function charsOf(state: RacerState): number {
+  return state.kind === "racing" ? state.charsDone : 0;
+}
+
+/** `reps` d'un état, 0 là où il n'a pas de sens (abandon, échec, brûlé). */
+function repsOf(state: RacerState): number {
+  return state.kind === "racing" || state.kind === "finished" || state.kind === "outpaced"
+    ? state.reps
+    : 0;
+}
+
 /**
  * Remplissage de la piste, en pourcentage.
  *
  * Une VRAIE arrivée remplit la piste à fond quoi qu'ait dit le dernier `Progress` :
  * depuis #94 le dernier mot n'est pas verrouillé quand on finit sans taper d'espace
- * derrière, et la voiture s'arrêterait à un mot de la ligne d'arrivée.
+ * derrière, et la voiture s'arrêterait à un mot de la ligne d'arrivée. Un abandon et un
+ * échec Master, eux, restent où ils se sont arrêtés — `RacerState` rend ces deux issues
+ * IMPOSSIBLES à confondre avec une arrivée, plus besoin de les exclure une par une.
  *
- * Mais un abandon et un échec Master arrivent par le MÊME `PlayerFinished` que l'arrivée.
- * Sans les exclure, la voiture de celui qui renonce à 10 % se téléporte sur la ligne
- * d'arrivée pendant que son étiquette dit « abandon ». Ils restent où ils se sont
- * arrêtés — c'est exactement ce que la piste doit raconter. Pure.
+ * Sous Spam personne n'« arrive » : le calcul naturel (`done / total`) plafonne déjà tout
+ * seul à 100 % une fois le seuil atteint, donc `spam` désactive la téléportation plutôt
+ * que de la déclencher pour un Devancé arrêté à mi-piste. Pure.
  */
-export function trackPercent(
-  done: number,
-  total: number,
-  state: { finished: boolean; forfeited: boolean; failed: boolean },
-): number {
-  if (state.finished && !state.forfeited && !state.failed) return 100;
+export function trackPercent(done: number, total: number, state: RacerState, spam = false): number {
+  if (state.kind === "finished" && !spam) return 100;
   return Math.min(100, Math.round((done / Math.max(1, total)) * 100));
 }
 
 /**
- * Étiquette de la ligne d'arrivée sur la piste. Un abandon affiche « abandon » et JAMAIS
- * « 0 wpm » — le flag est explicite, on ne le déduit pas d'un WPM nul. Un Échec Master
- * (ADR 0013) affiche « échec (X%) », distinct de l'abandon. Sinon : le WPM autoritaire
- * (✓) une fois fini, le WPM live dérivé tant qu'on court. Pure.
+ * Étiquette de la ligne d'arrivée sur la piste — un `switch` total sur `RacerState` :
+ * chaque partant a EXACTEMENT une étiquette, plus d'ordre de priorité à documenter entre
+ * abandon/échec/brûlure/Devancé, le type ne permet plus qu'ils se chevauchent. `liveWpm`
+ * et `spamReps` restent externes : ce sont des grandeurs dérivées à chaque rendu, jamais
+ * un état posé. Pure.
  */
 export function trackLabel(
-  forfeited: boolean,
-  failedPercent: number | undefined,
-  finalWpm: number | undefined,
+  state: RacerState,
   liveWpm: number,
-  burnedAtMs?: number,
   /** Répétitions sous Spam (ADR 0016) ; `undefined` dans tous les autres modes. */
-  reps?: number,
+  spamReps?: number,
 ): string {
-  // Le brûlé passe AVANT l'arrivée : son log revient par `Finish` (ADR 0015), donc un
-  // `PlayerFinished` suit son décès — sans cette priorité, sa ligne redeviendrait
-  // « 32 wpm ✓ » une seconde après avoir pris feu.
-  if (burnedAtMs !== undefined) return `brûlé à ${Math.round(burnedAtMs / 1000)} s`;
-  if (failedPercent !== undefined) return `échec (${failedPercent}%)`;
-  if (forfeited) return "abandon";
-  // Spam : le chiffre de la ligne est le compte de répétitions, jamais un WPM — c'est la
-  // grandeur qui décide de la victoire. Passe AVANT `finalWpm` pour la même raison que le
-  // brûlé : un `PlayerFinished` suit l'arrêt, et la ligne repasserait à « 32 wpm ✓ ».
-  if (reps !== undefined) return `${reps} ×`;
-  if (finalWpm !== undefined) return `${finalWpm} wpm ✓`;
-  return `${liveWpm} wpm`;
+  switch (state.kind) {
+    case "burned":
+      return `brûlé à ${Math.round(state.atMs / 1000)} s`;
+    case "failed":
+      return `échec (${state.percent}%)`;
+    case "abandoned":
+      return "abandon";
+    case "outpaced":
+      return `${state.reps} ×`;
+    case "racing":
+    case "finished":
+      // Spam : le chiffre de la ligne est le compte de répétitions, jamais un WPM — c'est
+      // la grandeur qui décide de la victoire (ADR 0016), y compris pour un vrai vainqueur.
+      if (spamReps !== undefined) return `${spamReps} ×`;
+      return state.kind === "finished" ? `${state.wpm} wpm ✓` : `${liveWpm} wpm`;
+  }
 }
 
 /**
@@ -1164,12 +1227,29 @@ export function lastPlaced(alive: { playerId: string; done: number }[]): Set<str
  * présents courants — un rejoignant en cours de course ne doit jamais s'y compter, ni
  * comme candidat au feu, ni comme le dernier vivant qui clôt la course.
  */
-export function aliveIds(
-  racers: string[],
-  burned: { has(id: string): boolean },
-  finished: { has(id: string): boolean },
-): string[] {
-  return racers.filter((id) => !burned.has(id) && !finished.has(id));
+export function aliveIds(racers: string[], states: Map<string, RacerState>): string[] {
+  return racers.filter((id) => {
+    const s = states.get(id);
+    return s === undefined || s.kind === "racing";
+  });
+}
+
+/**
+ * Qui est Devancé quand Spam s'arrête (ADR 0016) — parmi ceux ENCORE en course à cet
+ * instant. Si quelqu'un a atteint le seuil, c'est lui le vainqueur et tous les autres sont
+ * Devancé. Sinon (plafond de temps écoulé, personne ne l'a atteint) le glossaire tranche :
+ * « qui en a le plus quand le temps est écoulé » gagne — c'est donc le plus haut compte
+ * CONNU qui fait office de seuil, et tout le reste est Devancé. Les ex æquo au sommet ne
+ * sont jamais Devancé (même règle que `lastPlaced` : aucun départage n'est honnête). Pure.
+ */
+export function outpaced(
+  racing: { playerId: string; reps: number }[],
+  threshold: number,
+): { playerId: string; reps: number }[] {
+  if (racing.length === 0) return [];
+  const reachedThreshold = racing.some((r) => r.reps >= threshold);
+  const bar = reachedThreshold ? threshold : Math.max(...racing.map((r) => r.reps));
+  return racing.filter((r) => r.reps < bar);
 }
 
 /**
