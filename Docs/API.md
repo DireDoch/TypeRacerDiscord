@@ -21,6 +21,15 @@ Termes : voir `CONTEXT.md`. Types miroir : `frontend/src/core/types.ts` ↔ `bac
   de sécurité ouverte ; recommandation retenue : **résolution serveur du player_id**, pas de
   player_id envoyé par le client → non forgeable, même en solo.
 - `.env` (serveur) : `APININJAS_API_KEY`, `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`. Jamais exposés au client.
+- **Plafonds de requêtes** (issue #151, `rate_limit.rs`), fenêtre d'une minute, dépassement →
+  `429` sur tous les endpoints concernés :
+
+  | Périmètre | Clé | Plafond |
+  | --- | --- | --- |
+  | Tout endpoint authentifié (extracteur d'identité) | `player_id` | 120 / min |
+  | `GET /api/quote` (en plus du précédent) | `player_id` | 30 / min |
+  | `POST /token` | global — pas encore d'identité à ce stade | 120 / min |
+  | `GET /ws` (connexions, pas messages) | `player_id` | 20 / min |
 
 ---
 

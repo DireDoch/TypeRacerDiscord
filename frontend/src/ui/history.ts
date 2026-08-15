@@ -8,7 +8,7 @@
 // =============================================================================
 
 import type { HistoryEntry, Mode, RunConfig } from "../core/types";
-import { fetchHistory, fetchProfileAnalysis, fetchRun, isIdentityError, IDENTITY_ERROR_MESSAGE } from "../api";
+import { fetchHistory, fetchProfileAnalysis, fetchRun, sharedErrorMessage } from "../api";
 import { runReplay } from "./replay";
 import { analysisHtml } from "./weak-spots";
 import { MODE_LABELS } from "./mode-labels";
@@ -59,7 +59,7 @@ export class History {
     } catch (e) {
       if (seq !== this.seq) return;
       this.render(
-        `<div class="loading">${isIdentityError(e) ? IDENTITY_ERROR_MESSAGE : "Impossible de charger l'historique."}</div>`,
+        `<div class="loading">${sharedErrorMessage(e) ?? "Impossible de charger l'historique."}</div>`,
       );
     }
   }
@@ -111,7 +111,7 @@ export class History {
     } catch (e) {
       if (seq !== this.seq) return;
       this.render(
-        `<div class="loading">${isIdentityError(e) ? IDENTITY_ERROR_MESSAGE : "Impossible de charger le profil."}</div>`,
+        `<div class="loading">${sharedErrorMessage(e) ?? "Impossible de charger le profil."}</div>`,
         true,
       );
     }
@@ -136,7 +136,7 @@ export class History {
     } catch (e) {
       if (seq !== this.seq) return;
       this.render(
-        `<div class="loading">${isIdentityError(e) ? IDENTITY_ERROR_MESSAGE : "Impossible de charger ce Run."}</div>`,
+        `<div class="loading">${sharedErrorMessage(e) ?? "Impossible de charger ce Run."}</div>`,
       );
     }
   }
