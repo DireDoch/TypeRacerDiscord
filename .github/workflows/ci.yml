@@ -56,6 +56,14 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           working-directory: backend
+          # RUSTSEC-2023-0071 (crate `rsa`, attaque temporelle Marvin) : AUCUN correctif
+          # n'existe en amont, et le crate n'est PAS compilé dans notre binaire —
+          # `cargo tree -i rsa --target all` ne trouve aucun chemin. Il n'est dans le
+          # Cargo.lock que parce que la feature `macros` de sqlx (exigée par
+          # `sqlx::migrate!`) traîne le driver MySQL en dépendance optionnelle ; on ne
+          # parle qu'à SQLite. `cargo audit` lit le lockfile sans résoudre les features,
+          # d'où le faux positif. À retirer d'ici le jour où sqlx coupe ce lien.
+          ignore: RUSTSEC-2023-0071
       - run: rustup component add clippy
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test
