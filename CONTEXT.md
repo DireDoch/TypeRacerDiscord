@@ -404,7 +404,10 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
 - Endpoints : `GET /api/health`, `GET /api/quote`, `POST /token`, `POST /api/runs` (recompute +
   persistance + verdict PB), `GET /api/history`.
 - Origine unique : le build Vite (`STATIC_DIR`, défaut `../frontend/dist`) est servi en
-  `fallback_service` (ServeDir → `index.html` pour le routage SPA). `dotenvy` charge
+  `fallback_service` (ServeDir → `index.html` pour le routage SPA). Toutes les réponses
+  portent une CSP, `nosniff` et `no-referrer` (#152) — la CSP **autorise explicitement
+  l'encadrement par Discord** (`frame-ancestors`), l'Activity n'étant qu'une iframe : la
+  durcir sur ce point rendrait le jeu invisible. `dotenvy` charge
   `backend/.env` (sans écraser l'env du shell). Port configurable via `PORT` (défaut 8080).
 - `ws/` : Phase 2 **livrée** — Rooms indexées par **clé** (salon vocal *ou* Code de partie,
   ADR 0008 : `JoinChannel` crée à la volée, `CreateRoom` tire un code de 5 caractères,

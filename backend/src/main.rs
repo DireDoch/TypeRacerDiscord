@@ -27,14 +27,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use axum::{
     async_trait,
     extract::{ws::WebSocketUpgrade, FromRequestParts, Query, State},
-    http::{header::AUTHORIZATION, request::Parts, StatusCode},
+    http::{
+        header::{AUTHORIZATION, CONTENT_SECURITY_POLICY, REFERRER_POLICY, X_CONTENT_TYPE_OPTIONS},
+        request::Parts, HeaderValue, StatusCode,
+    },
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
 use sqlx::sqlite::SqlitePool;
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::{
+    services::{ServeDir, ServeFile},
+    set_header::SetResponseHeaderLayer,
+};
 
 use discord::{AuthError, DiscordConfig, Identity};
 use domain::replay::{compute_scoreboard, ScoreInput};
@@ -85,7 +91,21 @@ async fn main() {
         .route("/ws", get(ws_handler))
         .with_state(state)
         // Tout ce qui ne matche pas une route API → fichiers statiques (puis index.html).
-        .fallback_service(spa);
+        .fallback_service(spa)
+        // Posées APRÈS le fallback : elles couvrent aussi les fichiers statiques, donc
+        // le document HTML — le seul endroit où une CSP sert vraiment (#152).
+        .layer(SetResponseHeaderLayer::overriding(
+            CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(CSP),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            REFERRER_POLICY,
+            HeaderValue::from_static("no-referrer"),
+        ));
 
     let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
     let addr = format!("127.0.0.1:{port}");
@@ -95,6 +115,31 @@ async fn main() {
     println!("TypeRacerDiscord backend → http://{addr}");
     axum::serve(listener, app).await.expect("serve");
 }
+
+/// CSP servie avec CHAQUE réponse (issue #152).
+///
+/// Dans l'iframe Discord, `{clientId}.discordsays.com` applique déjà la sienne — c'est
+/// elle qui impose le préfixe `/.proxy/`. Celle-ci couvre l'autre porte : l'URL du tunnel,
+/// atteignable directement dans un navigateur, où plus rien ne s'applique.
+///
+/// ⚠️ `frame-ancestors` AUTORISE Discord, et doit continuer à le faire : une politique qui
+/// interdit l'encadrement (ou un `X-Frame-Options: DENY`) rend le jeu totalement injouable
+/// — l'Activity N'EST qu'une iframe. C'est la façon la plus rapide de casser le produit en
+/// croyant le durcir.
+///
+/// Le reste suit ce que le code fait déjà :
+///   - `img-src` : les avatars viennent de `cdn.discordapp.com` (`discord.ts: avatarUrl`).
+///   - `connect-src` : même origine (le proxy Discord réécrit `/.proxy/…` avant nous),
+///     plus `wss:` par sécurité — la course entière passe par le WebSocket.
+///   - `style-src 'unsafe-inline'` : les templates posent des `style="--n:…"` et
+///     `style="width:…%"` (barres de progression, sections de réglages).
+const CSP: &str = "default-src 'self'; \
+     img-src 'self' https://cdn.discordapp.com data:; \
+     connect-src 'self' wss:; \
+     style-src 'self' 'unsafe-inline'; \
+     frame-ancestors https://discord.com https://*.discord.com https://*.discordsays.com; \
+     base-uri 'none'; \
+     form-action 'none'";
 
 async fn health() -> &'static str {
     "ok"
@@ -360,4 +405,23 @@ fn now_nanos() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Deux façons de casser la CSP sans s'en rendre compte : une valeur d'en-tête
+    /// invalide (`from_static` panique alors AU DÉMARRAGE, pas ici), et un durcissement
+    /// bien intentionné de `frame-ancestors` — qui rendrait l'Activity, donc le jeu
+    /// entier, impossible à afficher dans Discord.
+    #[test]
+    fn la_csp_est_valide_et_laisse_discord_encadrer_le_jeu() {
+        let v = HeaderValue::from_static(CSP);
+        assert!(v.to_str().is_ok(), "en-tête illisible");
+        assert!(CSP.contains("frame-ancestors https://discord.com"), "Discord doit rester autorisé à encadrer");
+        assert!(CSP.contains("https://*.discordsays.com"), "l'iframe sert depuis discordsays.com");
+        assert!(!CSP.contains("frame-ancestors 'none'"), "interdirait l'Activity");
+        assert!(CSP.contains("cdn.discordapp.com"), "sans ça, plus aucun avatar");
+    }
 }
