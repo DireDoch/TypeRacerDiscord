@@ -224,7 +224,7 @@ spectateur arrivé en cours de course occupe une place comme un autre.
 
 **Display identity en Race (piste, podium).**
 La Display identity est **annoncée par le client** dans l'événement de jointure et
-re-diffusée par `RoomState` — le serveur ne la résout pas via `/users/@me`, sinon
+re-diffusée par `RoomState` — le serveur ne la résout pas auprès de Discord, sinon
 l'override de pseudo (qui appartient au device) serait écrasé. Elle n'est jamais vérifiée
 ni persistée, et elle est **oubliée au départ** du joueur, comme le veut le glossaire. On
 transporte `{ playerId, displayName, avatarHash }` : **jamais une URL d'avatar**, chaque
@@ -289,7 +289,13 @@ Numbers = ~17 % de jetons-nombres autonomes de 1–4 chiffres.
 **Identité.**
 `player_id` jamais envoyé dans le corps : résolu côté serveur depuis le header
 `Authorization: Bearer <discord_access_token>` (scope `identify`). Toujours en string.
-Le serveur résout via `GET /users/@me` (cache court en mémoire) et expose l'échange du
+Le serveur résout via `GET /oauth2/@me` (cache court en mémoire) — cet endpoint-là plutôt
+que `/users/@me` parce qu'il renvoie **aussi l'application émettrice** du token : un
+access_token Discord est valable sur `/users/@me` quelle que soit l'app qui l'a obtenu, et
+sans comparer `application.id` à notre `DISCORD_CLIENT_ID`, la frontière ne serait pas « un
+joueur de cette Activity » mais « un utilisateur Discord quelconque » (issue #150, doc
+Discord : *« Do not trust data coming from the Discord client as truth »*). Il expose
+l'échange du
 code OAuth en **`POST /token`** (nommé « GET » par convention Discord, mais porte un corps
 JSON). **Mode dev** : si `DISCORD_CLIENT_ID/SECRET` sont absents de l'env, le Bearer token
 sert directement de `player_id` (test local au curl) et `/token` renvoie `503`. L'identité
@@ -398,7 +404,8 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
   colonne `kind` (`practice`/`race`) — les Races entrent dans l'historique via le
   `Finish` WS (`pb_eligible = 0` : leur fin stricte les rend incomparables aux
   buckets Practice ; un bucket « race » dédié viendra avec un éventuel leaderboard).
-- `discord.rs` : OAuth (`POST /token`) + identité via `/users/@me` (cache court), mode dev.
+- `discord.rs` : OAuth (`POST /token`) + identité via `/oauth2/@me` (cache court, et refus
+  d'un token émis pour une autre application — #150), mode dev.
 - `quote.rs` : `GET /api/quote`, proxy API-Ninjas (clé `X-Api-Key` côté serveur, `id` opaque
   dérivé du texte, `wikipediaUrl` construit depuis l'auteur). Clé absente → `502`.
 - Endpoints : `GET /api/health`, `GET /api/quote`, `POST /token`, `POST /api/runs` (recompute +
