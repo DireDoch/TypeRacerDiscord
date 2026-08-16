@@ -15,6 +15,7 @@ import { Race, type RaceIntent } from "./ui/race";
 import { History } from "./ui/history";
 import { Learn } from "./ui/learn";
 import { Settings } from "./ui/settings";
+import { hasSeenGuide, openGuide } from "./ui/guide";
 import { applyPreferences } from "./core/preferences";
 import { fitToViewport, mountIdentityBadge, mountWordField } from "./ui/chrome";
 import { getAuthToken, updateActivity } from "./discord";
@@ -106,8 +107,13 @@ function showMenu(): void {
         history: showHistory,
         learn: showLearn,
         settings: showSettings,
+        guide: openGuide,
       }),
   );
+  // Première arrivée (#173) : le Guide s'ouvre PAR-DESSUS le menu, jamais à sa place.
+  // Le joueur voit ainsi ce qu'on lui décrit, et « Continuer » le laisse là où il est
+  // déjà — pas de navigation à refaire pour commencer à jouer.
+  if (!hasSeenGuide()) openGuide();
 }
 
 function showSettings(): void {

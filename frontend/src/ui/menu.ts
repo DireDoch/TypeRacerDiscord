@@ -27,6 +27,7 @@ export class Menu {
       history(): void;
       learn(): void;
       settings(): void;
+      guide(): void;
     },
   ) {}
 
@@ -66,6 +67,7 @@ export class Menu {
       <button data-menu="learn">Apprendre</button>
       <button data-menu="history">Historique</button>
       <button data-menu="settings">Paramètres</button>
+      <button data-menu="guide" class="menu-quiet">Comment jouer</button>
       ${quit}
     `;
   }
@@ -98,6 +100,7 @@ export class Menu {
     on("multi-channel", () => this.nav.multi({ kind: "channel" }));
     on("multi-create", () => this.nav.multi({ kind: "create" }));
     on("settings", () => this.nav.settings());
+    on("guide", () => this.nav.guide());
     on("back", () => {
       this.view = "home";
       this.render();
