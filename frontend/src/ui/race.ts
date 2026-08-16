@@ -41,7 +41,8 @@ import { podiumHtml, wirePodium, type PodiumOptions } from "./podium";
 import { runPlayOfTheGame } from "./potg";
 import { liveWpm } from "../live-stats";
 import { wordsHtml, placeCaret, escapeText } from "./typing-zone";
-import { infoHtml } from "./info-bubble";
+import { infoHtml, glyphTipHtml } from "./info-bubble";
+import { loadPreferences } from "../core/preferences";
 import { avatarUrl, getIdentity, proxyBase, updateActivity, type ActivityExtra } from "../discord";
 import {
   reduce,
@@ -109,6 +110,12 @@ export class Race {
    * de phase, ne décide d'aucun écran.
    */
   private settingsOpen = false;
+  /**
+   * Code de partie révélé pour CE lobby (#184). Volontairement dans l'instance et non
+   * dans la Preference : « je le montre maintenant » ne veut pas dire « montre-le
+   * toujours ». Quitter la Room le remet à zéro sans une ligne de plus.
+   */
+  private codeRevealed = false;
   private countdownN = RACE_COUNTDOWN_S;
   private countdown: Countdown | null = null;
   private rafId = 0;
@@ -411,6 +418,22 @@ export class Race {
       ?.addEventListener("toggle", (e) => {
         this.settingsOpen = (e.target as HTMLDetailsElement).open;
       });
+    this.root.querySelector<HTMLButtonElement>("#revealCode")?.addEventListener("click", () => {
+      this.codeRevealed = true;
+      this.render();
+    });
+    this.root.querySelector<HTMLButtonElement>("#copyCode")?.addEventListener("click", (e) => {
+      const code = this.state.code;
+      if (code === null) return;
+      // Le retour visuel se joue sur le bouton lui-même : dans l'iframe Discord la
+      // permission presse-papiers peut être refusée, et un « Copié ✓ » qui ment serait
+      // pire que pas de retour du tout. D'où le `.catch`, qui dit franchement non.
+      const btn = e.currentTarget as HTMLButtonElement;
+      navigator.clipboard
+        .writeText(code)
+        .then(() => (btn.textContent = "Copié ✓"))
+        .catch(() => (btn.textContent = "Copie refusée"));
+    });
     this.root.querySelector<HTMLButtonElement>("#toggleReady")?.addEventListener("click", () => {
       const me = this.state.players.find((p) => p.playerId === this.me);
       this.socket?.send({ type: "SetReady", ready: !(me?.ready ?? false) });
@@ -537,10 +560,28 @@ export class Race {
     return "Tape le texte ; corrige tes fautes pour finir";
   }
 
-  /** Code de partie, affiché à TOUT le lobby : n'importe qui peut inviter, pas que l'hôte. */
+  /**
+   * Code de partie, affiché à TOUT le lobby : n'importe qui peut inviter, pas que l'hôte.
+   *
+   * Masqué par défaut (#184) — Preference `hideRaceCode`, donc device-local : ce qui
+   * passe à l'antenne est l'écran du streamer, pas celui des invités. En faire un
+   * Réglage de salon l'aurait caché à ceux qui doivent justement le lire.
+   *
+   * `codeRevealed` vit dans l'instance et non dans la Preference : révéler vaut pour
+   * CE lobby, pas pour toujours. Quitter la Room le remet à zéro tout seul.
+   */
   private codeHtml(): string {
     if (this.state.code === null) return "";
-    return `<p class="race-code">Code de partie : <strong>${escapeText(this.state.code)}</strong></p>`;
+    const hidden = loadPreferences().hideRaceCode && !this.codeRevealed;
+    const shown = hidden
+      ? `<button type="button" id="revealCode" class="race-code-hidden"
+           aria-label="Révéler le Code de partie">${"•".repeat(this.state.code.length)}</button>`
+      : `<strong>${escapeText(this.state.code)}</strong>`;
+    // « Copier » est ce qui rend le code utilisable SANS jamais l'afficher — sans lui, le
+    // défaut masqué laisserait un hôte débutant ignorer qu'il existe un code à
+    // communiquer, alors que c'est le seul chemin depuis un autre serveur Discord.
+    return `<p class="race-code">Code de partie : ${shown}
+      <button type="button" id="copyCode" class="secondary">Copier</button></p>`;
   }
 
   /**
@@ -734,9 +775,19 @@ export class Race {
         const tags = [isOwner ? "owner" : "", isMe ? "me" : ""].filter(Boolean).join(" ");
         const label = isMe ? `${p.displayName} (toi)` : p.displayName;
         const readyTag = this.state.readyCheck ? (p.ready ? " ✓" : " ⌛") : "";
-        return `<div class="card ${tags}">${avatarHtml(p)} ${escapeText(label)}${
-          isOwner ? " 👑" : ""
-        }${readyTag}</div>`;
+        // La couronne portait zéro explication (#182) : elle marque l'hôte, et l'hôte est
+        // le seul à pouvoir toucher aux Réglages de salon (ADR 0009). Le dire là où le
+        // symbole est, plutôt qu'ajouter une légende que personne ne lit.
+        const crown = isOwner
+          ? glyphTipHtml(
+              "👑",
+              "Hôte du salon",
+              "L'hôte règle le mode de jeu, la source du texte et les autres réglages du salon, et c'est lui qui lance la course. Le rôle revient au premier arrivé, et passe au suivant s'il quitte la Room.",
+            )
+          : "";
+        return `<div class="card ${tags}">${avatarHtml(p)} <span class="card-name">${escapeText(
+          label,
+        )}</span>${crown}${readyTag}</div>`;
       })
       .join("");
     return `<div class="cards">${cards}</div>`;

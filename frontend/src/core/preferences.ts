@@ -137,6 +137,11 @@ export interface Preferences {
   /** Plafond d'images/s de l'animation live (issue #70). `0` = natif, illimité —
    *  n'importe quel entier positif est un plafond personnalisé valide. */
   fpsLimit: number;
+  /** Masque le Code de partie dans le lobby (issue #184). Une **Preference** et pas un
+   *  Réglage de salon : ce qui passe à l'antenne est l'écran du streamer, alors qu'un
+   *  Réglage de salon est « applied uniformly to every Player » — il cacherait le code
+   *  aux invités, c'est-à-dire précisément à ceux qui doivent le lire. */
+  hideRaceCode: boolean;
 }
 
 /** Défaut + domaine de validité d'une clé : le seul endroit à toucher pour qu'une
@@ -197,6 +202,15 @@ const SPEC: { [K in keyof Preferences]: { default: Preferences[K]; valid: (v: un
   fpsLimit: {
     default: 0,
     valid: (v) => typeof v === "number" && Number.isFinite(v) && v >= 0,
+  },
+  // Masqué PAR DÉFAUT, contre l'intuition : le Code de partie est « short enough to be
+  // read out loud » et c'est le seul moyen de faire venir un joueur d'un autre serveur
+  // Discord. Le défaut protège quand même le cas où l'afficher coûte le plus cher (un
+  // stream), parce que révéler est un clic alors que dé-révéler est impossible. C'est
+  // le bouton « Copier » qui garde l'action découvrable sans jamais montrer le code.
+  hideRaceCode: {
+    default: true,
+    valid: (v) => typeof v === "boolean",
   },
 };
 

@@ -153,6 +153,23 @@ describe("fpsLimit (issue #70)", () => {
   });
 });
 
+describe("hideRaceCode (issue #184)", () => {
+  // Ce défaut est délibérément contre-intuitif — le Code de partie existe pour être lu
+  // à voix haute — et se lit donc comme un bug quand on tombe dessus. Le test est là
+  // pour que « corriger » ce false-en-true casse quelque chose de bruyant.
+  it("masqué par défaut : sur un stream, un code affiché ne se rattrape pas", () => {
+    expect(defaultPreferences().hideRaceCode).toBe(true);
+  });
+
+  it("se laisse désactiver", () => {
+    expect(setPreference("hideRaceCode", false).hideRaceCode).toBe(false);
+  });
+
+  it("retombe sur son défaut si le stockage porte autre chose qu'un booléen", () => {
+    expect(parsePreferences({ hideRaceCode: "non" }).hideRaceCode).toBe(true);
+  });
+});
+
 describe("exportPreferences / importPreferences (issue #70)", () => {
   it("aller-retour : ce qui est exporté se réimporte à l'identique", () => {
     setPreference("fontFamily", "inter");
