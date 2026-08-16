@@ -38,12 +38,20 @@ import {
   type TextSource,
 } from "../core/net";
 import { podiumHtml, wirePodium, type PodiumOptions } from "./podium";
+import { DIFFICULTY_LABELS } from "./mode-labels";
 import { runPlayOfTheGame } from "./potg";
 import { liveWpm } from "../live-stats";
 import { wordsHtml, placeCaret, escapeText } from "./typing-zone";
 import { infoHtml, glyphTipHtml } from "./info-bubble";
 import { loadPreferences } from "../core/preferences";
-import { avatarUrl, getIdentity, proxyBase, updateActivity, type ActivityExtra } from "../discord";
+import {
+  avatarUrl,
+  getIdentity,
+  proxyBase,
+  updateActivity,
+  type ActivityExtra,
+  type ActivityState,
+} from "../discord";
 import {
   reduce,
   initialRaceState,
@@ -116,6 +124,14 @@ export class Race {
    * toujours ». Quitter la Room le remet à zéro sans une ligne de plus.
    */
   private codeRevealed = false;
+  /**
+   * Dernière présence poussée, sérialisée. `setActivity` est limité côté Discord (~5
+   * appels par 20 s) et un `RoomState` arrive à CHAQUE join, départ ou réglage touché :
+   * sans cette comparaison, republier la présence à chaque état du salon brûlerait le
+   * quota pour rien, et c'est justement le changement de Mode de jeu — rare — qu'on veut
+   * voir passer.
+   */
+  private lastActivity = "";
   private countdownN = RACE_COUNTDOWN_S;
   private countdown: Countdown | null = null;
   private rafId = 0;
@@ -154,6 +170,14 @@ export class Race {
   }
 
   /** Traduit l'intention d'entrée en événement de jointure (ADR 0008). */
+  /** Publie la présence, sauf si elle est identique à la dernière poussée. */
+  private pushActivity(state: ActivityState, extra: ActivityExtra): void {
+    const key = `${state}|${JSON.stringify(extra)}`;
+    if (key === this.lastActivity) return;
+    this.lastActivity = key;
+    updateActivity(state, extra);
+  }
+
   private joinEvent(): ClientEvent {
     const identity = this.identity;
     switch (this.intent.kind) {
@@ -182,8 +206,12 @@ export class Race {
         // Duel à l'écran : on met à jour les données (join/leave du lobby d'après-course)
         // mais on NE re-render PAS — sinon on effacerait le Play of the Game en pleine lecture.
         if (this.potgStop) return;
-        if (prevPhase === "connecting" && this.state.phase === "lobby")
-          updateActivity("lobby", activityExtra(this.state));
+        // À CHAQUE RoomState du salon, plus seulement à l'arrivée : changer le Mode de
+        // jeu est justement ce qui doit changer le visuel affiché à ceux qui nous lisent.
+        // `pushActivity` avale les répétitions, donc un join ou un réglage sans effet sur
+        // la présence ne coûte pas un appel.
+        if (this.state.phase === "lobby")
+          this.pushActivity(lobbyActivityState(this.state.gameMode), activityExtra(this.state));
         this.render();
         break;
       // Jointure refusée : le socket reste ouvert côté serveur, mais la reprise se fait
@@ -225,7 +253,10 @@ export class Race {
         if (this.state.phase === "running") this.renderBars();
         break;
       case "RaceOver":
-        updateActivity("lobby", activityExtra(this.state)); // podium affiché, mais on est revenu dans la Room
+        // Podium affiché, mais on est revenu dans la Room — et le visuel du mode qu'on
+        // vient de jouer reste à l'écran de ceux qui nous lisent (demande utilisateur :
+        // « à la fin de la partie, le faire afficher quelque part »).
+        this.pushActivity(lobbyActivityState(this.state.gameMode), activityExtra(this.state));
         cancelAnimationFrame(this.rafId);
         this.render();
         break;
@@ -278,7 +309,10 @@ export class Race {
   private beginRun(): void {
     this.countdown = null;
     this.state = { ...this.state, phase: "running" };
-    updateActivity(this.state.gameMode === "normal" ? "race" : this.state.gameMode, activityExtra(this.state));
+    this.pushActivity(
+      this.state.gameMode === "normal" ? "race" : this.state.gameMode,
+      activityExtra(this.state),
+    );
     this.doneLocal = false;
     this.log = [];
     this.lastLockedSent = 0; // revanche : sans ça, aucun Progress ne repartirait
@@ -497,14 +531,28 @@ export class Race {
       case "lobby":
         return (
           this.codeHtml() +
+          // Deux colonnes : QUI est là à gauche, ce qu'on va jouer à droite. Empilée sous
+          // les Réglages, la liste des joueurs se retrouvait sous la ligne de flottaison
+          // dès que le salon en comptait trois — or c'est elle qu'on regarde en attendant,
+          // et c'est elle qui porte les « prêt ». Le bouton personnel « Se dire prêt » la
+          // suit : on se déclare là où on lit son propre état.
+          //
           // Les Réglages de salon se DÉCLARENT (`lobbyRows()`, sur le modèle de
           // `settings.ts:sections()`) et se rendent dans UNE grille (#95, issue #131) —
           // c'est le conteneur commun qui les aligne, pas dix méthodes qui se ressemblent
           // de loin. La Source est absente de la liste dès qu'un Mode de jeu impose son
           // texte (ADR 0015, 0016) : l'afficher laisserait croire qu'on peut encore le choisir.
-          `<div class="lobby-settings">${this.lobbyRows().map(lobbyRowHtml).join("")}</div>` +
-          this.cardsHtml() +
-          this.readyBtnHtml() +
+          `<div class="lobby-body">
+             <div class="lobby-roster">
+               <h3 class="lobby-roster-title">Dans le salon · ${this.state.players.length}</h3>
+               ${this.cardsHtml()}
+               ${this.readyBtnHtml()}
+             </div>
+             <div class="lobby-config">
+               ${modeArtHtml(this.state.gameMode)}
+               <div class="lobby-settings">${this.lobbyRows().map(lobbyRowHtml).join("")}</div>
+             </div>
+           </div>` +
           this.startBtnHtml() +
           this.exitBtnHtml()
         );
@@ -532,6 +580,10 @@ export class Race {
         // ne l'ouvre pas, donc un podium de la même hauteur qu'avant.
         return (
           podiumHtml(this.podiumOptions()) +
+          // « À la fin de la partie, l'afficher quelque part » : le même bandeau, avec le
+          // mode qu'on vient de jouer. Il ferme le podium sur ce qui a été joué, et il ne
+          // dépend d'aucun téléversement dans le portail.
+          modeArtHtml(this.state.gameMode) +
           `<details class="lobby-reopen"${this.settingsOpen ? " open" : ""}>
              <summary>Réglages du salon</summary>
              <div class="lobby-settings">${this.lobbyRows().map(lobbyRowHtml).join("")}</div>
@@ -763,7 +815,13 @@ export class Race {
   private readyBtnHtml(): string {
     if (!this.state.readyCheck) return "";
     const ready = this.state.players.find((p) => p.playerId === this.me)?.ready ?? false;
-    return `<button id="toggleReady" class="${ready ? "on" : ""}">${ready ? "Prêt ✓" : "Se dire prêt"}</button>`;
+    // `secondary`, le même vocabulaire que « Copier » juste au-dessus et que les boutons
+    // de l'écran de résultats : sans classe, il restait un bouton natif blanc au milieu
+    // d'un écran sombre. `ready` l'allume en vert — le seul endroit de l'app où cette
+    // couleur sert, parce que c'est le seul état qui veut dire « c'est bon pour moi ».
+    return `<button id="toggleReady" class="secondary${ready ? " ready" : ""}">${
+      ready ? "Prêt ✓" : "Se dire prêt"
+    }</button>`;
   }
 
   /** Cartes de présence empilées (owner en tête, moi souligné). */
@@ -772,9 +830,13 @@ export class Race {
       .map((p) => {
         const isOwner = p.playerId === this.state.owner;
         const isMe = p.playerId === this.me;
-        const tags = [isOwner ? "owner" : "", isMe ? "me" : ""].filter(Boolean).join(" ");
+        const tags = [isOwner ? "owner" : "", isMe ? "me" : "", p.ready ? "is-ready" : ""]
+          .filter(Boolean)
+          .join(" ");
         const label = isMe ? `${p.displayName} (toi)` : p.displayName;
-        const readyTag = this.state.readyCheck ? (p.ready ? " ✓" : " ⌛") : "";
+        const readyTag = this.state.readyCheck
+          ? `<span class="card-ready">${p.ready ? "✓" : "⌛"}</span>`
+          : "";
         // La couronne portait zéro explication (#182) : elle marque l'hôte, et l'hôte est
         // le seul à pouvoir toucher aux Réglages de salon (ADR 0009). Le dire là où le
         // symbole est, plutôt qu'ajouter une légende que personne ne lit.
@@ -799,10 +861,12 @@ export class Race {
       // vivant. Le serveur refuse en silence — le bouton doit donc dire pourquoi, sinon
       // l'hôte clique dans le vide sans comprendre.
       if (this.state.gameMode === "floorIsLava" && this.state.players.length < 2) {
-        return `<button id="startRace" disabled>Démarrer la course</button>
+        return `<button id="startRace" class="primary" disabled>Démarrer la course</button>
           <p class="hint">Floor is lava demande au moins deux joueurs — seul, tu es déjà le dernier vivant.</p>`;
       }
-      return `<button id="startRace" class="on">Démarrer la course</button>`;
+      // `primary` : c'est LE bouton de l'écran, et c'est le patron que « Recommencer »
+      // et « Continuer » portent déjà ailleurs.
+      return `<button id="startRace" class="primary">Démarrer la course</button>`;
     }
     return `<p class="hint">En attente que l'hôte lance la course…</p>`;
   }
@@ -1128,6 +1192,30 @@ const LOBBY_TIPS = {
     "Temps maximum de la course. S'il s'écoule avant que quiconque ait atteint l'objectif, c'est celui qui a le plus de répétitions correctes qui gagne.",
 } as const;
 
+/**
+ * Le visuel du Mode de jeu, DANS l'app — le repli statique de la Rich Presence.
+ *
+ * Cette dernière ne s'affiche que dans Discord (liste des membres, profil), et seulement
+ * si les PNG de `design/out/` ont été téléversés dans le portail développeur : dans
+ * l'Activity elle-même, on ne voit rien. Ici l'image est servie depuis `public/modes/`,
+ * donc elle est là quoi qu'il arrive, hors Discord compris.
+ *
+ * En BANDEAU large, jamais en badge : l'issue #171 dit que ces visuels ne se distinguent
+ * pas à 96 px, et elle a raison — la scène est horizontale sur un carré presque vide en
+ * haut et en bas. Recadrée en 24:9 sur la voiture et le sol, c'est justement ce que
+ * l'image sait faire.
+ *
+ * `race.png` sert le Mode normal : c'est déjà la clé d'asset que la présence envoie pour
+ * lui (`discord.ts`), et un seul nom pour les deux emplois.
+ */
+export function modeArtHtml(gameMode: GameMode): string {
+  const key = gameMode === "floorIsLava" ? "floor-is-lava" : gameMode === "spam" ? "spam" : "race";
+  return `<figure class="mode-art">
+    <img src="/modes/${key}.png" alt="" width="1024" height="1024" />
+    <figcaption>${GAME_MODE_LABELS[gameMode]}</figcaption>
+  </figure>`;
+}
+
 /** Les Modes de jeu offerts (ADR 0015, 0016). Un seul à la fois : ils ne se cumulent pas. */
 const GAME_MODES: GameMode[] = ["normal", "floorIsLava", "spam"];
 
@@ -1288,7 +1376,6 @@ export function lobbyRowHtml(row: LobbyRow): string {
 
 /** Libellés de Difficulté (issue #71) — Expert n'apparaît dans aucun `select` de Room,
  *  mais reste couvert ici : `this.state.difficulty` a le type `Difficulty` au complet. */
-const DIFFICULTY_LABELS: Record<Difficulty, string> = { normal: "Normal", expert: "Expert", master: "Master" };
 
 /** Longueur à reprendre quand on (re)passe sur `words`. Médiane par défaut. */
 export function currentCount(src: TextSource): number {
@@ -1311,6 +1398,25 @@ export function sourceLabel(src: TextSource): string {
  *
  * Pure — `now` est injecté plutôt que lu, sinon le rebours Spam ne serait pas testable.
  */
+/**
+ * L'état de présence du salon, d'après le Mode de jeu réglé (#115). Un salon montre ce
+ * qu'on est sur le POINT de jouer — c'est ce que lit un ami dans la liste des membres —
+ * et le mode se change jusqu'au dernier instant, donc la présence doit suivre.
+ *
+ * `discord.ts` n'apprend toujours pas ce qu'est un Mode de jeu : c'est ici, où `RaceState`
+ * est déjà tenu, que la traduction se fait.
+ */
+export function lobbyActivityState(gameMode: RaceState["gameMode"]): ActivityState {
+  switch (gameMode) {
+    case "floorIsLava":
+      return "lobbyFloorIsLava";
+    case "spam":
+      return "lobbySpam";
+    default:
+      return "lobbyNormal";
+  }
+}
+
 export function activityExtra(s: RaceState, now: number = Date.now()): ActivityExtra {
   const party: [number, number] = [s.players.length, s.maxPlayers];
   if (s.phase !== "running") return { party, state: "En attente" };

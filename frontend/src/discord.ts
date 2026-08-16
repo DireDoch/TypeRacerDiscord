@@ -102,7 +102,15 @@ let activitySdk: DiscordSDK | null = null;
  * `floorIsLava`/`spam` viennent de `Race` (le Mode de jeu et la phase de la Room) ;
  * `menu`/`practice` viennent de `main.ts` au changement d'écran.
  */
-export type ActivityState = "menu" | "practice" | "lobby" | "race" | "floorIsLava" | "spam";
+export type ActivityState =
+  | "menu"
+  | "practice"
+  | "lobbyNormal"
+  | "lobbyFloorIsLava"
+  | "lobbySpam"
+  | "race"
+  | "floorIsLava"
+  | "spam";
 
 /**
  * Un triplet (details, clé d'asset, tooltip) par état — POUR AJOUTER UN ÉTAT : une entrée
@@ -120,7 +128,25 @@ export type ActivityState = "menu" | "practice" | "lobby" | "race" | "floorIsLav
 const ACTIVITY_PRESETS: Record<ActivityState, { details: string; largeImageKey: string; largeText: string }> = {
   menu: { details: "Dans le menu", largeImageKey: "menu", largeText: "TypeRacer" },
   practice: { details: "S'entraîne", largeImageKey: "practice", largeText: "Entraînement solo" },
-  lobby: { details: "Dans un salon", largeImageKey: "lobby", largeText: "En attente du départ" },
+  // Le salon montre le visuel du MODE DE JEU choisi, pas une image d'attente générique :
+  // c'est ce qu'on est sur le point de jouer qui intéresse celui qui lit la présence, et
+  // le mode est réglable jusqu'au dernier instant. `lobby.png` n'est donc plus envoyé —
+  // il reste dans `design/out/` sans emploi (voir le tableau de `design/README.md`).
+  lobbyNormal: {
+    details: "Dans un salon",
+    largeImageKey: "race",
+    largeText: "Course classique — le premier à taper tout le texte gagne",
+  },
+  lobbyFloorIsLava: {
+    details: "Dans un salon",
+    largeImageKey: "floor-is-lava",
+    largeText: "Floor is lava — le moins avancé brûle, à intervalle régulier",
+  },
+  lobbySpam: {
+    details: "Dans un salon",
+    largeImageKey: "spam",
+    largeText: "Spam — un seul mot, répété le plus vite possible",
+  },
   race: { details: "En course", largeImageKey: "race", largeText: "Le premier à taper tout le texte gagne" },
   floorIsLava: {
     details: "Floor is lava",

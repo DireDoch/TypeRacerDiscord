@@ -120,7 +120,7 @@ export interface PerSecondPoint {
   wpm: number;
   /** Raw cumulatif depuis le départ, évalué à l'instant t. */
   raw: number;
-  /** Erreurs LOCALES à la fenêtre [t-1, t) (points rouges, axe Y droit). */
+  /** Erreurs LOCALES à la fenêtre [t-1, t) (points rouges posés sur la courbe wpm). */
   errors: number;
   /** Burst : WPM du mot le plus rapide complété dans [t-1, t) ; report de la valeur précédente sinon. */
   burst: number;

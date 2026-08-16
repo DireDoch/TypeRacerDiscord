@@ -31,11 +31,12 @@ fichiers, c'est neuf occasions de diverger. Ici, changer le corail dans
 | `app-icon.png` | Icône d'application **et** petit visuel Rich Presence (clé `app-icon`) | 1024 × 1024 |
 | `cover.png` | Cover de l'étagère des Activités | 1024 × 576 |
 | `background.png` | Overlay de l'affichage en grille | 1024 × 576 |
-| `menu.png` `practice.png` `lobby.png` `race.png` `floor-is-lava.png` `spam.png` | Art assets Rich Presence | 1024 × 1024 |
+| `menu.png` `practice.png` `race.png` `floor-is-lava.png` `spam.png` | Art assets Rich Presence | 1024 × 1024 |
+| `lobby.png` | **Plus envoyé** — le salon montre désormais le visuel du Mode de jeu réglé (`race` / `floor-is-lava` / `spam`), pas une image d'attente générique. Gardé ici : rien ne se casse à le laisser sur le portail. | 1024 × 1024 |
 
 **Le nom du fichier est la clé d'asset.** Discord nomme l'asset d'après le fichier
 téléversé, et `frontend/src/discord.ts` (`ACTIVITY_PRESETS`) envoie exactement ces
-six clés plus `app-icon`. Renommer un PNG casse la Rich Presence de l'état
+cinq clés plus `app-icon`. Renommer un PNG casse la Rich Presence de l'état
 correspondant *en silence* : Discord retombe sur l'image par défaut sans rien dire.
 
 ## Le système de composants

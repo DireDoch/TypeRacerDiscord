@@ -30,6 +30,10 @@
   --sub: #96a0b5; /* texte TAPÉ, libellés — 6,9:1 (AA) */
   --main: #ff7a59; /* curseur, accent, leader — 7,1:1 (AAA) */
   --error: #ff4d6d; /* faute — 5,6:1 (AA) sur --bg */
+  /* Le seul état de l'app qui veut dire « c'est bon pour moi » : un joueur prêt dans le
+     lobby, et rien d'autre. Séparé de --main à dessein — le corail dit « ici », pas
+     « validé ». Mesuré 10,4:1 sur --bg (AAA). */
+  --ready: #3ddc97;
 
   /* Fond sourd de la faute (remplace le soulignement rouge). Mesuré :
      --error sur --error-bg = 4,74:1 → la faute reste lisible sans trait. */
@@ -104,6 +108,9 @@ body {
    doivent battre les règles `button` de chaque écran, et l'ordre source tranche. */
 
 /* --- Barre de config ------------------------------------------------------ */
+/* `.config` est AUSSI la barre de l'Historique et celle du Replay, qui y posent leurs
+   `.group` sans passer par les axes (`history.ts:72`, `replay.ts:63`) : la disposition
+   reste donc ici, et le pli ne fait que s'ajouter par-dessus. */
 .config {
   display: flex;
   flex-wrap: wrap;
@@ -116,6 +123,43 @@ body {
   border-radius: 0.6rem;
   padding: 0.6rem 1rem;
   font-size: 0.85rem;
+}
+/* --- Le pli (#197, décision 9) ---------------------------------------------
+   Repliée, la barre tient sur une ligne qui DIT la config au lieu de l'offrir.
+   `<details>` natif : le clavier, l'ARIA et l'état ouvert viennent avec. */
+.config-summary {
+  list-style: none; /* le triangle par défaut, remplacé par le nôtre, aligné au texte */
+  cursor: pointer;
+  text-align: center;
+  color: var(--sub);
+  border-radius: 0.3rem;
+  padding: 0.1rem;
+}
+.config-summary::-webkit-details-marker {
+  display: none;
+}
+.config-summary::after {
+  content: " ▾";
+  color: var(--main);
+}
+.config-fold[open] .config-summary::after {
+  content: " ▴";
+}
+.config-summary:hover,
+.config-summary:focus-visible {
+  color: var(--text);
+}
+/* Le pli occupe la barre entière : son résumé se centre sur toute la largeur. */
+.config-fold {
+  flex: 1 1 100%;
+}
+.config-axes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.1rem;
+  align-items: center;
+  justify-content: center;
+  margin-top: 0.6rem;
 }
 /* Un AXE = un réglage indépendant, avec son icône « i » (#180). Le Mode et sa valeur
    partagent le leur : « 30 » n'a aucun sens sans « temps » à côté, et disparaît avec lui
@@ -305,32 +349,184 @@ body {
   flex-direction: column;
   gap: 1.5rem;
 }
+/* --- Ce qu'on vient d'accomplir (#194) -------------------------------------
+   Avant : deux chiffres de même taille, puis quatre stats de même poids, et un
+   record annoncé en 1,3 rem au milieu d'elles. L'écran se lisait comme un tableau
+   de bord — rien n'y dominait. Maintenant le WPM domine, la précision le seconde,
+   le reste est du support, et un record change le traitement du bloc entier.
+   Même langage que le podium (Gap en gros, ADR 0010), pas un troisième. */
 .headline {
   display: flex;
-  gap: 3rem;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 2.2rem;
 }
-.big-stat {
+/* En panneau réduit, c'est la précision ENTIÈRE qui passe à la ligne, jamais son
+   « % » tout seul : chaque bloc reste insécable, seul le rang se coupe. */
+.pb-flag {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--main);
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.hero {
   display: flex;
-  flex-direction: column;
+  align-items: baseline;
+  gap: 0.6rem;
+  white-space: nowrap;
 }
-.big-stat .label {
+.hero-value {
+  color: var(--main);
+  font-family: var(--font-mono);
+  font-size: 5.5rem;
+  line-height: 0.9;
+  font-variant-numeric: tabular-nums;
+}
+.hero-unit {
   color: var(--sub);
   font-size: 1rem;
 }
-.big-stat .value {
-  color: var(--main);
-  font-family: var(--font-mono);
-  font-size: 3.5rem;
-  line-height: 1;
+.hero-acc {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  white-space: nowrap;
 }
+.hero-acc-value {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 2rem;
+  font-variant-numeric: tabular-nums;
+}
+.hero-acc-label {
+  color: var(--sub);
+  font-size: 1rem;
+}
+/* Le record tombé ne se signale pas par un libellé de plus : il allume le chiffre
+   lui-même, d'un halo corail que rien d'autre sur l'écran ne porte. */
+.headline.is-pb .hero-value {
+  text-shadow: 0 0 1.6rem color-mix(in srgb, var(--main) 55%, transparent);
+}
+/* --- Graphe seconde par seconde (décision 13, ui/chart.ts) ------------------
+   Le SVG a remplacé chart.js, donc les couleurs des courbes redeviennent des
+   variables : plus un seul hex recopié ici. */
 .chart-wrap {
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
   height: 280px;
 }
+.chart-svg {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  overflow: visible;
+}
+.chart-svg:focus-visible {
+  outline: 2px solid var(--main);
+  outline-offset: 2px;
+}
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 1rem;
+  font-size: 0.8rem;
+  color: var(--sub);
+}
+.chart-key {
+  white-space: nowrap;
+}
+.chart-key::before {
+  content: "";
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.2rem;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+  background: currentColor;
+}
+.key-wpm {
+  color: var(--main);
+}
+.key-err {
+  color: var(--error);
+}
+.key-err::before {
+  height: 0.5rem;
+  width: 0.5rem;
+  border-radius: 50%;
+}
+/* La lecture d'une seconde (survol ou flèches) — elle prend la place de
+   l'infobulle canvas de #177, et reste lisible sans souris. */
+.chart-readout {
+  margin-left: auto;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+/* L'aire retombe vers le fond : à opacité constante elle formait une masse brune
+   qui pesait plus que la courbe qu'elle est censée soutenir. */
+.chart-area {
+  stroke: none;
+}
+.chart-area-top {
+  stop-color: var(--main);
+  stop-opacity: 0.3;
+}
+.chart-area-bottom {
+  stop-color: var(--main);
+  stop-opacity: 0.02;
+}
+.chart-wpm {
+  fill: none;
+  stroke: var(--main);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.chart-raw {
+  fill: none;
+  stroke: var(--sub);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+.chart-dot {
+  fill: var(--error);
+  stroke: var(--bg);
+  stroke-width: 1.5;
+}
+.chart-grid {
+  stroke: var(--panel);
+  stroke-width: 1;
+}
+.chart-cross {
+  stroke: var(--sub);
+  stroke-width: 1;
+}
+.chart-tick {
+  fill: var(--sub);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+/* Le support : une seule carte, pas quatre valeurs flottantes de même poids que le
+   reste de l'écran. Les cellules se séparent d'un filet, jamais d'un vide (#194). */
 .sub-stats {
   display: flex;
   flex-wrap: wrap;
-  gap: 2rem;
+  align-self: start;
+  gap: 0.35rem;
+}
+/* Des pastilles serrées, pas un rang séparé de filets : en panneau réduit la rangée
+   passe à la ligne, et un filet gauche s'y retrouverait orphelin en tête de seconde
+   ligne — le même détail subi que `.axis-own-row` a déjà coûté à la barre de config.
+   Le fond de chaque cellule tient le groupe sans rien à orienter. */
+.sub-stats > div {
+  background: var(--panel);
+  border-radius: 0.4rem;
+  padding: 0.45rem 0.9rem;
 }
 .sub-stats .label {
   display: block;
@@ -340,7 +536,8 @@ body {
 .sub-stats .value {
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 1.3rem;
+  font-size: 1.15rem;
+  font-variant-numeric: tabular-nums;
 }
 .notice {
   color: var(--error);
@@ -425,20 +622,27 @@ body {
   color: var(--sub);
   font-size: 0.85rem;
 }
+/* LE bouton d'un écran. Le remplissage corail vivait en double, redéclaré à l'identique
+   par `.results-actions` et `.guide-panel` par-dessus une base grise que plus personne
+   n'affichait ; il remonte ici, et les deux ne gardent que leur taille. */
 button.primary {
   align-self: center;
-  background: none;
+  background: color-mix(in srgb, var(--main) 14%, transparent);
   border: none;
-  color: var(--sub);
+  color: var(--main);
   font-family: var(--font-ui);
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   cursor: pointer;
-  padding: 0.6rem 1.2rem;
+  padding: 0.5rem 1.4rem;
   border-radius: 0.4rem;
 }
 button.primary:hover {
-  color: var(--text);
+  background: color-mix(in srgb, var(--main) 24%, transparent);
+}
+button.primary:disabled {
   background: var(--panel);
+  color: var(--sub);
+  cursor: default;
 }
 
 /* Actions de l'écran de résultats (#178). `.results` est une colonne flex, donc un
@@ -471,18 +675,19 @@ button.secondary:hover {
   color: var(--text);
   border-color: var(--sub);
 }
+/* Prêt : la seule chose verte de l'écran, donc lisible d'un coup d'œil au milieu d'une
+   liste de joueurs. Pas prêt, il reste un `secondary` gris — un état qui n'appelle pas
+   l'œil est un état qu'on n'a pas besoin de vérifier. */
+button.secondary.ready,
+button.secondary.ready:hover {
+  background: color-mix(in srgb, var(--ready) 15%, transparent);
+  border-color: color-mix(in srgb, var(--ready) 55%, transparent);
+  color: var(--ready);
+}
 /* Le bouton principal reprend sa place dans la ligne : `align-self: center` venait
    de l'époque où il était seul enfant direct de la colonne. */
 .results-actions button.primary {
   align-self: auto;
-  background: color-mix(in srgb, var(--main) 14%, transparent);
-  color: var(--main);
-  font-size: 0.95rem;
-  padding: 0.5rem 1.4rem;
-}
-.results-actions button.primary:hover {
-  background: color-mix(in srgb, var(--main) 24%, transparent);
-  color: var(--main);
 }
 
 /* --- Race (multijoueur) --------------------------------------------------- */
@@ -637,6 +842,92 @@ button.secondary:hover {
   cursor: pointer;
   padding: 0.5rem 0;
   color: var(--sub);
+}
+/* --- Lobby en deux colonnes ------------------------------------------------
+   QUI est là à gauche, ce qu'on va jouer à droite. Empilée sous les Réglages, la liste
+   des joueurs passait sous la ligne de flottaison dès trois joueurs — or c'est elle
+   qu'on regarde en attendant, et c'est elle qui porte les « prêt ».
+   Sous le même seuil que le reste de la feuille, les deux colonnes se remettent en pile
+   et le roster reste EN PREMIER : en panneau réduit aussi, on veut d'abord voir qui est là. */
+.lobby-body {
+  display: grid;
+  grid-template-columns: minmax(14rem, 20rem) 1fr;
+  align-items: start;
+  gap: 1.2rem;
+  width: 100%;
+}
+@media (max-width: 34rem) {
+  .lobby-body {
+    grid-template-columns: 1fr;
+  }
+}
+.lobby-roster {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.lobby-roster-title {
+  margin: 0;
+  color: var(--sub);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+/* Le visuel du Mode de jeu (repli statique de la Rich Presence, `race.ts::modeArtHtml`).
+   BANDEAU et non badge : la scène est horizontale sur un carré presque vide en haut et
+   en bas — c'est le constat de #171. Recadrée en 24:9 un peu sous le centre, on garde la
+   voiture et le sol, qui sont ce qui distingue les trois modes. */
+.mode-art {
+  margin: 0;
+  width: 100%;
+  border-radius: 0.7rem;
+  overflow: hidden;
+  position: relative;
+  background: var(--panel);
+}
+.mode-art img {
+  display: block;
+  width: 100%;
+  /* `height: auto` est OBLIGATOIRE : l'attribut `height="1024"` du `<img>` se traduit en
+     propriété CSS `height`, et une hauteur spécifiée court-circuite `aspect-ratio` — le
+     bandeau retombait sur le carré de 1024 px. Les attributs restent pour que la place
+     soit réservée avant le chargement. */
+  height: auto;
+  /* Le ratio et le point de visée sont mesurés sur les PNG, pas devinés : la scène
+     (toit de la voiture → bas de la bande de sol) occupe la bande y ≈ 270-740 d'un
+     carré de 1024. 1024/470 ≈ 2,2 la cadre exactement, centrée à 49 %. */
+  aspect-ratio: 22 / 10;
+  object-fit: cover;
+  object-position: center 49%;
+}
+/* Le nom se pose SUR l'image, sur un voile : sans lui, un joueur qui ne connaît pas
+   encore les trois scènes ne sait pas laquelle il regarde. */
+/* Pastille et non bandeau dégradé : les trois scènes n'ont pas le même bas — la lave est
+   sombre, le clavier de Spam est gris clair — et un voile calibré sur l'une laissait le
+   nom illisible sur l'autre. Un fond opaque à lui tient sur les trois. */
+.mode-art figcaption {
+  position: absolute;
+  left: 0.6rem;
+  bottom: 0.6rem;
+  padding: 0.18rem 0.6rem;
+  border-radius: 0.3rem;
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.lobby-config {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  width: min(640px, 100%);
+}
+/* Sur le podium, le bandeau reste modeste : c'est le Gap qui doit dominer (ADR 0010), et
+   chaque pixel de hauteur ajouté là fait descendre l'échelle du fit sur TOUT l'écran. */
+.race > .mode-art {
+  width: min(360px, 100%);
 }
 .lobby-settings {
   width: min(640px, 100%);
@@ -869,7 +1160,7 @@ button.secondary:hover {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-  width: min(420px, 100%);
+  width: 100%; /* la colonne du roster porte la largeur maintenant (`.lobby-body`) */
 }
 .card {
   display: flex;
@@ -915,6 +1206,14 @@ button.secondary:hover {
 }
 .card.me {
   color: var(--text);
+}
+/* Le ⌛/✓ se lit à sa couleur avant de se lire à sa forme : c'est le seul signe que
+   l'œil vient chercher dans la liste pendant l'attente. */
+.card-ready {
+  color: var(--sub); /* `.card-name` en `flex: 1` cale déjà tout ce qui suit à droite */
+}
+.card.is-ready .card-ready {
+  color: var(--ready);
 }
 
 .race button.on {
@@ -1040,6 +1339,45 @@ button.secondary:hover {
 }
 .bar.done .bar-wpm {
   color: var(--main);
+}
+
+/* --- Panneau réduit : le texte reste roi (#196, décision 11) ----------------
+   Une Activity Discord se joue aussi en panneau latéral. Là, `ui/chrome.ts::
+   fitToViewport` absorbait tout seul le manque de place — en mettant TOUT à
+   l'échelle, adversaires ET texte à taper, uniformément. Le texte rétrécissait
+   donc autant que les jauges, alors que c'est lui qu'on ne peut pas se permettre
+   de perdre : on ne peut pas taper ce qu'on ne lit pas.
+
+   Ici ce sont les adversaires qui rendent la place, et le fit a d'autant moins à
+   comprimer : la piste passe SOUS son nom, pleine largeur au lieu d'en céder 9rem
+   à la colonne de gauche, et sa hauteur tombe au plancher — ce qui réduit du même
+   coup la voiture à une pastille, `.car` étant dimensionnée sur `--track`.
+
+   Même seuil que les Réglages de salon et les Paramètres : un seul point de bascule
+   dans la feuille, pas trois. */
+@media (max-width: 34rem) {
+  .race .bars {
+    --track: 1.1rem;
+    gap: 0.8rem;
+  }
+  .race .bar {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "name wpm"
+      "track track";
+    gap: 0.15rem 0.5rem;
+  }
+  .race .bar-label {
+    grid-area: name;
+    font-size: 0.85rem;
+  }
+  .race .bar-track {
+    grid-area: track;
+  }
+  .race .bar-wpm {
+    grid-area: wpm;
+    font-size: 0.85rem;
+  }
 }
 
 /* --- Floor is lava (ADR 0015) ---------------------------------------------
@@ -1365,14 +1703,8 @@ button.secondary:hover {
 }
 .guide-panel button.primary {
   align-self: flex-start;
-  background: color-mix(in srgb, var(--main) 16%, transparent);
-  color: var(--main);
   font-size: 1rem;
   padding: 0.55rem 1.6rem;
-}
-.guide-panel button.primary:hover {
-  background: color-mix(in srgb, var(--main) 26%, transparent);
-  color: var(--main);
 }
 
 /* --- Écran Apprendre (cursus de leçons) ------------------------------------- */

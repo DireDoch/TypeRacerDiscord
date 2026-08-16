@@ -15,6 +15,7 @@ import {
   textSourceEvent,
   spamWordEvent,
   activityExtra,
+  lobbyActivityState,
   type LobbyRow,
 } from "./race";
 import { aliveIds, outpaced, advanceState, initialRaceState, type RacerState } from "../core/race-state";
@@ -593,6 +594,14 @@ describe("spamWordEvent — l'événement du champ Mot de Spam (issue #131)", ()
 
   it("un mot sans espace passe tel quel", () => {
     expect(spamWordEvent("go")).toEqual({ type: "SetSpamWord", word: "go" });
+  });
+});
+
+describe("lobbyActivityState — le salon montre le visuel du Mode de jeu réglé", () => {
+  it("chaque Mode de jeu a son propre état de salon", () => {
+    expect(lobbyActivityState("normal")).toBe("lobbyNormal");
+    expect(lobbyActivityState("floorIsLava")).toBe("lobbyFloorIsLava");
+    expect(lobbyActivityState("spam")).toBe("lobbySpam");
   });
 });
 
