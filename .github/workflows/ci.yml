@@ -22,12 +22,25 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      # Vulnérabilités connues des dépendances QUI PARTENT DANS LE BUNDLE (#153).
+      # `--omit=dev` : vite/vitest/esbuild traînent des avis qui n'atteignent jamais un
+      # joueur (build-time seul) et ne se corrigent qu'en majeure — les inclure rendrait
+      # la CI rouge en permanence, et une CI rouge en permanence s'ignore. Voir #154.
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run lint
       - run: npx vitest run
       - run: npm run build
 
   backend:
     runs-on: ubuntu-latest
+    # `checks`/`issues` : exigés par rustsec/audit-check, qui publie son rapport en
+    # status check. `defaults.run` ne s'applique QU'aux `run:` — d'où le
+    # `working-directory` passé en entrée de l'action, qui sinon chercherait le
+    # Cargo.lock à la racine du dépôt et ne trouverait rien.
+    permissions:
+      contents: read
+      checks: write
+      issues: write
     defaults:
       run:
         working-directory: backend
@@ -36,6 +49,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: backend
+      # Base d'avis RustSec (#153). Action officielle plutôt que `cargo install
+      # cargo-audit` : le binaire est prêt, là où l'install compile plusieurs minutes à
+      # chaque run. Échoue sur une vulnérabilité, pas sur un simple « unmaintained ».
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: backend
+          # RUSTSEC-2023-0071 (crate `rsa`, attaque temporelle Marvin) : AUCUN correctif
+          # n'existe en amont, et le crate n'est PAS compilé dans notre binaire —
+          # `cargo tree -i rsa --target all` ne trouve aucun chemin. Il n'est dans le
+          # Cargo.lock que parce que la feature `macros` de sqlx (exigée par
+          # `sqlx::migrate!`) traîne le driver MySQL en dépendance optionnelle ; on ne
+          # parle qu'à SQLite. `cargo audit` lit le lockfile sans résoudre les features,
+          # d'où le faux positif. À retirer d'ici le jour où sqlx coupe ce lien.
+          ignore: RUSTSEC-2023-0071
       - run: rustup component add clippy
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test
