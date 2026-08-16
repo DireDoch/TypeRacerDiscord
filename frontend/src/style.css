@@ -30,6 +30,10 @@
   --sub: #96a0b5; /* texte TAPÉ, libellés — 6,9:1 (AA) */
   --main: #ff7a59; /* curseur, accent, leader — 7,1:1 (AAA) */
   --error: #ff4d6d; /* faute — 5,6:1 (AA) sur --bg */
+  /* Le seul état de l'app qui veut dire « c'est bon pour moi » : un joueur prêt dans le
+     lobby, et rien d'autre. Séparé de --main à dessein — le corail dit « ici », pas
+     « validé ». Mesuré 10,4:1 sur --bg (AAA). */
+  --ready: #3ddc97;
 
   /* Fond sourd de la faute (remplace le soulignement rouge). Mesuré :
      --error sur --error-bg = 4,74:1 → la faute reste lisible sans trait. */
@@ -618,20 +622,27 @@ body {
   color: var(--sub);
   font-size: 0.85rem;
 }
+/* LE bouton d'un écran. Le remplissage corail vivait en double, redéclaré à l'identique
+   par `.results-actions` et `.guide-panel` par-dessus une base grise que plus personne
+   n'affichait ; il remonte ici, et les deux ne gardent que leur taille. */
 button.primary {
   align-self: center;
-  background: none;
+  background: color-mix(in srgb, var(--main) 14%, transparent);
   border: none;
-  color: var(--sub);
+  color: var(--main);
   font-family: var(--font-ui);
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   cursor: pointer;
-  padding: 0.6rem 1.2rem;
+  padding: 0.5rem 1.4rem;
   border-radius: 0.4rem;
 }
 button.primary:hover {
-  color: var(--text);
+  background: color-mix(in srgb, var(--main) 24%, transparent);
+}
+button.primary:disabled {
   background: var(--panel);
+  color: var(--sub);
+  cursor: default;
 }
 
 /* Actions de l'écran de résultats (#178). `.results` est une colonne flex, donc un
@@ -664,18 +675,19 @@ button.secondary:hover {
   color: var(--text);
   border-color: var(--sub);
 }
+/* Prêt : la seule chose verte de l'écran, donc lisible d'un coup d'œil au milieu d'une
+   liste de joueurs. Pas prêt, il reste un `secondary` gris — un état qui n'appelle pas
+   l'œil est un état qu'on n'a pas besoin de vérifier. */
+button.secondary.ready,
+button.secondary.ready:hover {
+  background: color-mix(in srgb, var(--ready) 15%, transparent);
+  border-color: color-mix(in srgb, var(--ready) 55%, transparent);
+  color: var(--ready);
+}
 /* Le bouton principal reprend sa place dans la ligne : `align-self: center` venait
    de l'époque où il était seul enfant direct de la colonne. */
 .results-actions button.primary {
   align-self: auto;
-  background: color-mix(in srgb, var(--main) 14%, transparent);
-  color: var(--main);
-  font-size: 0.95rem;
-  padding: 0.5rem 1.4rem;
-}
-.results-actions button.primary:hover {
-  background: color-mix(in srgb, var(--main) 24%, transparent);
-  color: var(--main);
 }
 
 /* --- Race (multijoueur) --------------------------------------------------- */
@@ -830,6 +842,37 @@ button.secondary:hover {
   cursor: pointer;
   padding: 0.5rem 0;
   color: var(--sub);
+}
+/* --- Lobby en deux colonnes ------------------------------------------------
+   QUI est là à gauche, ce qu'on va jouer à droite. Empilée sous les Réglages, la liste
+   des joueurs passait sous la ligne de flottaison dès trois joueurs — or c'est elle
+   qu'on regarde en attendant, et c'est elle qui porte les « prêt ».
+   Sous le même seuil que le reste de la feuille, les deux colonnes se remettent en pile
+   et le roster reste EN PREMIER : en panneau réduit aussi, on veut d'abord voir qui est là. */
+.lobby-body {
+  display: grid;
+  grid-template-columns: minmax(14rem, 20rem) 1fr;
+  align-items: start;
+  gap: 1.2rem;
+  width: 100%;
+}
+@media (max-width: 34rem) {
+  .lobby-body {
+    grid-template-columns: 1fr;
+  }
+}
+.lobby-roster {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.lobby-roster-title {
+  margin: 0;
+  color: var(--sub);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 .lobby-settings {
   width: min(640px, 100%);
@@ -1062,7 +1105,7 @@ button.secondary:hover {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-  width: min(420px, 100%);
+  width: 100%; /* la colonne du roster porte la largeur maintenant (`.lobby-body`) */
 }
 .card {
   display: flex;
@@ -1108,6 +1151,14 @@ button.secondary:hover {
 }
 .card.me {
   color: var(--text);
+}
+/* Le ⌛/✓ se lit à sa couleur avant de se lire à sa forme : c'est le seul signe que
+   l'œil vient chercher dans la liste pendant l'attente. */
+.card-ready {
+  color: var(--sub); /* `.card-name` en `flex: 1` cale déjà tout ce qui suit à droite */
+}
+.card.is-ready .card-ready {
+  color: var(--ready);
 }
 
 .race button.on {
@@ -1597,14 +1648,8 @@ button.secondary:hover {
 }
 .guide-panel button.primary {
   align-self: flex-start;
-  background: color-mix(in srgb, var(--main) 16%, transparent);
-  color: var(--main);
   font-size: 1rem;
   padding: 0.55rem 1.6rem;
-}
-.guide-panel button.primary:hover {
-  background: color-mix(in srgb, var(--main) 26%, transparent);
-  color: var(--main);
 }
 
 /* --- Écran Apprendre (cursus de leçons) ------------------------------------- */
