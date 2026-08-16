@@ -16,6 +16,11 @@
 // =============================================================================
 
 import type { PerSecondPoint } from "../core/types";
+import { loadPreferences } from "../core/preferences";
+import { roundSpeed, SPEED_UNIT_LABELS, type SpeedUnit } from "../core/speed-unit";
+
+/** Unité de repli quand personne n'en impose une — celle du backend et des tests. */
+const DEFAULT_UNIT: SpeedUnit = "wpm";
 
 /** Marges du tracé : la gauche porte les valeurs de l'axe Y, le bas les secondes. */
 const PAD = { l: 38, r: 12, t: 14, b: 24 };
@@ -49,7 +54,15 @@ export function niceMax(max: number): number {
  * Toute la géométrie du graphe, en pixels, sans toucher au DOM — c'est la partie
  * qui se teste. Le rendu n'est plus qu'une mise en balises de ce qu'elle renvoie.
  */
-export function chartGeometry(points: PerSecondPoint[], w: number, h: number): ChartGeometry {
+export function chartGeometry(
+  points: PerSecondPoint[],
+  w: number,
+  h: number,
+  /** La série arrive en WPM bruts, comme tout ce que le backend recompute ; l'écran parle
+   *  l'unité du joueur (#69). La conversion se fait ici, AVANT l'échelle — sinon l'axe
+   *  plafonnait à 90 sous un héros affichant « 425 cpm ». */
+  unit: SpeedUnit = DEFAULT_UNIT,
+): ChartGeometry {
   const plotW = Math.max(1, w - PAD.l - PAD.r);
   const plotH = Math.max(1, h - PAD.t - PAD.b);
   const baseline = PAD.t + plotH;
@@ -57,7 +70,8 @@ export function chartGeometry(points: PerSecondPoint[], w: number, h: number): C
   // `|| 1` : un Run d'une seule seconde n'a pas d'étendue — tout se pose à gauche
   // plutôt que de diviser par zéro.
   const span = (points[points.length - 1]?.t ?? t0) - t0 || 1;
-  const yMax = niceMax(Math.max(...points.map((p) => Math.max(p.wpm, p.raw)), 0));
+  const speed = (wpm: number) => roundSpeed(wpm, unit);
+  const yMax = niceMax(Math.max(...points.map((p) => Math.max(speed(p.wpm), speed(p.raw))), 0));
 
   const xs = points.map((p) => PAD.l + ((p.t - t0) / span) * plotW);
   const yOf = (v: number) => baseline - (Math.min(v, yMax) / yMax) * plotH;
@@ -65,7 +79,7 @@ export function chartGeometry(points: PerSecondPoint[], w: number, h: number): C
   const line = (values: number[]) =>
     values.map((v, i) => `${i === 0 ? "M" : "L"}${xs[i].toFixed(1)},${yOf(v).toFixed(1)}`).join(" ");
 
-  const wpmPath = line(points.map((p) => p.wpm));
+  const wpmPath = line(points.map((p) => speed(p.wpm)));
 
   return {
     xs,
@@ -73,9 +87,9 @@ export function chartGeometry(points: PerSecondPoint[], w: number, h: number): C
     // L'aire retombe sur la ligne de base aux deux bouts : le remplissage épouse la
     // courbe sans jamais déborder sous l'axe.
     areaPath: points.length < 2 ? "" : `${wpmPath} L${xs[xs.length - 1].toFixed(1)},${baseline} L${xs[0].toFixed(1)},${baseline} Z`,
-    rawPath: line(points.map((p) => p.raw)),
+    rawPath: line(points.map((p) => speed(p.raw))),
     dots: points
-      .map((p, i) => ({ x: xs[i], y: yOf(p.wpm), errors: p.errors }))
+      .map((p, i) => ({ x: xs[i], y: yOf(speed(p.wpm)), errors: p.errors }))
       .filter((d) => d.errors > 0)
       .map(({ x, y }) => ({ x, y })),
     ticks: [0, yMax / 2, yMax].map((value) => ({ value, y: yOf(value) })),
@@ -92,9 +106,10 @@ export function chartGeometry(points: PerSecondPoint[], w: number, h: number): C
 
 /** Le texte du survol : la seconde lue, puis ses trois valeurs. Aussi la valeur par
  *  défaut, sur le dernier point — un graphe au repos dit déjà quelque chose. */
-export function readoutText(p: PerSecondPoint): string {
+export function readoutText(p: PerSecondPoint, unit: SpeedUnit = DEFAULT_UNIT): string {
   const faults = p.errors === 1 ? "1 faute" : `${p.errors} fautes`;
-  return `${p.t.toFixed(p.t % 1 === 0 ? 0 : 1)} s · ${p.wpm} wpm · ${p.raw} raw · ${faults}`;
+  const label = SPEED_UNIT_LABELS[unit];
+  return `${p.t.toFixed(p.t % 1 === 0 ? 0 : 1)} s · ${roundSpeed(p.wpm, unit)} ${label} · ${roundSpeed(p.raw, unit)} raw · ${faults}`;
 }
 
 /** Index du point le plus proche d'une abscisse — le survol se cale sur une seconde,
@@ -117,6 +132,7 @@ let gradientSeq = 0;
  */
 export function drawChart(host: HTMLElement, perSecond: PerSecondPoint[]): void {
   const gradientId = `chart-area-${++gradientSeq}`;
+  const unit = loadPreferences().speedUnit; // lue une fois, servie à l'axe, à la légende et au survol
   host.classList.add("chart");
   if (perSecond.length === 0) {
     host.innerHTML = `<p class="hint">Pas de série pour ce Run.</p>`;
@@ -125,13 +141,13 @@ export function drawChart(host: HTMLElement, perSecond: PerSecondPoint[]): void 
 
   host.innerHTML = `
     <div class="chart-legend">
-      <span class="chart-key key-wpm">wpm</span>
+      <span class="chart-key key-wpm">${SPEED_UNIT_LABELS[unit]}</span>
       <span class="chart-key key-raw">raw</span>
       <span class="chart-key key-err">fautes</span>
       <output class="chart-readout"></output>
     </div>
     <svg class="chart-svg" tabindex="0" role="img"
-      aria-label="Vitesse seconde par seconde. ${readoutText(perSecond[perSecond.length - 1])} en fin de Run."></svg>
+      aria-label="Vitesse seconde par seconde. ${readoutText(perSecond[perSecond.length - 1], unit)} en fin de Run."></svg>
   `;
   const svg = host.querySelector<SVGSVGElement>(".chart-svg")!;
   const readout = host.querySelector<HTMLOutputElement>(".chart-readout")!;
@@ -170,7 +186,7 @@ export function drawChart(host: HTMLElement, perSecond: PerSecondPoint[]): void 
         )
         .join("")}
     `;
-    readout.textContent = readoutText(perSecond[cursor ?? perSecond.length - 1]);
+    readout.textContent = readoutText(perSecond[cursor ?? perSecond.length - 1], unit);
   };
 
   const moveTo = (i: number) => {
@@ -196,12 +212,18 @@ export function drawChart(host: HTMLElement, perSecond: PerSecondPoint[]): void 
 
   // Le graphe se redessine à sa taille réelle plutôt que de s'étirer : un cercle de
   // faute reste un cercle, et le texte des graduations garde sa taille.
+  //
+  // ponytail: l'observateur ne se coupe que depuis son propre rappel — il faut donc que
+  // le navigateur en livre un après le détachement du SVG (Chrome le fait : la taille
+  // tombe à 0). ceiling: si ce rappel n'arrive jamais, l'observateur et sa série restent
+  // en mémoire — un Run terminé, un clic de podium. upgrade: rendre un disposeur que
+  // results.ts et podium.ts appellent avant de réécrire leur `innerHTML`.
   const ro = new ResizeObserver(([entry]) => {
     if (!svg.isConnected) return ro.disconnect(); // écran quitté : rien à observer.
     const { width, height } = entry.contentRect;
     if (width < 1 || height < 1) return;
     svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-    geom = chartGeometry(perSecond, width, height);
+    geom = chartGeometry(perSecond, width, height, unit);
     if (cursor !== null) cursor = Math.min(cursor, perSecond.length - 1);
     paint();
   });

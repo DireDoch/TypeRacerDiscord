@@ -48,6 +48,16 @@ describe("chartGeometry", () => {
   });
 });
 
+describe("chartGeometry — unité du joueur (#69)", () => {
+  const points = [pt(1, 40, 40), pt(2, 80, 80)];
+
+  it("met l'axe à l'échelle de l'unité affichée, pas du WPM brut", () => {
+    // 80 wpm = 400 cpm : un axe plafonné à 80 sous un héros à « 400 cpm » ne veut rien dire.
+    expect(chartGeometry(points, 400, 200, "wpm").ticks.at(-1)!.value).toBe(80);
+    expect(chartGeometry(points, 400, 200, "cpm").ticks.at(-1)!.value).toBe(400);
+  });
+});
+
 describe("nearestIndex", () => {
   it("se cale sur la seconde la plus proche, jamais entre deux", () => {
     expect(nearestIndex([0, 10, 20, 30], 16)).toBe(2);
@@ -64,5 +74,9 @@ describe("readoutText", () => {
 
   it("garde la décimale du dernier point, qui porte la durée exacte", () => {
     expect(readoutText(pt(31.4, 87, 92, 3))).toBe("31.4 s · 87 wpm · 92 raw · 3 fautes");
+  });
+
+  it("suit l'unité choisie, libellé compris", () => {
+    expect(readoutText(pt(12, 80, 84, 0), "cpm")).toBe("12 s · 400 cpm · 420 raw · 0 fautes");
   });
 });

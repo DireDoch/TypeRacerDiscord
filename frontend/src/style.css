@@ -104,7 +104,17 @@ body {
    doivent battre les règles `button` de chaque écran, et l'ordre source tranche. */
 
 /* --- Barre de config ------------------------------------------------------ */
+/* `.config` est AUSSI la barre de l'Historique et celle du Replay, qui y posent leurs
+   `.group` sans passer par les axes (`history.ts:72`, `replay.ts:63`) : la disposition
+   reste donc ici, et le pli ne fait que s'ajouter par-dessus. */
 .config {
+  display: flex;
+  flex-wrap: wrap;
+  /* Resserré depuis #180 : trois axes plus leurs icônes « i » coûtent plus large que
+     les quatre groupes nus d'avant, et la barre passait à la ligne sur un écran normal. */
+  gap: 1.1rem;
+  align-items: center;
+  justify-content: center;
   background: var(--panel);
   border-radius: 0.6rem;
   padding: 0.6rem 1rem;
@@ -135,11 +145,13 @@ body {
 .config-summary:focus-visible {
   color: var(--text);
 }
+/* Le pli occupe la barre entière : son résumé se centre sur toute la largeur. */
+.config-fold {
+  flex: 1 1 100%;
+}
 .config-axes {
   display: flex;
   flex-wrap: wrap;
-  /* Resserré depuis #180 : trois axes plus leurs icônes « i » coûtent plus large que
-     les quatre groupes nus d'avant, et la barre passait à la ligne sur un écran normal. */
   gap: 1.1rem;
   align-items: center;
   justify-content: center;
@@ -149,7 +161,7 @@ body {
    partagent le leur : « 30 » n'a aucun sens sans « temps » à côté, et disparaît avec lui
    sous citations/zen/drill. Les deux groupes restent donc serrés à l'intérieur de l'axe,
    pendant que le `|` ne sépare que ce qui est réellement indépendant. */
-.config-axes .axis {
+.config .axis {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -158,7 +170,7 @@ body {
    était un enfant de plus dans un conteneur qui passe à la ligne, et il se retrouvait
    orphelin en tête de ligne suivante, séparant un axe de rien du tout. Une bordure
    reste toujours collée au bloc qu'elle borde. */
-.config-axes .axis + .axis {
+.config .axis + .axis {
   border-left: 1px solid color-mix(in srgb, var(--sub) 32%, transparent);
   padding-left: 1.1rem;
 }
@@ -167,16 +179,16 @@ body {
    prend sa propre rangée, et la règle verticale disparaît avec elle. Une bordure gauche
    en tête de ligne, sans rien à sa gauche, est le genre de détail qui trahit une mise en
    page subie. Le retour à la ligne sépare déjà les deux axes ; il n'a besoin de rien. */
-/* Double classe : à spécificité égale avec `.config-axes .axis + .axis`, c'est l'ordre source
+/* Double classe : à spécificité égale avec `.config .axis + .axis`, c'est l'ordre source
    qui tranche — et un sélecteur plus faible laissait la bordure gauche s'appliquer quand
    même, en petit tiret orphelin au bord de la seconde ligne. */
-.config-axes .axis.axis-own-row {
+.config .axis.axis-own-row {
   flex-basis: 100%;
   justify-content: center;
   border-left: none;
   padding-left: 0;
 }
-.config-axes .group {
+.config .group {
   display: flex;
   gap: 0.4rem;
 }

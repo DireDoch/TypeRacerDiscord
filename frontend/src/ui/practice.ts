@@ -443,11 +443,21 @@ export class Practice {
 
     if (this.phase === "finished") return;
 
-    // Une touche adressée à un CONTRÔLE n'est pas une frappe. `keydown` est écouté sur
+    // Espace et Entrée ACTIVENT le contrôle qui a le focus. `keydown` est écouté sur
     // `document` : sans ce garde, Espace sur un bouton de la barre de config démarrait
     // un Run au lieu d'activer le bouton (`preventDefault` mangeait l'activation), et
     // le résumé dépliable de #197 aurait hérité du même sort.
-    if (e.target instanceof HTMLElement && e.target.closest("button, summary, input, select, a")) return;
+    //
+    // Ces deux touches-là seulement : le focus RESTE sur le contrôle après le clic
+    // (replier la barre ne re-rend rien), donc écarter toute frappe dont la cible est
+    // un contrôle rendrait le Run indémarrable après un simple coup d'œil à la config.
+    if (
+      (e.key === " " || e.key === "Enter") &&
+      e.target instanceof HTMLElement &&
+      e.target.closest("button, summary, input, select, a")
+    ) {
+      return;
+    }
 
     const isTypingKey = e.key === "Backspace" || e.key === " " || e.key.length === 1;
 
