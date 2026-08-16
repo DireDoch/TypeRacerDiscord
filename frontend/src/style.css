@@ -105,6 +105,37 @@ body {
 
 /* --- Barre de config ------------------------------------------------------ */
 .config {
+  background: var(--panel);
+  border-radius: 0.6rem;
+  padding: 0.6rem 1rem;
+  font-size: 0.85rem;
+}
+/* --- Le pli (#197, décision 9) ---------------------------------------------
+   Repliée, la barre tient sur une ligne qui DIT la config au lieu de l'offrir.
+   `<details>` natif : le clavier, l'ARIA et l'état ouvert viennent avec. */
+.config-summary {
+  list-style: none; /* le triangle par défaut, remplacé par le nôtre, aligné au texte */
+  cursor: pointer;
+  text-align: center;
+  color: var(--sub);
+  border-radius: 0.3rem;
+  padding: 0.1rem;
+}
+.config-summary::-webkit-details-marker {
+  display: none;
+}
+.config-summary::after {
+  content: " ▾";
+  color: var(--main);
+}
+.config-fold[open] .config-summary::after {
+  content: " ▴";
+}
+.config-summary:hover,
+.config-summary:focus-visible {
+  color: var(--text);
+}
+.config-axes {
   display: flex;
   flex-wrap: wrap;
   /* Resserré depuis #180 : trois axes plus leurs icônes « i » coûtent plus large que
@@ -112,16 +143,13 @@ body {
   gap: 1.1rem;
   align-items: center;
   justify-content: center;
-  background: var(--panel);
-  border-radius: 0.6rem;
-  padding: 0.6rem 1rem;
-  font-size: 0.85rem;
+  margin-top: 0.6rem;
 }
 /* Un AXE = un réglage indépendant, avec son icône « i » (#180). Le Mode et sa valeur
    partagent le leur : « 30 » n'a aucun sens sans « temps » à côté, et disparaît avec lui
    sous citations/zen/drill. Les deux groupes restent donc serrés à l'intérieur de l'axe,
    pendant que le `|` ne sépare que ce qui est réellement indépendant. */
-.config .axis {
+.config-axes .axis {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -130,7 +158,7 @@ body {
    était un enfant de plus dans un conteneur qui passe à la ligne, et il se retrouvait
    orphelin en tête de ligne suivante, séparant un axe de rien du tout. Une bordure
    reste toujours collée au bloc qu'elle borde. */
-.config .axis + .axis {
+.config-axes .axis + .axis {
   border-left: 1px solid color-mix(in srgb, var(--sub) 32%, transparent);
   padding-left: 1.1rem;
 }
@@ -139,16 +167,16 @@ body {
    prend sa propre rangée, et la règle verticale disparaît avec elle. Une bordure gauche
    en tête de ligne, sans rien à sa gauche, est le genre de détail qui trahit une mise en
    page subie. Le retour à la ligne sépare déjà les deux axes ; il n'a besoin de rien. */
-/* Double classe : à spécificité égale avec `.config .axis + .axis`, c'est l'ordre source
+/* Double classe : à spécificité égale avec `.config-axes .axis + .axis`, c'est l'ordre source
    qui tranche — et un sélecteur plus faible laissait la bordure gauche s'appliquer quand
    même, en petit tiret orphelin au bord de la seconde ligne. */
-.config .axis.axis-own-row {
+.config-axes .axis.axis-own-row {
   flex-basis: 100%;
   justify-content: center;
   border-left: none;
   padding-left: 0;
 }
-.config .group {
+.config-axes .group {
   display: flex;
   gap: 0.4rem;
 }

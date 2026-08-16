@@ -38,6 +38,7 @@ import {
   type TextSource,
 } from "../core/net";
 import { podiumHtml, wirePodium, type PodiumOptions } from "./podium";
+import { DIFFICULTY_LABELS } from "./mode-labels";
 import { runPlayOfTheGame } from "./potg";
 import { liveWpm } from "../live-stats";
 import { wordsHtml, placeCaret, escapeText } from "./typing-zone";
@@ -1288,7 +1289,6 @@ export function lobbyRowHtml(row: LobbyRow): string {
 
 /** Libellés de Difficulté (issue #71) — Expert n'apparaît dans aucun `select` de Room,
  *  mais reste couvert ici : `this.state.difficulty` a le type `Difficulty` au complet. */
-const DIFFICULTY_LABELS: Record<Difficulty, string> = { normal: "Normal", expert: "Expert", master: "Master" };
 
 /** Longueur à reprendre quand on (re)passe sur `words`. Médiane par défaut. */
 export function currentCount(src: TextSource): number {

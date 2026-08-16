@@ -30,7 +30,7 @@ import { liveAccuracy, liveBurst, liveWpm, liveWpmZen } from "../live-stats";
 import { submitRun, fetchQuote, fetchProfileAnalysis, isIdentityError, sharedErrorMessage } from "../api";
 import { renderResults } from "./results";
 import { runReplay } from "./replay";
-import { MODE_LABELS } from "./mode-labels";
+import { configSummary, DIFFICULTY_LABELS, MODE_LABELS } from "./mode-labels";
 import { wordsHtml, zenHtml, slideWindow, placeCaret } from "./typing-zone";
 import { infoHtml } from "./info-bubble";
 
@@ -57,7 +57,6 @@ const AXIS_TIPS = {
  *  bucket (aucun PB n'y est comparé), c'est un mode de jeu qui échoue le Run avant
  *  la ligne d'arrivée plutôt qu'une variante de calcul de score. */
 const DIFFICULTIES: Difficulty[] = ["normal", "expert", "master"];
-const DIFFICULTY_LABELS: Record<Difficulty, string> = { normal: "Normal", expert: "Expert", master: "Master" };
 
 /** Marge de mots gardée en avance du curseur en Time infini (retop du flux). */
 const ENDLESS_LOOKAHEAD = 30;
@@ -82,6 +81,8 @@ export class Practice {
 
   /** Difficulté (issue #64) — persiste entre les reset(), comme punctuation/numbers. */
   private difficulty: Difficulty = "normal";
+  /** Barre de config dépliée ? État d'écran (#197) : jamais persisté, personne ne le règle. */
+  private configOpen = false;
   /** Point d'échec Expert/Master du Run courant, `null` sinon. */
   private failure: DifficultyFailure | null = null;
   /** Avertissement de fin (issue #66) : au plus une fois par Run. */
@@ -442,6 +443,12 @@ export class Practice {
 
     if (this.phase === "finished") return;
 
+    // Une touche adressée à un CONTRÔLE n'est pas une frappe. `keydown` est écouté sur
+    // `document` : sans ce garde, Espace sur un bouton de la barre de config démarrait
+    // un Run au lieu d'activer le bouton (`preventDefault` mangeait l'activation), et
+    // le résumé dépliable de #197 aurait hérité du même sort.
+    if (e.target instanceof HTMLElement && e.target.closest("button, summary, input, select, a")) return;
+
     const isTypingKey = e.key === "Backspace" || e.key === " " || e.key.length === 1;
 
     if (this.phase === "idle") {
@@ -732,28 +739,47 @@ export class Practice {
     //
     // La Difficulté est le troisième axe et n'entre jamais dans le Config bucket :
     // deux Difficultés ne sont jamais comparées pour un PB.
+    //
+    // Repliée par défaut (#197, décision 9). #180 a fait passer la barre à DEUX lignes
+    // sur une fenêtre de 1280 px — trois icônes « i », deux séparateurs, et une
+    // Difficulté reléguée à sa propre rangée. Un `<details>` natif porte le pli : pas
+    // d'état à inventer, le clavier et les lecteurs d'écran l'ont déjà.
+    //
+    // Le `← menu` reste HORS du pli, et de toute façon `position: fixed` (#93) : la
+    // sortie que #176 a ouverte sur l'écran de fin ne dépend pas de l'état du pli.
     return `
       <div class="config">
-        <div class="axis">
-          ${infoHtml("Mode", AXIS_TIPS.mode)}
-          <div class="group">
-            ${modeBtn("time")}
-            ${modeBtn("words")}
-            ${modeBtn("quotes")}
-            ${modeBtn("zen")}
-            ${modeBtn("drill")}
-            ${modeBtn("trigram-drill")}
+        <details class="config-fold"${this.configOpen ? " open" : ""}>
+          <summary class="config-summary">${configSummary(this.config, this.difficulty)}</summary>
+          <div class="config-axes">
+            <div class="axis">
+              ${infoHtml("Mode", AXIS_TIPS.mode)}
+              <div class="group">
+                ${modeBtn("time")}
+                ${modeBtn("words")}
+                ${modeBtn("quotes")}
+                ${modeBtn("zen")}
+                ${modeBtn("drill")}
+                ${modeBtn("trigram-drill")}
+              </div>
+              ${valueGroup}
+            </div>
+            ${settingsGroup ? `<div class="axis">${infoHtml("Options de texte", AXIS_TIPS.settings)}${settingsGroup}</div>` : ""}
+            ${difficultyGroup ? `<div class="axis axis-own-row">${infoHtml("Difficulté", AXIS_TIPS.difficulty)}${difficultyGroup}</div>` : ""}
           </div>
-          ${valueGroup}
-        </div>
-        ${settingsGroup ? `<div class="axis">${infoHtml("Options de texte", AXIS_TIPS.settings)}${settingsGroup}</div>` : ""}
-        ${difficultyGroup ? `<div class="axis axis-own-row">${infoHtml("Difficulté", AXIS_TIPS.difficulty)}${difficultyGroup}</div>` : ""}
+        </details>
         ${this.onExit ? `<button class="back-btn" data-nav="menu">← menu</button>` : ""}
       </div>
     `;
   }
 
   private wireConfigBar(): void {
+    // Le pli est un état d'ÉCRAN, pas une Preference (#197) : il survit aux re-rendus
+    // de la session (changer de Mode relance `reset()` → `render()`), et rien de plus.
+    const fold = this.root.querySelector<HTMLDetailsElement>(".config-fold");
+    fold?.addEventListener("toggle", () => {
+      this.configOpen = fold.open;
+    });
     this.root.querySelectorAll<HTMLButtonElement>("[data-mode]").forEach((b) =>
       b.addEventListener("click", () => {
         const mode = b.dataset.mode as RunConfig["mode"];
