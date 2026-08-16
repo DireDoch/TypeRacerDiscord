@@ -58,6 +58,15 @@ pub struct GameModeRules {
     /// Toujours vrai sous Normal, où franchir la ligne est précisément l'affaire du joueur —
     /// c'est `requires_full_text` qui y garde l'arrivée.
     finish_allowed: fn(&Room, &str) -> bool,
+    /// L'instant (ms depuis t=0) où le SERVEUR a arrêté ce joueur, quand il le sait — la
+    /// borne temporelle de son log (issue #164, ADR 0018) : rien au-delà n'a pu être tapé, et c'est
+    /// cet instant, pas la dernière frappe déclarée, qui fait le dénominateur du WPM.
+    ///
+    /// `None` sous Normal, où le joueur s'arrête lui-même en franchissant la ligne : il n'y
+    /// a pas d'instant serveur à lui opposer. Troisième question distincte sur un `Finish`,
+    /// après « son auteur y a-t-il droit ? » (`finish_allowed`) et « le log va-t-il au
+    /// bout ? » (`requires_full_text`) : celle-ci borne le log DANS LE TEMPS.
+    stopped_at_ms: fn(&Room, &str) -> Option<f64>,
     /// Un Run sous ce mode entre-t-il dans `runs` (historique, jamais PB) ? Faux pour
     /// Floor is lava et Spam (ADR 0015, 0016) : texte imposé, jamais « terminé » au sens
     /// normal, rien à comparer d'une manche à l'autre.
@@ -90,7 +99,7 @@ pub struct GameModeRules {
     tick: fn(&mut Room, now: i64),
     /// Réaction à un `Progress` relayé d'un partant (ADR 0016 : le seuil de répétitions
     /// coupe la course immédiatement, pas seulement au tic du watchdog). No-op ailleurs.
-    on_progress: fn(&mut Room, reps: u32),
+    on_progress: fn(&mut Room, reps: u32, now: i64),
     /// Le texte contre lequel `finish_race` recompute un log, depuis le `target_text` de
     /// la Room au moment du `Finish` (déjà extrait, hors verrou — pas de `&Room` ici).
     /// Identité pour Normal/Floor is lava ; sous Spam, reconstruit exactement assez de
@@ -123,8 +132,8 @@ impl GameModeRules {
     pub fn tick(&self, room: &mut Room, now: i64) {
         (self.tick)(room, now)
     }
-    pub fn on_progress(&self, room: &mut Room, reps: u32) {
-        (self.on_progress)(room, reps)
+    pub fn on_progress(&self, room: &mut Room, reps: u32, now: i64) {
+        (self.on_progress)(room, reps, now)
     }
     pub fn recompute_target_text(&self, target_text: &str, keystrokes: &[Keystroke]) -> String {
         (self.recompute_target_text)(target_text, keystrokes)
@@ -134,6 +143,9 @@ impl GameModeRules {
     }
     pub fn finish_allowed(&self, room: &Room, player_id: &str) -> bool {
         (self.finish_allowed)(room, player_id)
+    }
+    pub fn stopped_at_ms(&self, room: &Room, player_id: &str) -> Option<f64> {
+        (self.stopped_at_ms)(room, player_id)
     }
     pub fn rank_cmp(&self, a: &RaceResult, b: &RaceResult) -> Ordering {
         (self.rank_cmp)(a, b)
@@ -145,7 +157,7 @@ impl GameModeRules {
 
 fn noop_switch(_room: &mut Room) {}
 fn noop_tick(_room: &mut Room, _now: i64) {}
-fn noop_progress(_room: &mut Room, _reps: u32) {}
+fn noop_progress(_room: &mut Room, _reps: u32, _now: i64) {}
 fn no_extra(_target_text: &str, _keystrokes: &[Keystroke]) -> (Option<u32>, u32) {
     (None, 0)
 }
@@ -157,6 +169,8 @@ const NORMAL: GameModeRules = GameModeRules {
     min_players_to_start: 1,
     requires_full_text: true,
     finish_allowed: |_room, _player_id| true,
+    // Franchir la ligne est l'affaire du joueur : le serveur n'arrête personne ici.
+    stopped_at_ms: |_room, _player_id| None,
     persists_run: true,
     accepts_spam_settings: false,
     pending_source: |room| Some(room.text_source),
@@ -195,6 +209,18 @@ const FLOOR_IS_LAVA: GameModeRules = GameModeRules {
         }
         RaceState::Lobby => false,
     },
+    // Un brûlé s'arrête à SA flamme. Le dernier vivant, lui, n'a pas brûlé : ce qui
+    // l'arrête est la mort qui l'a laissé seul, donc le DERNIER instant de la liste — la
+    // course s'y termine pour tout le monde (ADR 0015). Sans ça le survivant serait le seul
+    // non borné du mode, et c'est son WPM que le podium met en tête.
+    stopped_at_ms: |room, player_id| match &room.state {
+        RaceState::Racing { burned, .. } => burned
+            .iter()
+            .find(|(id, _)| id == player_id)
+            .or_else(|| burned.last())
+            .map(|(_, at)| *at),
+        RaceState::Lobby => None,
+    },
     persists_run: false,
     accepts_spam_settings: false,
     pending_source: |_room| Some(TextSource::Words { count: LAVA_WORD_COUNT }),
@@ -232,7 +258,13 @@ const SPAM: GameModeRules = GameModeRules {
     // réclamé de personne ; après, ils le sont tous. Un seul drapeau suffit donc, sans
     // regarder qui envoie.
     finish_allowed: |room, _player_id| {
-        matches!(&room.state, RaceState::Racing { spam_stopped: true, .. })
+        matches!(&room.state, RaceState::Racing { spam_stopped_at_ms: Some(_), .. })
+    },
+    // `SpamStop` arrête TOUT LE MONDE au même instant (ADR 0016) : une seule borne, la
+    // même pour tous, et elle vaut aussi pour le vainqueur qui a claqué le seuil.
+    stopped_at_ms: |room, _player_id| match &room.state {
+        RaceState::Racing { spam_stopped_at_ms, .. } => *spam_stopped_at_ms,
+        RaceState::Lobby => None,
     },
     persists_run: false,
     accepts_spam_settings: true,
@@ -241,9 +273,9 @@ const SPAM: GameModeRules = GameModeRules {
     on_mode_switch: refresh_spam_text,
     rematch_text: refresh_spam_text,
     tick: super::spam_tick_room,
-    on_progress: |room, reps| {
+    on_progress: |room, reps, now| {
         if reps >= room.spam_threshold {
-            super::stop_spam(room);
+            super::stop_spam(room, now);
         }
     },
     recompute_target_text: |target_text, keystrokes| {

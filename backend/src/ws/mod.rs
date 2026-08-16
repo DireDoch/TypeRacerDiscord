@@ -142,10 +142,15 @@ pub enum RaceState {
         /// Nombre de tics d'élimination déjà joués. Compté plutôt que déduit de
         /// `burned.len()`, que les égalités désynchroniseraient.
         lava_ticks: u32,
-        /// `SpamStop` déjà diffusé (ADR 0016). Sans ce drapeau, un partant déconnecté
-        /// laisserait la Room en course et le plafond de temps re-diffuserait l'arrêt à
-        /// chaque seconde de watchdog jusqu'aux 10 minutes du `close_overlong_races`.
-        spam_stopped: bool,
+        /// L'instant (ms depuis t=0) du `SpamStop` déjà diffusé (ADR 0016), `None` tant
+        /// qu'il ne l'est pas. Sans cette marque, un partant déconnecté laisserait la Room
+        /// en course et le plafond de temps re-diffuserait l'arrêt à chaque seconde de
+        /// watchdog jusqu'aux 10 minutes du `close_overlong_races`.
+        ///
+        /// Un booléen suffisait jusqu'à #164 : l'instant est ce contre quoi se borne le log
+        /// que chaque partant renvoie ensuite — pendant du `burned_at_ms` de Floor is lava,
+        /// qui le retenait déjà.
+        spam_stopped_at_ms: Option<f64>,
     },
 }
 
@@ -947,14 +952,21 @@ fn lava_tick_room(room: &mut Room, now: i64) {
 /// normale et comme floor is lava. Ne désigne aucun vainqueur non plus : le classement
 /// vient du recompute serveur au `Finish`, jamais du compte déclaré qui a claqué l'arrêt.
 ///
+/// Horloge injectée (`now`), comme partout ailleurs dans ce module : c'est de `now` que
+/// sort l'instant retenu, et cet instant borne ensuite les logs (#164).
+///
 /// Renvoie `true` si c'est CET appel qui a arrêté la course (une seule diffusion).
-fn stop_spam(room: &mut Room) -> bool {
-    // Le drapeau se pose SOUS l'emprunt de `state`, la diffusion se fait dehors — même
+fn stop_spam(room: &mut Room, now: i64) -> bool {
+    // La marque se pose SOUS l'emprunt de `state`, la diffusion se fait dehors — même
     // découpage que `lava_tick` et `close_race`, pour ne jamais tenir `&mut room.state`
     // et `room.tx` en même temps.
     let fresh = match &mut room.state {
-        RaceState::Racing { spam_stopped, .. } if !*spam_stopped => {
-            *spam_stopped = true;
+        RaceState::Racing { start_at_epoch_ms, spam_stopped_at_ms, .. }
+            if spam_stopped_at_ms.is_none() =>
+        {
+            // `max(0)` : un arrêt pendant le décompte (seuil atteint avant le GO, ou
+            // horloge qui recule) daterait sinon d'avant t=0, et bornerait tout log à zéro.
+            *spam_stopped_at_ms = Some((now - *start_at_epoch_ms).max(0) as f64);
             true
         }
         _ => false,
@@ -983,7 +995,7 @@ fn spam_tick_room(room: &mut Room, now: i64) {
         RaceState::Lobby => false,
     };
     if expired {
-        stop_spam(room);
+        stop_spam(room, now);
     }
 }
 
@@ -1019,7 +1031,7 @@ fn start_race(rooms: &Rooms, key: &str, player_id: &str) {
             progress: HashMap::new(),
             burned: Vec::new(),
             lava_ticks: 0,
-            spam_stopped: false,
+            spam_stopped_at_ms: None,
         };
         let _ = room.tx.send(ServerEvent::RaceStart { start_at_epoch_ms: start });
     }
@@ -1069,8 +1081,10 @@ fn relay_progress(rooms: &Rooms, key: &str, player_id: &str, chars_done: u32, re
             RaceState::Lobby => false,
         };
         // `GameModeRules::on_progress` (#128) : no-op hors Spam, vérifie le seuil sous Spam.
+        // `now` suit la même convention que `tick` : l'arrêt qui peut en sortir doit être
+        // daté, c'est la borne des logs qui reviendront ensuite (#164).
         if is_racer {
-            rules(room.game_mode).on_progress(room, reps);
+            rules(room.game_mode).on_progress(room, reps, now_epoch_ms());
         }
     }
 }
@@ -1202,13 +1216,13 @@ fn finish_race(
     rooms: &Rooms,
     key: &str,
     player_id: &str,
-    keystrokes: Vec<Keystroke>,
+    mut keystrokes: Vec<Keystroke>,
     _ended_at_ms: f64, // wire uniquement : la durée vient du log, jamais du client (issue #11)
     pool: &SqlitePool,
 ) -> bool {
     // Vérif préliminaire, bref verrou : évite le recompute (coûteux) pour un partant déjà
     // rejeté d'office. `record_finish` refait l'authoritative check plus bas, verrou séparé.
-    let (target_text, game_mode, allowed) = {
+    let (target_text, game_mode, allowed, stopped_at_ms) = {
         let rooms = rooms.lock().unwrap();
         let Some(room) = rooms.get(key) else { return false };
         let eligible = match &room.state {
@@ -1221,10 +1235,12 @@ fn finish_race(
         if !eligible {
             return false;
         }
-        // Lu SOUS CE VERROU, pas un deuxième : la garde interroge l'état de la Room
-        // (brûlés, arrêt du Spam) et il est déjà là, ouvert, pour l'éligibilité.
+        // Lus SOUS CE VERROU, pas un deuxième : la garde (#163) comme la borne (#164)
+        // interrogent l'état de la Room — brûlés, arrêt du Spam — et il est déjà là,
+        // ouvert, pour l'éligibilité.
         let allowed = rules(room.game_mode).finish_allowed(room, player_id);
-        (room.target_text.clone(), room.game_mode, allowed)
+        let stopped_at_ms = rules(room.game_mode).stopped_at_ms(room, player_id);
+        (room.target_text.clone(), room.game_mode, allowed, stopped_at_ms)
     };
 
     // Un `Finish` que le Mode de jeu n'a jamais réclamé (issue #163) : sous Floor is lava
@@ -1236,6 +1252,23 @@ fn finish_race(
     if !allowed {
         eprintln!("Finish spontané ({player_id}, {game_mode:?}) : enregistré en abandon");
         return forfeit_race(rooms, key, player_id);
+    }
+
+    // La borne temporelle du log (issue #164, ADR 0018). #163 garde QUI a le droit d'envoyer
+    // un `Finish` sous un Mode de jeu ; il ne garde pas ce que ce log a le droit de DIRE —
+    // un brûlé parfaitement légitime pouvait livrer 200 caractères parfaits horodatés sur
+    // 2 s, faux WPM au podium et Play of the Game raflé (ADR 0011).
+    //
+    // TRONQUÉ, pas rejeté : entre l'annonce (`PlayerBurned`, `SpamStop`) et l'arrêt effectif
+    // du client il y a un aller-retour réseau, une frappe en vol est donc la norme et pas
+    // une triche. La moitié qui ferme vraiment le trou est plus bas, `duration_override_ms`
+    // sur le recompute : le log gonflé de l'exemple est COMPRESSÉ, il tient tout entier sous
+    // la borne et survivrait à cette seule troncature.
+    //
+    // `None` sous Normal, et c'est voulu : le joueur s'y arrête lui-même en franchissant la
+    // ligne, aucun instant serveur à lui opposer — `requires_full_text` (#160) y suffit.
+    if let Some(at) = stopped_at_ms {
+        keystrokes.retain(|k| k.t <= at);
     }
 
     // Sous Spam le texte cible est INFINI (ADR 0016) : plutôt que de deviner une longueur
@@ -1285,6 +1318,10 @@ fn finish_race(
         mode_value,
         target_text: target_text.clone(),
         keystrokes,
+        // Le dénominateur du WPM est l'instant où le serveur a arrêté ce joueur, jamais sa
+        // dernière frappe déclarée (#164) : « la portion qu'il a eu le TEMPS de taper »
+        // (ADR 0015) se mesure sur le temps qu'il a eu, pas sur celui qu'il annonce.
+        duration_override_ms: stopped_at_ms,
     });
 
     // Verrou séparé, bref : enregistrement authoritative (l'état a pu changer entretemps).
@@ -2385,10 +2422,10 @@ mod tests {
         }
     }
 
-    /// La course a-t-elle été arrêtée (drapeau `spam_stopped`) ?
+    /// La course a-t-elle été arrêtée (`spam_stopped_at_ms` posé) ?
     fn stopped(rooms: &Rooms, key: &str) -> bool {
         match &rooms.lock().unwrap().get(key).unwrap().state {
-            RaceState::Racing { spam_stopped, .. } => *spam_stopped,
+            RaceState::Racing { spam_stopped_at_ms, .. } => spam_stopped_at_ms.is_some(),
             RaceState::Lobby => panic!("pas en course"),
         }
     }
@@ -3189,6 +3226,62 @@ mod tests {
         assert!(stopped(&rooms, "c1"));
         assert!(finish_ok(&rooms, "c1", "p1"), "arrêtée : tout le monde livre son log");
         assert!(finish_ok(&rooms, "c1", "p2"));
+    }
+
+    // --- Jusqu'où un log a le droit d'aller (issue #164, ADR 0018) ----------------------------
+    //
+    // Même dispositif que #163 juste au-dessus : la borne s'interroge sur le PRÉDICAT,
+    // `finish_race` exigeant un `SqlitePool`. Ce qu'elle en fait ensuite est de la
+    // plomberie (`retain` sur le log, `duration_override_ms` au recompute, prouvé côté
+    // `domain/replay.rs`) ; ce qui se trompe, c'est l'instant.
+
+    /// L'instant d'arrêt serveur du mode de la Room, pour ce joueur.
+    fn stop_ms(rooms: &Rooms, key: &str, player_id: &str) -> Option<f64> {
+        let rooms = rooms.lock().unwrap();
+        let room = rooms.get(key).unwrap();
+        rules(room.game_mode).stopped_at_ms(room, player_id)
+    }
+
+    #[test]
+    fn sous_lava_chacun_est_borne_a_sa_flamme_et_le_survivant_a_la_derniere() {
+        let rooms = new_rooms();
+        let go = lava_race(&rooms, &["p1", "p2", "p3"], 5, &[("p1", 50), ("p2", 10), ("p3", 30)]);
+
+        // Avant la première élimination, rien n'est encore arrêté : personne à borner.
+        assert_eq!(stop_ms(&rooms, "c1", "p1"), None);
+
+        game_mode_tick(&rooms, go + 5_000); // p2 brûle
+        assert_eq!(stop_ms(&rooms, "c1", "p2"), Some(5_000.0), "brûlé : sa propre flamme");
+
+        game_mode_tick(&rooms, go + 10_000); // p3 brûle, p1 reste seul
+        assert_eq!(stop_ms(&rooms, "c1", "p3"), Some(10_000.0));
+        assert_eq!(stop_ms(&rooms, "c1", "p2"), Some(5_000.0), "un brûlé garde SA flamme");
+        assert_eq!(
+            stop_ms(&rooms, "c1", "p1"),
+            Some(10_000.0),
+            "le survivant s'arrête au décès qui l'a laissé seul, pas à ce qu'il déclare"
+        );
+    }
+
+    #[test]
+    fn sous_spam_larret_est_date_et_le_meme_pour_tout_le_monde() {
+        let rooms = new_rooms();
+        let go = spam_race(&rooms, &["p1", "p2"], 50, 30);
+        assert_eq!(stop_ms(&rooms, "c1", "p1"), None, "course en cours : aucune borne");
+
+        game_mode_tick(&rooms, go + 30_400); // plafond de temps dépassé de 400 ms
+        // L'instant retenu est celui du SCAN, pas le plafond théorique : le watchdog tourne
+        // à la seconde, et c'est bien jusque-là que les partants ont pu taper.
+        assert_eq!(stop_ms(&rooms, "c1", "p1"), Some(30_400.0));
+        assert_eq!(stop_ms(&rooms, "c1", "p2"), Some(30_400.0), "SpamStop arrête tout le monde");
+    }
+
+    #[test]
+    fn sous_normal_aucune_borne_le_joueur_s_arrete_lui_meme() {
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        start_race(&rooms, "c1", "p1");
+        assert_eq!(stop_ms(&rooms, "c1", "p1"), None);
     }
 
     #[test]

@@ -209,6 +209,8 @@ async fn submit_run(
         mode_value: req.config.mode_value,
         target_text: req.target_text,
         keystrokes: req.keystrokes,
+        // Solo : personne d'autre que le joueur ne décide de la fin d'un Run (#164).
+        duration_override_ms: None,
     });
 
     // PB précédent du bucket (avant insertion) → verdict.
