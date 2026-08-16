@@ -101,6 +101,13 @@ export class Race {
 
   /** Handle d'arrêt du Play of the Game : sa présence EST « le duel est à l'écran ». */
   private potgStop: (() => void) | null = null;
+  /**
+   * Réglages dépliés sur le podium (#161). Chaque `RoomState` re-rend tout le `<section>` —
+   * y compris celui que le réglage qu'on vient de changer provoque — donc le `<details>`
+   * repartirait fermé à chaque clic. Purement cosmétique : n'entre dans aucune transition
+   * de phase, ne décide d'aucun écran.
+   */
+  private settingsOpen = false;
   private countdownN = RACE_COUNTDOWN_S;
   private countdown: Countdown | null = null;
   private rafId = 0;
@@ -397,6 +404,11 @@ export class Race {
       .querySelector<HTMLButtonElement>("#forfeitRace")
       ?.addEventListener("click", () => this.forfeit());
     this.wireLobbySettings();
+    this.root
+      .querySelector<HTMLDetailsElement>(".lobby-reopen")
+      ?.addEventListener("toggle", (e) => {
+        this.settingsOpen = (e.target as HTMLDetailsElement).open;
+      });
     this.root.querySelector<HTMLButtonElement>("#toggleReady")?.addEventListener("click", () => {
       const me = this.state.players.find((p) => p.playerId === this.me);
       this.socket?.send({ type: "SetReady", ready: !(me?.ready ?? false) });
@@ -484,9 +496,25 @@ export class Race {
         // Revanche : le serveur a déjà re-diffusé un RoomState avec un NOUVEAU texte ;
         // le même bouton StartRace relance (owner seulement). Le podium est donc posé
         // par-dessus un lobby DÉJÀ prêt — aucune séquence serveur, aucun minuteur.
+        //
+        // Les Réglages de salon sont REPOSÉS ici (issue #161), repliés : sans eux, la seule
+        // façon de changer de Mode de jeu après une course était de quitter la Room — ce qui
+        // transfère l'hôte (#23) et fait perdre la couronne à celui qui voulait régler.
+        // C'est la MÊME grille que le lobby, donc le même `wireLobbySettings` la câble (il
+        // ne cherche que `.lobby-settings`) et le même `locked` la met en lecture seule pour
+        // les non-hôtes. `<details>` plutôt qu'un écran de plus : rien à afficher tant qu'on
+        // ne l'ouvre pas, donc un podium de la même hauteur qu'avant.
         return (
           podiumHtml(this.podiumOptions()) +
+          `<details class="lobby-reopen"${this.settingsOpen ? " open" : ""}>
+             <summary>Réglages du salon</summary>
+             <div class="lobby-settings">${this.lobbyRows().map(lobbyRowHtml).join("")}</div>
+           </details>` +
           this.potgBtnHtml() +
+          // `end_race` vide les prêts (« nouvelle manche = nouvelle confirmation », #63) et
+          // `start_race` les exige : sans ce bouton ici, un salon en ready-check ne pouvait
+          // plus jamais relancer depuis le podium — « Démarrer » refusé en silence (#165).
+          this.readyBtnHtml() +
           this.startBtnHtml() +
           this.exitBtnHtml()
         );
