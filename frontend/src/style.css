@@ -528,6 +528,16 @@ button.primary:hover {
    qu'on descend la liste sans rechercher le contrôle à chaque ligne — même parti pris
    que l'écran Paramètres. Avant, chacun réutilisait `.hint` et son `margin-top: 2rem`,
    pensé pour un paragraphe centré isolé : rien ne s'alignait. */
+/* Réglages repliés sur le podium (#161) : même largeur que la grille qu'ils contiennent,
+   pour que l'ouverture ne décale rien. */
+.lobby-reopen {
+  width: min(640px, 100%);
+}
+.lobby-reopen > summary {
+  cursor: pointer;
+  padding: 0.5rem 0;
+  color: var(--sub);
+}
 .lobby-settings {
   width: min(640px, 100%);
   background: color-mix(in srgb, var(--panel) 55%, transparent);
