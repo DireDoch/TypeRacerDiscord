@@ -1265,6 +1265,92 @@ button.secondary:hover {
 .menu a {
   color: var(--main);
 }
+/* « Comment jouer » (#173) : une porte, pas une destination. Elle reste dans la colonne
+   pour rester trouvable, mais sans cadre — la pile de boutons encadrés dit « voici ce
+   que tu peux faire », et ce lien-ci ne fait pas partie de cette liste. */
+.menu button.menu-quiet {
+  border-color: transparent;
+  color: var(--sub);
+  font-size: 0.95rem;
+  padding: 0.4rem 1.2rem;
+}
+.menu button.menu-quiet:hover {
+  border-color: transparent;
+  color: var(--main);
+}
+
+/* --- Guide « Comment jouer » (#173) ---------------------------------------- */
+/* Un calque, pas un écran : le Menu reste visible derrière pendant qu'on le décrit,
+   et « Continuer » rend la main exactement là où le joueur était déjà. */
+.guide-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 60; /* au-dessus du HUD (40), qui n'a rien à dire tant que le Guide parle */
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  backdrop-filter: blur(3px);
+}
+.guide-panel {
+  width: min(46rem, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  scrollbar-width: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1.4rem;
+  padding: 2.2rem;
+  background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--main) 26%, transparent);
+  border-radius: 0.8rem;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+}
+.guide-panel::-webkit-scrollbar {
+  display: none;
+}
+.guide-panel h2 {
+  margin: 0;
+  color: var(--main);
+  font-size: 1.9rem;
+}
+.guide-entries {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+/* Le libellé porte la CHASSE de la zone de frappe : c'est le mot que le joueur va
+   retrouver sur un bouton, il doit se reconnaître d'un coup d'œil. */
+.guide-entry dt {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  color: var(--text);
+  margin-bottom: 0.25rem;
+}
+.guide-entry dd {
+  margin: 0;
+  color: var(--sub);
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+.guide-foot {
+  margin: 0;
+  color: var(--sub);
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+.guide-panel button.primary {
+  align-self: flex-start;
+  background: color-mix(in srgb, var(--main) 16%, transparent);
+  color: var(--main);
+  font-size: 1rem;
+  padding: 0.55rem 1.6rem;
+}
+.guide-panel button.primary:hover {
+  background: color-mix(in srgb, var(--main) 26%, transparent);
+  color: var(--main);
+}
 
 /* --- Écran Apprendre (cursus de leçons) ------------------------------------- */
 .learn {
