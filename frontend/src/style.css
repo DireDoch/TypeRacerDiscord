@@ -1242,10 +1242,33 @@ button.secondary:hover {
      trop haut d'un cran après réduction. */
   padding-top: 6rem;
 }
-.menu h1 {
-  color: var(--main);
-  font-size: 2.2rem;
-  margin-bottom: 1.2rem;
+/* Wordmark (#174) — mêmes proportions que `design/composants.typ::logo()`, exprimées en
+   `em` pour qu'elles tiennent à n'importe quelle taille de police. Les trois couleurs
+   viennent du `:root`, donc le logo suit la palette au lieu de la figer. */
+.menu h1.logo {
+  display: flex;
+  align-items: center;
+  gap: 0.12em; /* `spacing: taille-texte * 0.12` côté Typst */
+  margin: 0 0 1.6rem;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 2.6rem;
+  line-height: 1;
+  color: var(--text);
+}
+/* Le p DOUBLÉ, en rouge de faute : c'est la blague du logo — on tape « Typpe », et le
+   jeu s'appelle TypeRacer. `--error` est réservé à la faute de frappe (composants.typ le
+   dit : « ne pas décorer avec »), et ici c'en est littéralement une. */
+.logo-typo {
+  color: var(--error);
+}
+/* Le curseur, en corail. Pas de clignotement : la zone de frappe a justement abandonné
+   le caret clignotant (REFONTE-VISUELLE, décision 2), et le Menu a déjà son animation. */
+.logo-caret {
+  width: 0.16em;
+  height: 0.87em;
+  border-radius: 0.025em;
+  background: var(--main);
 }
 .menu button {
   width: min(260px, 80vw);

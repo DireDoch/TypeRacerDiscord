@@ -16,6 +16,26 @@ import { closeActivity, isInsideDiscord } from "../discord";
 import { normalizeCode, CODE_LEN } from "../core/net";
 import type { RaceIntent } from "./race";
 
+/**
+ * Le wordmark (#174) — le même que `design/app-icon.typ`, reconstruit en texte plutôt
+ * qu'embarqué en PNG.
+ *
+ * L'icône d'application est un wordmark, pas une scène : « uniquement le logo(), à 48 px
+ * une voiture ne resterait qu'une tache orange » (`app-icon.typ`). Or un wordmark EST du
+ * texte. Le rendre en texte lui rend ce qu'un PNG lui enlève — il reste net à toute
+ * taille, il suit le `zoom` de `ui/chrome.ts`, il pèse zéro octet de plus, et il puise
+ * ses trois couleurs dans le `:root` : le jour où la palette bouge, le logo bouge avec
+ * elle au lieu de dériver en silence.
+ *
+ * La structure calque celle de `composants.typ::logo()` : « Typ » + un **p rouge** — la
+ * faute de frappe, d'où le nom du jeu — + « e », puis le curseur corail, puis « Racer ».
+ * L'`aria-label` est indispensable : sans lui, un lecteur d'écran annonce « Typpe Racer ».
+ */
+const LOGO_HTML = `
+  <h1 class="logo" aria-label="TypeRacer">
+    <span>Typ<span class="logo-typo">p</span>e</span><span class="logo-caret" aria-hidden="true"></span><span>Racer</span>
+  </h1>`;
+
 export class Menu {
   private view: "home" | "multi" = "home";
 
@@ -41,7 +61,7 @@ export class Menu {
   private render(): void {
     this.root.innerHTML = `
       <section class="menu">
-        <h1>TypeRacer</h1>
+        ${LOGO_HTML}
         ${this.viewHtml()}
       </section>
     `;
