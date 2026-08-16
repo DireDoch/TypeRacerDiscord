@@ -14,9 +14,10 @@ import {
   lobbyRowHtml,
   textSourceEvent,
   spamWordEvent,
+  activityExtra,
   type LobbyRow,
 } from "./race";
-import { aliveIds, outpaced, advanceState, type RacerState } from "../core/race-state";
+import { aliveIds, outpaced, advanceState, initialRaceState, type RacerState } from "../core/race-state";
 import { FreeInput } from "../core/input/free-input";
 import { avatarUrl } from "../discord";
 import { WORDS_LENGTHS } from "../core/net";
@@ -592,5 +593,57 @@ describe("spamWordEvent — l'événement du champ Mot de Spam (issue #131)", ()
 
   it("un mot sans espace passe tel quel", () => {
     expect(spamWordEvent("go")).toEqual({ type: "SetSpamWord", word: "go" });
+  });
+});
+
+describe("activityExtra — l'état de Race traduit en Rich Presence (party + timestamps)", () => {
+  const base = {
+    ...initialRaceState(),
+    players: [
+      { playerId: "a", displayName: "A", avatarHash: null, ready: false },
+      { playerId: "b", displayName: "B", avatarHash: null, ready: false },
+    ],
+    maxPlayers: 8,
+  };
+
+  it("hors course : l'effectif et « En attente », jamais de rebours", () => {
+    const e = activityExtra({ ...base, phase: "lobby" });
+    expect(e).toEqual({ party: [2, 8], state: "En attente" });
+  });
+
+  it("l'effectif compte les PRÉSENTS, pas les partants figés au RaceStart", () => {
+    // 2 présents, 1 seul partant : c'est « reste-t-il une place » que la présence dit.
+    const e = activityExtra({ ...base, phase: "running", racers: [base.players[0]] });
+    expect(e.party).toEqual([2, 8]);
+  });
+
+  it("course normale : la ligne libre porte la Source de texte", () => {
+    const e = activityExtra({ ...base, phase: "running", textSource: { kind: "words", count: 30 } });
+    expect(e).toEqual({ party: [2, 8], state: "Mots (30)" });
+  });
+
+  it("floor is lava : « Survie », et surtout AUCUN rebours — le mode n'a pas de fin prévisible", () => {
+    const e = activityExtra({ ...base, phase: "running", gameMode: "floorIsLava" });
+    expect(e.state).toBe("Survie");
+    expect(e.endsAt).toBeUndefined();
+  });
+
+  it("spam : le mot spammé, et un rebours calé sur le plafond de temps", () => {
+    const e = activityExtra(
+      { ...base, phase: "running", gameMode: "spam", spamWord: "banane", spamTimeCapS: 30 },
+      1_000_000,
+    );
+    expect(e).toEqual({ party: [2, 8], state: "« banane »", endsAt: 1_030_000 });
+  });
+
+  it("spam sans mot choisi : on ne rend pas « « null » »", () => {
+    const e = activityExtra({ ...base, phase: "running", gameMode: "spam", spamWord: null });
+    expect(e.state).toBe("Mode Spam");
+  });
+
+  it("aucune party.id nulle part : un Code de partie ne doit pas fuiter dans une présence publique", () => {
+    for (const phase of ["lobby", "running"] as const) {
+      expect(activityExtra({ ...base, phase, code: "A7K2M" })).not.toHaveProperty("id");
+    }
   });
 });

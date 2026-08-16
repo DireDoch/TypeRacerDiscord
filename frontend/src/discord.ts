@@ -105,26 +105,61 @@ let activitySdk: DiscordSDK | null = null;
 export type ActivityState = "menu" | "practice" | "lobby" | "race" | "floorIsLava" | "spam";
 
 /**
- * Un couple (texte, clé d'asset) par état — POUR AJOUTER UN ÉTAT : une entrée ici, rien
- * ailleurs. `largeImageKey` doit correspondre à une clé uploadée sur le portail
+ * Un triplet (details, clé d'asset, tooltip) par état — POUR AJOUTER UN ÉTAT : une entrée
+ * ici, rien ailleurs. `largeImageKey` doit correspondre à une clé uploadée sur le portail
  * développeur Discord (issues d'art) ; une clé absente n'y fait pas planter l'appel,
  * Discord retombe silencieusement sur l'image par défaut.
+ *
+ * `largeText` est le tooltip du grand visuel. Il recopiait `details` — un tooltip qui
+ * redit la ligne juste en dessous ne sert à rien : il porte désormais la RÈGLE du mode,
+ * la seule chose qu'aucune autre ligne de la présence n'a la place de dire.
+ *
+ * Aucune donnée de jeu ici : ce qui varie d'une partie à l'autre (effectif, mot spammé,
+ * plafond de temps) arrive par `ActivityExtra`, rempli par l'appelant.
  */
-const ACTIVITY_PRESETS: Record<ActivityState, { details: string; largeImageKey: string }> = {
-  menu: { details: "Dans le menu", largeImageKey: "menu" },
-  practice: { details: "S'entraîne", largeImageKey: "practice" },
-  lobby: { details: "Dans un salon", largeImageKey: "lobby" },
-  race: { details: "En course", largeImageKey: "race" },
-  floorIsLava: { details: "Floor is lava", largeImageKey: "floor-is-lava" },
-  spam: { details: "Mode Spam", largeImageKey: "spam" },
+const ACTIVITY_PRESETS: Record<ActivityState, { details: string; largeImageKey: string; largeText: string }> = {
+  menu: { details: "Dans le menu", largeImageKey: "menu", largeText: "TypeRacer" },
+  practice: { details: "S'entraîne", largeImageKey: "practice", largeText: "Entraînement solo" },
+  lobby: { details: "Dans un salon", largeImageKey: "lobby", largeText: "En attente du départ" },
+  race: { details: "En course", largeImageKey: "race", largeText: "Le premier à taper tout le texte gagne" },
+  floorIsLava: {
+    details: "Floor is lava",
+    largeImageKey: "floor-is-lava",
+    largeText: "Le moins avancé brûle, à intervalle régulier",
+  },
+  spam: { details: "Mode Spam", largeImageKey: "spam", largeText: "Un seul mot, répété le plus vite possible" },
 };
+
+/**
+ * Ce que l'écran courant sait de lui-même et que la table ne peut pas savoir. Volontairement
+ * ÉTROIT : `discord.ts` n'importe rien de `core/` et ne doit jamais apprendre ce qu'est un
+ * Mode de jeu. C'est l'appelant — `ui/race.ts`, qui tient déjà `RaceState` — qui traduit son
+ * état en ces trois champs.
+ */
+export interface ActivityExtra {
+  /**
+   * `[présents, max]` → Discord colle le badge « (3 sur 8) » à la fin de la ligne `state`.
+   * On n'envoie JAMAIS de `party.id` : il ferait apparaître un « Demander à rejoindre »
+   * qu'on ne sait pas honorer (une Activity se rejoint par son salon vocal), et la clé
+   * d'une Room peut être un Code de partie (ADR 0008) — le secret qui laisse entrer
+   * quelqu'un d'un autre serveur n'a rien à faire dans une présence publique.
+   */
+  party?: [number, number];
+  /** Fin prévue (ms epoch) → compte à rebours au lieu du chrono. Seul Spam en a un. */
+  endsAt?: number;
+  /** Ligne libre sous `details`, celle qui porte le badge party. Courte : elle se coupe. */
+  state?: string;
+}
 
 /**
  * Pousse l'état courant en Rich Presence. No-op hors Discord / avant le handshake, comme
  * `closeActivity`. Le petit visuel reste le logo de l'app (badge constant) ; seul le grand
  * visuel change avec l'état.
+ *
+ * Sans `endsAt`, on envoie `start` : un chrono qui monte est ce qui distingue un joueur
+ * actif d'un onglet oublié depuis deux heures.
  */
-export function updateActivity(activityState: ActivityState): void {
+export function updateActivity(activityState: ActivityState, extra: ActivityExtra = {}): void {
   if (!activitySdk) return;
   const preset = ACTIVITY_PRESETS[activityState];
   void activitySdk.commands
@@ -132,10 +167,24 @@ export function updateActivity(activityState: ActivityState): void {
       activity: {
         type: 0,
         details: preset.details,
-        assets: { large_image: preset.largeImageKey, large_text: preset.details, small_image: "app-icon" },
+        ...(extra.state ? { state: extra.state } : {}),
+        assets: {
+          large_image: preset.largeImageKey,
+          large_text: preset.largeText,
+          small_image: "app-icon",
+        },
+        ...(extra.party ? { party: { size: extra.party } } : {}),
+        // ponytail: en millisecondes, comme l'objet Activity de la passerelle. La doc RPC
+        // historique montre des SECONDES et les deux unités circulent (discord-api-docs#3132) ;
+        // le client normalise en pratique. Si le chrono affiche une valeur absurde au premier
+        // lancement, diviser par 1000 — c'est le seul réglage possible ici.
+        timestamps: extra.endsAt ? { end: extra.endsAt } : { start: Date.now() },
       },
     })
-    .catch(() => {}); // décoratif : une Rich Presence en échec ne doit pas se voir ailleurs
+    // Décoratif : une Rich Presence en échec ne doit pas se voir dans le jeu. Mais elle
+    // échouait SILENCIEUSEMENT tant que `rpc.activities.write` manquait au scope, et rien
+    // ne le disait — la console est le seul endroit où ce diagnostic a sa place.
+    .catch((e) => console.warn("setActivity a échoué (Rich Presence non affichée) :", e));
 }
 
 async function resolveIdentity(): Promise<Identity> {
@@ -168,7 +217,12 @@ async function resolveIdentity(): Promise<Identity> {
     response_type: "code",
     state: "",
     prompt: "none",
-    scope: ["identify"],
+    // `rpc.activities.write` est EXIGÉ par `setActivity` : sans lui la Rich Presence est
+    // rejetée sans rien afficher (le `.catch` d'`updateActivity` le journalise désormais).
+    // Il n'ajoute aucun accès aux données du joueur — il autorise seulement à écrire SA
+    // présence, celle que cette Activity produit déjà. Le backend n'a rien à en savoir :
+    // `exchange_code` ne déclare pas de scope, il hérite de celui-ci.
+    scope: ["identify", "rpc.activities.write"],
   });
 
   const res = await fetch(`${proxyBase()}/token`, {
