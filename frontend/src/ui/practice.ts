@@ -747,7 +747,7 @@ export class Practice {
           ${valueGroup}
         </div>
         ${settingsGroup ? `<div class="axis">${infoHtml("Options de texte", AXIS_TIPS.settings)}${settingsGroup}</div>` : ""}
-        ${difficultyGroup ? `<div class="axis">${infoHtml("Difficulté", AXIS_TIPS.difficulty)}${difficultyGroup}</div>` : ""}
+        ${difficultyGroup ? `<div class="axis axis-own-row">${infoHtml("Difficulté", AXIS_TIPS.difficulty)}${difficultyGroup}</div>` : ""}
         ${this.onExit ? `<button class="back-btn" data-nav="menu">← menu</button>` : ""}
       </div>
     `;
