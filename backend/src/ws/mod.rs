@@ -962,16 +962,10 @@ fn stop_spam(room: &mut Room) -> bool {
 /// sans attendre le plafond en vrai. Référencé depuis `game_mode::SPAM` (#128) — jamais
 /// appelé pour une Room qui n'est pas sous ce mode.
 fn spam_tick_room(room: &mut Room, now: i64) {
-    // Le plafond court depuis GO, PAS depuis `StartRace` : `start_at_epoch_ms` est posé
-    // avant le décompte (c'est lui que les clients calent), alors que le joueur — et le
-    // compteur que Spam lui affiche — comptent depuis sa première frappe. Sans ce
-    // décalage, un plafond de 15 s derrière un décompte de 10 s ne laisserait que 5 s de
-    // frappe pendant que l'écran en annonce 15.
-    //
-    // Floor is lava vit avec la même origine sans le corriger : son décompte n'est qu'un
-    // métronome, le décalage y avance le premier tic sans rien promettre de faux. Spam
-    // est le premier mode à AFFICHER un temps restant, donc le premier à devoir le tenir.
-    let cap_ms = ((room.spam_time_cap_s + room.countdown_s) as i64) * 1000;
+    // Le plafond court depuis GO. Plus rien à compenser ici : `start_at_epoch_ms` EST le
+    // GO (`start_race`). Ce mode ajoutait autrefois le décompte de son côté — une
+    // correction locale que Floor is lava n'avait pas, et c'est exactement ce qui l'a tué.
+    let cap_ms = (room.spam_time_cap_s as i64) * 1000;
     let expired = match &room.state {
         RaceState::Racing { start_at_epoch_ms, .. } => now - start_at_epoch_ms >= cap_ms,
         RaceState::Lobby => false,
@@ -983,7 +977,7 @@ fn spam_tick_room(room: &mut Room, now: i64) {
 
 /// StartRace : accepté du seul owner, hors course en cours, et seulement si le
 /// ready-check (s'il est activé) est satisfait par tous les présents (issue #63). Fige
-/// les partants, fixe t=0 (horloge murale serveur) et le diffuse.
+/// les partants, fixe t=0 — **le GO, décompte inclus** — et le diffuse.
 fn start_race(rooms: &Rooms, key: &str, player_id: &str) {
     let mut rooms = rooms.lock().unwrap();
     if let Some(room) = rooms.get_mut(key) {
@@ -997,7 +991,14 @@ fn start_race(rooms: &Rooms, key: &str, player_id: &str) {
         if room.players.len() < rules(room.game_mode).min_players_to_start {
             return;
         }
-        let start = now_epoch_ms();
+        // t=0 est le GO — la fin du décompte —, PAS l'instant du clic. Le client cale son
+        // `RunClock` sur le GO et date ses frappes depuis là ; le serveur doit compter sur
+        // la même origine, sinon toutes ses règles temporelles s'appliquent pendant que
+        // personne ne peut encore taper. Floor is lava en mourait littéralement : avec le
+        // décompte par défaut (7 s) et un intervalle de 5 s, la première élimination
+        // tombait 2 s AVANT le GO, tous les partants à 0 caractère — égalité, donc TOUT LE
+        // MONDE brûlait, et la Room restait figée jusqu'au watchdog de 10 minutes.
+        let start = now_epoch_ms() + (room.countdown_s as i64) * 1000;
         room.state = RaceState::Racing {
             start_at_epoch_ms: start,
             racers: room.players.clone(),
@@ -1222,6 +1223,21 @@ fn finish_race(
     // WPM ni dans l'accuracy. Le plafond, lui, n'est pas cosmétique — le log vient du
     // client, et sans borne un log gonflé d'espaces ferait allouer un texte arbitraire.
     let target_text = rules(game_mode).recompute_target_text(&target_text, &keystrokes);
+
+    // Une arrivée se PROUVE. Sous Normal, la course « ne se termine qu'une fois tout le
+    // texte tapé exactement » (CONTEXT.md) : un `Finish` que le recompute ne voit pas aller
+    // au bout n'est pas une arrivée, c'est un renoncement — enregistré comme un abandon,
+    // ce qui débloque la fin pour les autres exactement pareil.
+    //
+    // Sans cette garde, trois caractères justes annoncés en 50 ms valaient 800 wpm et la
+    // première place, sans avoir tapé la course (constaté en test à 8 joueurs). Le
+    // recompute disait déjà la vérité sur CE QUI avait été tapé ; personne ne demandait si
+    // ça allait jusqu'au bout.
+    if rules(game_mode).requires_full_text
+        && !crate::domain::replay::covers_whole_target(&target_text, &keystrokes)
+    {
+        return forfeit_race(rooms, key, player_id);
+    }
 
     // Compté AVANT le recompute, qui prend possession des keystrokes. `(None, 0)` hors
     // Spam : c'est aussi à ça que le podium reconnaît le mode (ADR 0016 ; `score_extra`,
@@ -2067,6 +2083,32 @@ mod tests {
         }
     }
 
+    /// Régression : le métronome d'élimination ne bat PAS pendant le décompte.
+    ///
+    /// Avec l'ancien t=0 (l'instant du clic « Démarrer »), un intervalle de 5 s derrière le
+    /// décompte par défaut de 7 s éliminait AVANT que quiconque puisse taper : tous les
+    /// partants à 0 caractère, égalité, donc tout le monde brûlé d'un coup — plus de
+    /// survivant, plus de `Finish` attendu, Room figée jusqu'au watchdog de 10 minutes.
+    #[test]
+    fn aucune_elimination_avant_le_go_meme_si_lintervalle_est_plus_court_que_le_decompte() {
+        let rooms = new_rooms();
+        let go = lava_race(&rooms, &["p1", "p2"], 5, &[("p1", 0), ("p2", 0)]);
+        let countdown = rooms.lock().unwrap().get("c1").unwrap().countdown_s as i64;
+        assert!(countdown > 5, "le test ne prouve rien si le décompte est plus court");
+
+        // Pendant le décompte, y compris passé un intervalle entier : personne ne brûle.
+        game_mode_tick(&rooms, go - countdown * 1000 + 5_000);
+        assert!(burned_of(&rooms, "c1").is_empty(), "brûlé avant d'avoir pu taper");
+
+        // Le premier tic tombe un intervalle APRÈS le GO, et n'emporte que le dernier.
+        relay_progress(&rooms, "c1", "p1", 42, 0);
+        game_mode_tick(&rooms, go + 5_000);
+        assert_eq!(
+            burned_of(&rooms, "c1").iter().map(|(id, _)| id.clone()).collect::<Vec<_>>(),
+            vec!["p2".to_string()],
+        );
+    }
+
     fn burned_of(rooms: &Rooms, key: &str) -> Vec<(PlayerId, f64)> {
         match &rooms.lock().unwrap().get(key).unwrap().state {
             RaceState::Racing { burned, .. } => burned.clone(),
@@ -2428,19 +2470,20 @@ mod tests {
 
     #[test]
     fn le_plafond_de_temps_court_depuis_go_pas_depuis_start_race() {
-        // `start_at_epoch_ms` est posé AVANT le décompte : sans l'y ajouter, un plafond de
-        // 30 s derrière le décompte par défaut (7 s) ne laisserait que 23 s de frappe,
-        // pendant que le compteur à l'écran — qui part de la 1re frappe — en annonce 30.
+        // Le joueur voit un compteur qui part de la 1re frappe : un plafond de 30 s doit
+        // laisser 30 s de frappe, décompte non compris. Ce n'est plus compensé ici — c'est
+        // `start_at_epoch_ms` lui-même qui vaut le GO — d'où le test sur les DEUX bornes.
         let rooms = new_rooms();
-        let t0 = spam_race(&rooms, &["p1", "p2"], 50, 30);
+        let go = spam_race(&rooms, &["p1", "p2"], 50, 30);
         let countdown = rooms.lock().unwrap().get("c1").unwrap().countdown_s as i64;
         assert!(countdown > 0, "sinon le test ne prouve rien");
 
-        game_mode_tick(&rooms, t0 + 30_000); // le plafond nu : trop tôt de tout le décompte
+        // Pendant le décompte (avant le GO) : rien ne peut expirer.
+        game_mode_tick(&rooms, go - countdown * 1000);
         assert!(!stopped(&rooms, "c1"));
-        game_mode_tick(&rooms, t0 + (30 + countdown) * 1000 - 1_000);
+        game_mode_tick(&rooms, go + 29_000);
         assert!(!stopped(&rooms, "c1"));
-        game_mode_tick(&rooms, t0 + (30 + countdown) * 1000);
+        game_mode_tick(&rooms, go + 30_000);
         assert!(stopped(&rooms, "c1"));
     }
 
