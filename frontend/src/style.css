@@ -407,6 +407,50 @@ button.primary:hover {
   background: var(--panel);
 }
 
+/* Actions de l'écran de résultats (#178). `.results` est une colonne flex, donc un
+   bouton sans classe s'y étirait sur TOUTE la largeur : « Replay » et « Analyser »
+   pesaient visuellement autant que l'action principale alors qu'aucun des deux n'est
+   ce qu'on veut faire en sortant d'une Run. Les trois passent en ligne, et les deux
+   secondaires empruntent le vocabulaire des bascules du graphe (wpm / raw / errors) :
+   même taille, même discrétion, lisibles comme des options et non comme LE bouton. */
+.results-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+  justify-content: center;
+}
+button.secondary {
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--sub) 30%, transparent);
+  border-radius: 0.4rem;
+  color: var(--sub);
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0.45rem 0.9rem;
+  transition:
+    color 0.14s,
+    border-color 0.14s;
+}
+button.secondary:hover {
+  color: var(--text);
+  border-color: var(--sub);
+}
+/* Le bouton principal reprend sa place dans la ligne : `align-self: center` venait
+   de l'époque où il était seul enfant direct de la colonne. */
+.results-actions button.primary {
+  align-self: auto;
+  background: color-mix(in srgb, var(--main) 14%, transparent);
+  color: var(--main);
+  font-size: 0.95rem;
+  padding: 0.5rem 1.4rem;
+}
+.results-actions button.primary:hover {
+  background: color-mix(in srgb, var(--main) 24%, transparent);
+  color: var(--main);
+}
+
 /* --- Race (multijoueur) --------------------------------------------------- */
 .race {
   display: flex;
@@ -1454,15 +1498,19 @@ button.back-btn {
   cursor: pointer;
   padding: 0.62rem 1.15rem;
   backdrop-filter: blur(6px);
+  /* JAMAIS de `transform` ici (#179). Le bouton est `position: fixed`, donc un
+     décalage au survol ne pousse rien — il déplace la cible sous le curseur, ce
+     qui la fait fuir au moment précis où on la vise. Le retour de survol se joue
+     donc entièrement sur les couleurs, qui ne bougent aucune géométrie. */
   transition:
     color 0.14s,
     border-color 0.14s,
-    transform 0.14s;
+    background-color 0.14s;
 }
 button.back-btn:hover {
   color: var(--main);
   border-color: var(--main);
-  transform: translateX(-2px);
+  background: color-mix(in srgb, var(--main) 12%, var(--panel));
 }
 button.back-btn:focus-visible {
   outline: 2px solid var(--main);

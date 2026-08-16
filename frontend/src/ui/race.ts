@@ -492,7 +492,8 @@ export class Race {
           <div class="words-wrap"><div class="words" id="words">${this.wordsAreaHtml()}</div><div class="caret-block"></div></div>
           <div class="bars" id="bars" style="--n:${this.state.players.length}">${this.barsHtml()}</div>
           <p class="hint">${this.doneLocal ? "Terminé — en attente des autres…" : this.runningHint()}</p>
-          ${this.forfeitBtnHtml()}`;
+          ${this.forfeitBtnHtml()}
+          ${this.exitBtnHtml()}`;
       case "over":
         // Revanche : le serveur a déjà re-diffusé un RoomState avec un NOUVEAU texte ;
         // le même bouton StartRace relance (owner seulement). Le podium est donc posé
@@ -754,6 +755,21 @@ export class Race {
     return `<p class="hint">En attente que l'hôte lance la course…</p>`;
   }
 
+  /**
+   * `← menu`. Rendu dans les TROIS phases, course comprise (#186).
+   *
+   * Il manquait à `running`, et `forfeitBtnHtml()` s'efface dès `doneLocal` : un joueur
+   * qui avait fini ou abandonné n'avait donc plus AUCUN bouton tant que `RaceOver`
+   * n'arrivait pas — ni « Abandonner » (consommé), ni « ← menu » (jamais rendu ici).
+   * Seul dans une Room, c'était un écran sans issue jusqu'au watchdog serveur.
+   *
+   * Partir en pleine course ne demande AUCUN code serveur nouveau : `destroy()` ferme
+   * le socket, la boucle WS se termine et `leave_room` fait déjà le reste — retrait de
+   * la présence, `close_race(room, true)` qui déclare abandon les partants restants dès
+   * que plus personne n'attend, et suppression pure et simple d'une Room devenue vide
+   * (son Code meurt avec elle, ADR 0008). Le glossaire (**Abandon**) veut un seul
+   * chemin pour l'abandon et la déconnexion : c'est celui-là.
+   */
   private exitBtnHtml(): string {
     return this.onExit ? `<button id="exitRace" class="back-btn">← menu</button>` : "";
   }

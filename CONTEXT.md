@@ -68,7 +68,7 @@ A lobby-only Room configuration set by the party leader and applied uniformly to
 _Avoid_: Room option, Lobby setting, Game setting.
 
 **Preference**:
-How a Player wants the game to look on **their own machine** — typing font, colour palette, and the Display identity override. A Preference belongs to the device, never leaves it, and is deliberately **not** a Setting: it never alters the generated text, never enters the Config bucket, and never affects a score. Two Players in the same Race may see different fonts and colours and still be racing the same text. Changing a Preference never invalidates a PB.
+How a Player wants the game to look on **their own machine** — typing font, colour palette, and the Display identity override. A Preference belongs to the device, never leaves it, and is deliberately **not** a Setting: it never alters the generated text, never enters the Config bucket, and never affects a score. Two Players in the same Race may see different fonts and colours and still be racing the same text. Changing a Preference never invalidates a PB. A Preference is always **chosen** by the Player: device-local state the app merely *records* about them (whether they have seen the Guide, for instance) is not a Preference and lives in its own storage key, outside the Preference schema.
 _Avoid_: Setting, Option, Config, Theme.
 
 **Keystroke log**:
@@ -76,8 +76,8 @@ The recorded timeline of a Player's keystrokes during a Run (what was typed and 
 _Avoid_: Input history, Replay.
 
 **Replay**:
-The playback of a finished Run, re-rendered from its Keystroke log against the persisted target text — the Player watches their own typing happen again in real time (errors included). Launched from the results screen or from any Run in the history. Simple playback: start to finish at real speed, no pause or seeking.
-_Avoid_: Review, Playback, Ghost.
+The playback of a finished Run, re-rendered from its Keystroke log against the persisted target text — the Player watches their own typing happen again in real time (errors included). Launched from the results screen or from any Run in the history. Simple playback: start to finish at real speed, no pause or seeking. Distinct from **restarting** (UI: « Recommencer »), which begins a brand-new Run on fresh text — French « Rejouer » is banned precisely because it reads as either one.
+_Avoid_: Review, Revoir, Rejouer, Playback, Ghost.
 
 **Play of the Game**:
 The post-Race highlight: the two Players whose finishes were **closest together** — wherever they landed in the ranking — replayed side by side in slow motion over their last seconds. Chosen by the server (ADR 0011), and **omitted entirely** when no pair finished within 2 s: a race with no photo finish has no Play of the Game. It reuses the Replay machinery but is not a Replay: two Keystroke logs instead of one, a window instead of the whole Run, and a **single shared clock** for both — that shared clock is what makes it a duel rather than two unrelated playbacks. **Under either Mode de jeu the closeness is measured in WPM, not in seconds**, and the window runs over the 3 s before the *earlier* of the two exits — it ends on the flames, or on the clap, rather than on a second arrival. In Floor is lava because deaths land on a metronome, so the instant of death carries ranking but no closeness; in Spam because the Race stops for everyone at the same instant, which would make every pair a photo finish.
@@ -129,6 +129,10 @@ _Avoid_: Citation, Passage.
 **Lesson**:
 One step of the Learn curriculum (UI: « Apprendre »), one of 100 (ADR 0006): instructional content on touch-typing — illustrated with a static hand/keyboard diagram on the earliest Lessons only — plus a typed exercise on a fixed key set. Passing the exercise at the accuracy required by the current curriculum stage (a static, editable table of thresholds — early Lessons are lenient, later ones stricter) unlocks the next Lesson. Accuracy is the only gating criterion, at every stage — speed is never required to unlock a Lesson. Progress is persisted per Player. Lesson exercises are not Runs: no PB, no history entry.
 _Avoid_: Level, Tutorial, Course.
+
+**Guide (UI: « Comment jouer »)**:
+The explanation of the **application** — which screen does what, how to launch a Run, where the Réglages de salon live, where the Preferences live. Never teaches typing: that is a Lesson's job, and the two are deliberately separate screens. Shown once as an overlay on a Player's first arrival, and reachable from the Menu forever after.
+_Avoid_: Tutorial, Onboarding, How To Play, Apprendre, Lesson.
 
 **Room**:
 A multiplayer session holding the set of Players racing the same text together. Identified by a **key** that is either a Discord voice channel (`channelId`) or a Code de partie — one map, two forms (ADR 0008). A Room keyed by `channelId` is created on the fly (the key comes from the SDK, it cannot be mistyped); a Room keyed by a code is only ever created explicitly. An empty Room is discarded and its code dies with it.
