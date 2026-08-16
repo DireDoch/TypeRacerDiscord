@@ -103,7 +103,12 @@ const MIN_PLAYERS: usize = 2;
 /// de mesure — t=0 reste la fin du décompte quelle que soit la valeur choisie).
 const COUNTDOWN_VALUES: [u32; 4] = [3, 5, 7, 10];
 /// Durée par défaut d'une Room neuve.
-const DEFAULT_COUNTDOWN_S: u32 = 7;
+/// 5 s (#185). ADR 0007 avait posé 7 s — et s'était explicitement réservé le droit de
+/// bouger cette valeur « sans ADR ni invalidation, tant que t=0 reste la fin du
+/// décompte ». Son argument pour une constante figée (« personne ne touchera ce
+/// réglage ») a cessé d'être vrai le jour où le décompte est devenu un Réglage de salon :
+/// un salon qui veut du temps de lecture remet 7 ou 10 s en un clic.
+const DEFAULT_COUNTDOWN_S: u32 = 5;
 /// Alphabet des Codes de partie : ni `0`/`O`, ni `1`/`I`/`L` — un code se dicte à
 /// l'oral, l'ambiguïté visuelle y coûte cher. 31 caractères.
 const CODE_ALPHABET: &[u8] = b"23456789ABCDEFGHJKMNPQRSTUVWXYZ";
@@ -1038,7 +1043,7 @@ fn start_race(rooms: &Rooms, key: &str, player_id: &str) {
         // `RunClock` sur le GO et date ses frappes depuis là ; le serveur doit compter sur
         // la même origine, sinon toutes ses règles temporelles s'appliquent pendant que
         // personne ne peut encore taper. Floor is lava en mourait littéralement : avec le
-        // décompte par défaut (7 s) et un intervalle de 5 s, la première élimination
+        // décompte par défaut (7 s à l'époque) et un intervalle de 5 s, la première élimination
         // tombait 2 s AVANT le GO, tous les partants à 0 caractère — égalité, donc TOUT LE
         // MONDE brûlait, et la Room restait figée jusqu'au watchdog de 10 minutes.
         let start = now_epoch_ms() + (room.countdown_s as i64) * 1000;
@@ -2158,6 +2163,12 @@ mod tests {
         }
         assert!(set_game_mode(rooms, "c1", players[0], GameMode::FloorIsLava));
         assert!(set_lava_interval(rooms, "c1", players[0], interval_s));
+        // Décompte au tier MAXIMUM, jamais celui par défaut : `LAVA_INTERVAL_VALUES`
+        // commence à 5 s, or le défaut vaut 5 s lui aussi (#185) — un test qui veut un
+        // intervalle plus court que le décompte n'aurait donc plus aucune marge. Le
+        // fixer ici rend toute la suite lava indépendante de ce défaut ; les autres
+        // tests s'ancrent sur le `go` renvoyé, la longueur du décompte leur est neutre.
+        assert!(set_countdown(rooms, "c1", players[0], 10));
         start_race(rooms, "c1", players[0]);
         for (p, chars) in progress {
             relay_progress(rooms, "c1", p, *chars, 0, now_epoch_ms());
@@ -2177,17 +2188,25 @@ mod tests {
     #[test]
     fn aucune_elimination_avant_le_go_meme_si_lintervalle_est_plus_court_que_le_decompte() {
         let rooms = new_rooms();
-        let go = lava_race(&rooms, &["p1", "p2"], 5, &[("p1", 0), ("p2", 0)]);
+        // L'intervalle doit être STRICTEMENT plus court que le décompte : c'est tout le
+        // sujet du test. Il se compare donc au décompte réel plutôt qu'à une constante
+        // recopiée — le défaut a déjà bougé une fois (7 → 5 s, #185) et la garde doit
+        // crier plutôt que de laisser le test passer à vide.
+        let interval = 5;
+        let go = lava_race(&rooms, &["p1", "p2"], interval, &[("p1", 0), ("p2", 0)]);
         let countdown = rooms.lock().unwrap().get("c1").unwrap().countdown_s as i64;
-        assert!(countdown > 5, "le test ne prouve rien si le décompte est plus court");
+        assert!(
+            countdown > interval as i64,
+            "le test ne prouve rien si le décompte n'est pas plus long que l'intervalle",
+        );
 
         // Pendant le décompte, y compris passé un intervalle entier : personne ne brûle.
-        game_mode_tick(&rooms, go - countdown * 1000 + 5_000);
+        game_mode_tick(&rooms, go - countdown * 1000 + (interval as i64) * 1000);
         assert!(burned_of(&rooms, "c1").is_empty(), "brûlé avant d'avoir pu taper");
 
         // Le premier tic tombe un intervalle APRÈS le GO, et n'emporte que le dernier.
         relay_progress(&rooms, "c1", "p1", 42, 0, now_epoch_ms());
-        game_mode_tick(&rooms, go + 5_000);
+        game_mode_tick(&rooms, go + (interval as i64) * 1000);
         assert_eq!(
             burned_of(&rooms, "c1").iter().map(|(id, _)| id.clone()).collect::<Vec<_>>(),
             vec!["p2".to_string()],

@@ -556,8 +556,30 @@ button.secondary:hover {
 /* Code de partie : fait pour être LU À VOIX HAUTE, d'où la chasse fixe et l'espacement
    — on dicte cinq caractères, pas un mot. */
 .race-code {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
   color: var(--sub);
   font-size: 0.9rem;
+}
+/* Code masqué (#184). Mêmes chasse, taille et interlettrage que le code révélé : les
+   points occupent EXACTEMENT la place du vrai code, donc révéler ne fait sauter aucune
+   mise en page — et la forme apprend au joueur qu'il y a bien cinq caractères dessous. */
+.race-code-hidden {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--font-mono, monospace);
+  font-size: 1.4rem;
+  letter-spacing: 0.25em;
+  line-height: 1;
+  color: color-mix(in srgb, var(--main) 55%, transparent);
+  cursor: pointer;
+}
+.race-code-hidden:hover,
+.race-code-hidden:focus-visible {
+  color: var(--main);
 }
 .race-code strong {
   font-family: var(--font-mono, monospace);
@@ -757,6 +779,21 @@ button.secondary:hover {
   color: var(--main);
   border-color: var(--main);
 }
+/* Bulle accrochée à un symbole DÉJÀ à l'écran (#182) : la couronne de l'hôte se suffit,
+   lui adjoindre un « i » aurait mis deux glyphes là où l'œil n'en lit qu'un. Seuls le
+   cercle et l'italique sautent ; l'ouverture au survol, au focus et au tap vient de
+   `.info` et reste identique. */
+.info.info-plain {
+  width: auto;
+  height: auto;
+  border: none;
+  font-size: 1rem;
+  font-style: normal;
+}
+.info.info-plain:hover,
+.info.info-plain:focus-visible {
+  border-color: transparent;
+}
 .info .tip {
   position: absolute;
   top: calc(100% + 0.5rem);
@@ -835,11 +872,25 @@ button.secondary:hover {
      conteneur pour son `<img>` en `absolute; inset: 0` — en `static` l'image se cale
      sur la fenêtre et recouvre tout l'écran. */
   position: relative;
+  /* ...et `right` DOIT être neutralisé avec (#182). `.car` porte
+     `right: calc(var(--track) / -2)` pour mordre sur la ligne d'arrivée de la piste ;
+     en `relative` ce décalage ne réserve aucune place, il pousse simplement la pastille
+     par-dessus le nom qui, lui, ne bouge pas. D'où le chevauchement. */
+  right: auto;
   width: 1.8rem;
   height: 1.8rem;
   font-size: 0.9rem;
   transform: none;
   flex: none;
+}
+/* Le nom prend la place restante et se coupe proprement : un pseudo Discord peut faire
+   32 caractères, et la carte ne doit ni s'élargir ni repousser la couronne hors vue. */
+.card-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .card.owner {
   border-left-color: var(--main);
