@@ -16,7 +16,7 @@ import {
   Legend,
 } from "chart.js";
 import type { AnalysisResponse, PerSecondPoint, SubmitRunResponse } from "../core/types";
-import { AUTHORITATIVE_BACKEND, fetchAnalysis, isIdentityError, IDENTITY_ERROR_MESSAGE } from "../api";
+import { AUTHORITATIVE_BACKEND, fetchAnalysis, sharedErrorMessage } from "../api";
 import { loadPreferences } from "../core/preferences";
 import { roundSpeed, SPEED_UNIT_LABELS } from "../core/speed-unit";
 import { escapeText } from "./typing-zone";
@@ -109,7 +109,7 @@ async function analyze(root: HTMLElement, runId: string): Promise<void> {
   try {
     a = await fetchAnalysis(runId);
   } catch (e) {
-    el.innerHTML = `<p class="hint">${isIdentityError(e) ? IDENTITY_ERROR_MESSAGE : "Analyse indisponible pour ce Run."}</p>`;
+    el.innerHTML = `<p class="hint">${sharedErrorMessage(e) ?? "Analyse indisponible pour ce Run."}</p>`;
     return;
   }
   if (!root.querySelector("#analysis")) return; // écran quitté pendant le fetch

@@ -408,6 +408,11 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
   d'un token émis pour une autre application — #150), mode dev.
 - `quote.rs` : `GET /api/quote`, proxy API-Ninjas (clé `X-Api-Key` côté serveur, `id` opaque
   dérivé du texte, `wikipediaUrl` construit depuis l'auteur). Clé absente → `502`.
+- `rate_limit.rs` : plafonds de requêtes par minute (#151) — une map, la clé porte le seau,
+  le plafond vient de l'appelant. Le plafond général est posé **dans l'extracteur
+  d'identité**, donc un endpoint authentifié ajouté demain est couvert sans rien écrire ;
+  `GET /api/quote` en a un second, plus serré, parce qu'il consomme un quota mensuel
+  partagé. Dépassement → `429`, jamais une déconnexion silencieuse.
 - Endpoints : `GET /api/health`, `GET /api/quote`, `POST /token`, `POST /api/runs` (recompute +
   persistance + verdict PB), `GET /api/history`.
 - Origine unique : le build Vite (`STATIC_DIR`, défaut `../frontend/dist`) est servi en

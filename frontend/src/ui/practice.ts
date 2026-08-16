@@ -27,7 +27,7 @@ import { generateWithRng, initialWordCount } from "../core/text-gen";
 import { generateDrillText } from "../core/text-gen/drill";
 import { Rng } from "../core/text-gen/rng";
 import { liveAccuracy, liveBurst, liveWpm, liveWpmZen } from "../live-stats";
-import { submitRun, fetchQuote, fetchProfileAnalysis, isIdentityError, IDENTITY_ERROR_MESSAGE } from "../api";
+import { submitRun, fetchQuote, fetchProfileAnalysis, isIdentityError, sharedErrorMessage } from "../api";
 import { renderResults } from "./results";
 import { runReplay } from "./replay";
 import { MODE_LABELS } from "./mode-labels";
@@ -101,8 +101,9 @@ export class Practice {
   /** Texte en chargement asynchrone (Quote ou profil Drill) / échec du chargement. */
   private loadingText = false;
   private loadError = false;
-  /** true si le chargement raté est un problème d'identité (pas un service indisponible). */
-  private loadErrorIsIdentity = false;
+  /** Cause partagée du chargement raté (identité perdue, plafond atteint), sinon null :
+   *  l'écran fournit alors son propre message. */
+  private loadErrorShared: string | null = null;
   /** Drill sans profil : pas assez de données analysées pour cibler des Weak spots. */
   private drillNoProfile = false;
   /** Jeton anti-course : un reset() asynchrone obsolète (mode rechangé) s'auto-annule. */
@@ -152,7 +153,7 @@ export class Practice {
     this.totalKeystrokes = 0;
     this.wordStartMs = null;
     this.loadError = false;
-    this.loadErrorIsIdentity = false;
+    this.loadErrorShared = null;
     this.drillNoProfile = false;
 
     if (this.config.mode === "quotes") {
@@ -172,7 +173,7 @@ export class Practice {
         if (seq !== this.resetSeq) return;
         this.loadingText = false;
         this.loadError = true;
-        this.loadErrorIsIdentity = isIdentityError(e);
+        this.loadErrorShared = sharedErrorMessage(e);
         this.render();
         return;
       }
@@ -204,7 +205,7 @@ export class Practice {
         if (seq !== this.resetSeq) return;
         this.loadingText = false;
         this.loadError = true;
-        this.loadErrorIsIdentity = isIdentityError(e);
+        this.loadErrorShared = sharedErrorMessage(e);
         this.render();
         return;
       }
@@ -596,11 +597,9 @@ export class Practice {
       return `<div class="loading">${msg}</div>`;
     }
     if (this.loadError) {
-      const base = this.loadErrorIsIdentity
-        ? IDENTITY_ERROR_MESSAGE
-        : drillLike
-          ? "Impossible de charger ton profil."
-          : "Impossible de charger la citation.";
+      const base =
+        this.loadErrorShared ??
+        (drillLike ? "Impossible de charger ton profil." : "Impossible de charger la citation.");
       // Redémarrage rapide (issue #65) peut être désactivé : la retentative reste
       // toujours possible en re-cliquant un mode dans la barre de config.
       const retry = this.quickRestartHint();
