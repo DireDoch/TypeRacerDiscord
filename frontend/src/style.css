@@ -874,6 +874,61 @@ button.secondary.ready:hover {
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
+/* Le visuel du Mode de jeu (repli statique de la Rich Presence, `race.ts::modeArtHtml`).
+   BANDEAU et non badge : la scène est horizontale sur un carré presque vide en haut et
+   en bas — c'est le constat de #171. Recadrée en 24:9 un peu sous le centre, on garde la
+   voiture et le sol, qui sont ce qui distingue les trois modes. */
+.mode-art {
+  margin: 0;
+  width: 100%;
+  border-radius: 0.7rem;
+  overflow: hidden;
+  position: relative;
+  background: var(--panel);
+}
+.mode-art img {
+  display: block;
+  width: 100%;
+  /* `height: auto` est OBLIGATOIRE : l'attribut `height="1024"` du `<img>` se traduit en
+     propriété CSS `height`, et une hauteur spécifiée court-circuite `aspect-ratio` — le
+     bandeau retombait sur le carré de 1024 px. Les attributs restent pour que la place
+     soit réservée avant le chargement. */
+  height: auto;
+  /* Le ratio et le point de visée sont mesurés sur les PNG, pas devinés : la scène
+     (toit de la voiture → bas de la bande de sol) occupe la bande y ≈ 270-740 d'un
+     carré de 1024. 1024/470 ≈ 2,2 la cadre exactement, centrée à 49 %. */
+  aspect-ratio: 22 / 10;
+  object-fit: cover;
+  object-position: center 49%;
+}
+/* Le nom se pose SUR l'image, sur un voile : sans lui, un joueur qui ne connaît pas
+   encore les trois scènes ne sait pas laquelle il regarde. */
+/* Pastille et non bandeau dégradé : les trois scènes n'ont pas le même bas — la lave est
+   sombre, le clavier de Spam est gris clair — et un voile calibré sur l'une laissait le
+   nom illisible sur l'autre. Un fond opaque à lui tient sur les trois. */
+.mode-art figcaption {
+  position: absolute;
+  left: 0.6rem;
+  bottom: 0.6rem;
+  padding: 0.18rem 0.6rem;
+  border-radius: 0.3rem;
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.lobby-config {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  width: min(640px, 100%);
+}
+/* Sur le podium, le bandeau reste modeste : c'est le Gap qui doit dominer (ADR 0010), et
+   chaque pixel de hauteur ajouté là fait descendre l'échelle du fit sur TOUT l'écran. */
+.race > .mode-art {
+  width: min(360px, 100%);
+}
 .lobby-settings {
   width: min(640px, 100%);
   background: color-mix(in srgb, var(--panel) 55%, transparent);

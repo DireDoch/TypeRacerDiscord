@@ -548,7 +548,10 @@ export class Race {
                ${this.cardsHtml()}
                ${this.readyBtnHtml()}
              </div>
-             <div class="lobby-settings">${this.lobbyRows().map(lobbyRowHtml).join("")}</div>
+             <div class="lobby-config">
+               ${modeArtHtml(this.state.gameMode)}
+               <div class="lobby-settings">${this.lobbyRows().map(lobbyRowHtml).join("")}</div>
+             </div>
            </div>` +
           this.startBtnHtml() +
           this.exitBtnHtml()
@@ -577,6 +580,10 @@ export class Race {
         // ne l'ouvre pas, donc un podium de la même hauteur qu'avant.
         return (
           podiumHtml(this.podiumOptions()) +
+          // « À la fin de la partie, l'afficher quelque part » : le même bandeau, avec le
+          // mode qu'on vient de jouer. Il ferme le podium sur ce qui a été joué, et il ne
+          // dépend d'aucun téléversement dans le portail.
+          modeArtHtml(this.state.gameMode) +
           `<details class="lobby-reopen"${this.settingsOpen ? " open" : ""}>
              <summary>Réglages du salon</summary>
              <div class="lobby-settings">${this.lobbyRows().map(lobbyRowHtml).join("")}</div>
@@ -1184,6 +1191,30 @@ const LOBBY_TIPS = {
   spamTimeCap:
     "Temps maximum de la course. S'il s'écoule avant que quiconque ait atteint l'objectif, c'est celui qui a le plus de répétitions correctes qui gagne.",
 } as const;
+
+/**
+ * Le visuel du Mode de jeu, DANS l'app — le repli statique de la Rich Presence.
+ *
+ * Cette dernière ne s'affiche que dans Discord (liste des membres, profil), et seulement
+ * si les PNG de `design/out/` ont été téléversés dans le portail développeur : dans
+ * l'Activity elle-même, on ne voit rien. Ici l'image est servie depuis `public/modes/`,
+ * donc elle est là quoi qu'il arrive, hors Discord compris.
+ *
+ * En BANDEAU large, jamais en badge : l'issue #171 dit que ces visuels ne se distinguent
+ * pas à 96 px, et elle a raison — la scène est horizontale sur un carré presque vide en
+ * haut et en bas. Recadrée en 24:9 sur la voiture et le sol, c'est justement ce que
+ * l'image sait faire.
+ *
+ * `race.png` sert le Mode normal : c'est déjà la clé d'asset que la présence envoie pour
+ * lui (`discord.ts`), et un seul nom pour les deux emplois.
+ */
+export function modeArtHtml(gameMode: GameMode): string {
+  const key = gameMode === "floorIsLava" ? "floor-is-lava" : gameMode === "spam" ? "spam" : "race";
+  return `<figure class="mode-art">
+    <img src="/modes/${key}.png" alt="" width="1024" height="1024" />
+    <figcaption>${GAME_MODE_LABELS[gameMode]}</figcaption>
+  </figure>`;
+}
 
 /** Les Modes de jeu offerts (ADR 0015, 0016). Un seul à la fois : ils ne se cumulent pas. */
 const GAME_MODES: GameMode[] = ["normal", "floorIsLava", "spam"];
