@@ -41,7 +41,7 @@ import { podiumHtml, wirePodium, type PodiumOptions } from "./podium";
 import { runPlayOfTheGame } from "./potg";
 import { liveWpm } from "../live-stats";
 import { wordsHtml, placeCaret, escapeText } from "./typing-zone";
-import { avatarUrl, getIdentity, proxyBase, updateActivity } from "../discord";
+import { avatarUrl, getIdentity, proxyBase, updateActivity, type ActivityExtra } from "../discord";
 import {
   reduce,
   initialRaceState,
@@ -174,7 +174,8 @@ export class Race {
         // Duel à l'écran : on met à jour les données (join/leave du lobby d'après-course)
         // mais on NE re-render PAS — sinon on effacerait le Play of the Game en pleine lecture.
         if (this.potgStop) return;
-        if (prevPhase === "connecting" && this.state.phase === "lobby") updateActivity("lobby");
+        if (prevPhase === "connecting" && this.state.phase === "lobby")
+          updateActivity("lobby", activityExtra(this.state));
         this.render();
         break;
       // Jointure refusée : le socket reste ouvert côté serveur, mais la reprise se fait
@@ -216,7 +217,7 @@ export class Race {
         if (this.state.phase === "running") this.renderBars();
         break;
       case "RaceOver":
-        updateActivity("lobby"); // podium affiché, mais on est revenu dans la Room
+        updateActivity("lobby", activityExtra(this.state)); // podium affiché, mais on est revenu dans la Room
         cancelAnimationFrame(this.rafId);
         this.render();
         break;
@@ -269,7 +270,7 @@ export class Race {
   private beginRun(): void {
     this.countdown = null;
     this.state = { ...this.state, phase: "running" };
-    updateActivity(this.state.gameMode === "normal" ? "race" : this.state.gameMode);
+    updateActivity(this.state.gameMode === "normal" ? "race" : this.state.gameMode, activityExtra(this.state));
     this.doneLocal = false;
     this.log = [];
     this.lastLockedSent = 0; // revanche : sans ça, aucun Progress ne repartirait
@@ -1231,6 +1232,39 @@ export function currentCount(src: TextSource): number {
 /** Mention lue par les non-hôtes : ils subissent le réglage, ils doivent le voir. */
 export function sourceLabel(src: TextSource): string {
   return src.kind === "quote" ? "Citation" : `Mots (${src.count})`;
+}
+
+/**
+ * Traduit `RaceState` en `ActivityExtra` pour la Rich Presence. C'est ICI que vit la
+ * connaissance du domaine (Mode de jeu, Source de texte, plafond Spam) : `discord.ts`
+ * n'importe rien de `core/` et n'a pas à savoir ce qu'est un Spam.
+ *
+ * L'effectif est celui des PRÉSENTS, pas des partants figés au RaceStart : la question à
+ * laquelle une présence répond est « est-ce que je peux encore entrer ? », et un
+ * spectateur arrivé en pleine course occupe une place quand même.
+ *
+ * Pure — `now` est injecté plutôt que lu, sinon le rebours Spam ne serait pas testable.
+ */
+export function activityExtra(s: RaceState, now: number = Date.now()): ActivityExtra {
+  const party: [number, number] = [s.players.length, s.maxPlayers];
+  if (s.phase !== "running") return { party, state: "En attente" };
+  switch (s.gameMode) {
+    // Le seul Mode de jeu à plafond de temps, donc le seul à afficher un rebours. Il MENT
+    // quelques secondes si la course s'arrête au seuil AVANT le plafond : la transition
+    // suivante (RaceOver → lobby) le corrige, et c'est décoratif.
+    case "spam":
+      return {
+        party,
+        state: s.spamWord ? `« ${s.spamWord} »` : "Mode Spam",
+        endsAt: now + s.spamTimeCapS * 1000,
+      };
+    // Aucune fin prévisible : la lave tue à intervalle jusqu'au dernier vivant, et une
+    // course normale finit quand quelqu'un arrive. Chrono qui monte pour les deux.
+    case "floorIsLava":
+      return { party, state: "Survie" };
+    default:
+      return { party, state: sourceLabel(s.textSource) };
+  }
 }
 
 /**
