@@ -861,6 +861,28 @@ fn game_mode_tick(rooms: &Rooms, now: i64) {
     }
 }
 
+/// Vivant sous floor is lava = partant qui n'est ni sorti (`finishers`) ni déjà condamné
+/// (`burned`). Un abandon, un échec Master ou une déconnexion sortent donc des vivants sans
+/// règle supplémentaire — ils passent tous par `finishers`.
+///
+/// Lu par DEUX endroits, d'où l'extraction (#163) : le tic d'élimination, qui décide qui
+/// brûle, et `GameModeRules::finish_allowed`, qui reconnaît le dernier vivant — le seul
+/// partant non brûlé qu'un `Finish` légitime puisse avoir pour auteur.
+fn alive_racers(
+    racers: &[PlayerId],
+    finishers: &[RaceResult],
+    burned: &[(PlayerId, f64)],
+) -> Vec<PlayerId> {
+    racers
+        .iter()
+        .filter(|r| {
+            !finishers.iter().any(|f| f.player_id == **r)
+                && !burned.iter().any(|(id, _)| id == *r)
+        })
+        .cloned()
+        .collect()
+}
+
 /// Le tic d'élimination de floor is lava (ADR 0015) : brûle le partant le moins avancé,
 /// une fois par intervalle écoulé. Horloge injectée (`now`) pour rester testable sans
 /// attendre en vrai, comme `close_overlong_races`. Référencé depuis `game_mode::FLOOR_IS_LAVA`
@@ -886,17 +908,7 @@ fn lava_tick_room(room: &mut Room, now: i64) {
         let due = ((now - *start_at_epoch_ms) / interval_ms).max(0) as u32;
         while *lava_ticks < due {
             *lava_ticks += 1;
-            // Vivant = partant qui n'est ni sorti (`finishers`) ni déjà condamné.
-            // Un abandon, un échec Master ou une déconnexion sortent donc des vivants
-            // sans règle supplémentaire — ils passent tous par `finishers`.
-            let alive: Vec<PlayerId> = racers
-                .iter()
-                .filter(|r| {
-                    !finishers.iter().any(|f| f.player_id == **r)
-                        && !burned.iter().any(|(id, _)| id == *r)
-                })
-                .cloned()
-                .collect();
+            let alive = alive_racers(racers, finishers, burned);
             // « au plus un vivant » : plus rien à brûler. Zéro est atteignable — une
             // égalité entre les deux derniers les emporte tous les deux et la course
             // n'a pas de vainqueur (ADR 0015), un cas spécial de moins.
@@ -1196,7 +1208,7 @@ fn finish_race(
 ) -> bool {
     // Vérif préliminaire, bref verrou : évite le recompute (coûteux) pour un partant déjà
     // rejeté d'office. `record_finish` refait l'authoritative check plus bas, verrou séparé.
-    let (target_text, game_mode) = {
+    let (target_text, game_mode, allowed) = {
         let rooms = rooms.lock().unwrap();
         let Some(room) = rooms.get(key) else { return false };
         let eligible = match &room.state {
@@ -1209,8 +1221,22 @@ fn finish_race(
         if !eligible {
             return false;
         }
-        (room.target_text.clone(), room.game_mode)
+        // Lu SOUS CE VERROU, pas un deuxième : la garde interroge l'état de la Room
+        // (brûlés, arrêt du Spam) et il est déjà là, ouvert, pour l'éligibilité.
+        let allowed = rules(room.game_mode).finish_allowed(room, player_id);
+        (room.target_text.clone(), room.game_mode, allowed)
     };
+
+    // Un `Finish` que le Mode de jeu n'a jamais réclamé (issue #163) : sous Floor is lava
+    // et sous Spam, c'est le SERVEUR qui décide qu'un joueur a fini, et le client ne fait
+    // que livrer le log qu'on lui demande. Envoyé spontanément, il n'annonce rien — il
+    // sort son auteur de la course à l'instant de son choix. Enregistré comme un abandon,
+    // exactement comme la garde de #160 juste en dessous : ça débloque la fin pour les
+    // autres au lieu de laisser la Room pendue jusqu'au watchdog.
+    if !allowed {
+        eprintln!("Finish spontané ({player_id}, {game_mode:?}) : enregistré en abandon");
+        return forfeit_race(rooms, key, player_id);
+    }
 
     // Sous Spam le texte cible est INFINI (ADR 0016) : plutôt que de deviner une longueur
     // d'avance, le recompute reconstruit exactement ce qu'il faut de mot répété pour
@@ -3119,5 +3145,58 @@ mod tests {
         join(&rooms, "c1", "p1");
         close_overlong_races(&rooms, now_epoch_ms() + 100 * RACE_MAX_DURATION_MS);
         assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing()); // toujours Lobby, intact
+    }
+
+    // --- Qui a le droit d'envoyer un Finish (issue #163) ----------------------------
+    //
+    // La garde est interrogée sur le PRÉDICAT, pas à travers `finish_race` : celui-ci
+    // exige un `SqlitePool`, qu'aucun test de ce module n'a. Même niveau que la garde
+    // jumelle de #160, prouvée sur `covers_whole_target` (domain/replay.rs).
+
+    /// `finish_allowed` du mode de la Room, pour ce joueur.
+    fn finish_ok(rooms: &Rooms, key: &str, player_id: &str) -> bool {
+        let rooms = rooms.lock().unwrap();
+        let room = rooms.get(key).unwrap();
+        rules(room.game_mode).finish_allowed(room, player_id)
+    }
+
+    #[test]
+    fn sous_lava_seuls_un_brule_et_le_dernier_vivant_peuvent_finir() {
+        let rooms = new_rooms();
+        let go = lava_race(&rooms, &["p1", "p2", "p3"], 5, &[("p1", 50), ("p2", 10), ("p3", 30)]);
+
+        // Avant le premier tic : personne n'est brûlé, personne n'est seul.
+        for p in ["p1", "p2", "p3"] {
+            assert!(!finish_ok(&rooms, "c1", p), "{p} n'a rien à livrer avant la 1re élimination");
+        }
+
+        game_mode_tick(&rooms, go + 5_000); // p2 (le moins avancé) brûle
+        assert!(finish_ok(&rooms, "c1", "p2"), "brûlé : son log est réclamé");
+        assert!(!finish_ok(&rooms, "c1", "p1"), "encore vivant, et pas seul");
+        assert!(!finish_ok(&rooms, "c1", "p3"), "encore vivant, et pas seul");
+
+        game_mode_tick(&rooms, go + 10_000); // p3 brûle : p1 reste seul
+        assert!(finish_ok(&rooms, "c1", "p1"), "dernier vivant : il déduit sa victoire");
+    }
+
+    #[test]
+    fn sous_spam_aucun_finish_avant_larret() {
+        let rooms = new_rooms();
+        let go = spam_race(&rooms, &["p1", "p2"], 50, 30);
+        assert!(!finish_ok(&rooms, "c1", "p1"), "course en cours : rien n'est réclamé");
+
+        game_mode_tick(&rooms, go + 30_001); // plafond de temps atteint
+        assert!(stopped(&rooms, "c1"));
+        assert!(finish_ok(&rooms, "c1", "p1"), "arrêtée : tout le monde livre son log");
+        assert!(finish_ok(&rooms, "c1", "p2"));
+    }
+
+    #[test]
+    fn sous_normal_la_garde_ne_dit_jamais_non() {
+        // C'est `requires_full_text` (#160) qui garde l'arrivée sous Normal, pas celle-ci.
+        let rooms = new_rooms();
+        join(&rooms, "c1", "p1");
+        start_race(&rooms, "c1", "p1");
+        assert!(finish_ok(&rooms, "c1", "p1"));
     }
 }

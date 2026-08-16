@@ -28,7 +28,7 @@ use crate::domain::types::Keystroke;
 
 use super::protocol::{GameMode, RaceResult, TextSource};
 use super::{
-    refresh_spam_text, spam_text, spam_word_of, words_text, Room, LAVA_WORD_COUNT,
+    refresh_spam_text, spam_text, spam_word_of, words_text, RaceState, Room, LAVA_WORD_COUNT,
     ROOM_WORD_COUNT, SPAM_MAX_WORDS,
 };
 
@@ -46,6 +46,18 @@ pub struct GameModeRules {
     /// brûlé, ou stoppé par SpamStop). Sans cette garde, un `Finish` de trois caractères
     /// annoncés en 50 ms passait pour une arrivée à 800 wpm, premier du podium.
     pub requires_full_text: bool,
+    /// Ce `Finish` a-t-il le droit d'exister ? Question distincte de `requires_full_text`,
+    /// qui juge le LOG une fois recompté ; celle-ci juge l'AUTEUR, contre l'état de la Room,
+    /// avant tout recompute (issue #163).
+    ///
+    /// Sous les deux Modes de jeu, un `Finish` n'est pas censé venir du joueur : c'est le
+    /// serveur qui décide qu'il a fini (`PlayerBurned`, `SpamStop`) et le `Finish` ne fait
+    /// que livrer le log qu'on lui réclame. Sans cette garde, n'importe quel client envoyait
+    /// le sien quand il voulait et sortait de la course à l'instant de son choix.
+    ///
+    /// Toujours vrai sous Normal, où franchir la ligne est précisément l'affaire du joueur —
+    /// c'est `requires_full_text` qui y garde l'arrivée.
+    finish_allowed: fn(&Room, &str) -> bool,
     /// Un Run sous ce mode entre-t-il dans `runs` (historique, jamais PB) ? Faux pour
     /// Floor is lava et Spam (ADR 0015, 0016) : texte imposé, jamais « terminé » au sens
     /// normal, rien à comparer d'une manche à l'autre.
@@ -120,6 +132,9 @@ impl GameModeRules {
     pub fn score_extra(&self, target_text: &str, keystrokes: &[Keystroke]) -> (Option<u32>, u32) {
         (self.score_extra)(target_text, keystrokes)
     }
+    pub fn finish_allowed(&self, room: &Room, player_id: &str) -> bool {
+        (self.finish_allowed)(room, player_id)
+    }
     pub fn rank_cmp(&self, a: &RaceResult, b: &RaceResult) -> Ordering {
         (self.rank_cmp)(a, b)
     }
@@ -141,6 +156,7 @@ fn identity_target_text(target_text: &str, _keystrokes: &[Keystroke]) -> String 
 const NORMAL: GameModeRules = GameModeRules {
     min_players_to_start: 1,
     requires_full_text: true,
+    finish_allowed: |_room, _player_id| true,
     persists_run: true,
     accepts_spam_settings: false,
     pending_source: |room| Some(room.text_source),
@@ -167,6 +183,18 @@ const FLOOR_IS_LAVA: GameModeRules = GameModeRules {
     // ADR 0015 : seul, on est déjà le dernier vivant, la course serait finie à t=0.
     min_players_to_start: 2,
     requires_full_text: false,
+    // Brûlé : le serveur l'a arrêté, son log est réclamé. Dernier vivant : personne ne
+    // le lui dit, il le DÉDUIT de ce qu'il ne reste que lui (ADR 0015) — le serveur
+    // refait ici la même déduction plutôt que de le croire sur parole.
+    finish_allowed: |room, player_id| match &room.state {
+        RaceState::Racing { racers, finishers, burned, .. } => {
+            burned.iter().any(|(id, _)| id == player_id) || {
+                let alive = super::alive_racers(racers, finishers, burned);
+                alive.len() == 1 && alive[0] == player_id
+            }
+        }
+        RaceState::Lobby => false,
+    },
     persists_run: false,
     accepts_spam_settings: false,
     pending_source: |_room| Some(TextSource::Words { count: LAVA_WORD_COUNT }),
@@ -200,6 +228,12 @@ const SPAM: GameModeRules = GameModeRules {
     // d'élimination qui le viderait de sens à un seul joueur.
     min_players_to_start: 1,
     requires_full_text: false,
+    // `SpamStop` est diffusé à TOUT LE MONDE (ADR 0016) : avant lui, aucun log n'est
+    // réclamé de personne ; après, ils le sont tous. Un seul drapeau suffit donc, sans
+    // regarder qui envoie.
+    finish_allowed: |room, _player_id| {
+        matches!(&room.state, RaceState::Racing { spam_stopped: true, .. })
+    },
     persists_run: false,
     accepts_spam_settings: true,
     pending_source: |_room| None,
