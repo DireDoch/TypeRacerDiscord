@@ -322,7 +322,7 @@ pub async fn handle_socket(
             }
             Ok(ClientEvent::StartRace) => start_race(&rooms, &key, &player_id),
             Ok(ClientEvent::Progress { chars_done, reps }) => {
-                relay_progress(&rooms, &key, &player_id, chars_done, reps)
+                relay_progress(&rooms, &key, &player_id, chars_done, reps, now_epoch_ms())
             }
             Ok(ClientEvent::Finish { keystrokes, ended_at_ms }) => {
                 if finish_race(&rooms, &key, &player_id, keystrokes, ended_at_ms, &pool) {
@@ -819,6 +819,18 @@ const RACE_MAX_DURATION_MS: i64 = 10 * 60 * 1000;
 /// trente fois plus souvent.
 const WATCHDOG_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
+/// Le sursis accordé au log d'un joueur arrêté par le serveur, au-delà de l'instant d'arrêt
+/// lui-même (issue #164, ADR 0018). Il ne pardonne pas une triche, il paie un retard réel :
+/// sous Floor is lava l'instant retenu est le tic LOGIQUE alors que `PlayerBurned` part au
+/// scan du watchdog (jusqu'à `WATCHDOG_CHECK_INTERVAL` plus tard), et dans les deux modes il
+/// reste l'aller-retour réseau avant que le client ne s'arrête vraiment. Sans ce sursis, la
+/// troncature mangeait la dernière seconde de frappe HONNÊTE de chaque brûlé — l'inverse
+/// exact de ce que « tronquer plutôt que rejeter » avait décidé.
+///
+/// Il borne les FRAPPES retenues, jamais la durée : le dénominateur du WPM reste l'instant
+/// d'arrêt exact, donc ce sursis n'ouvre aucune fenêtre à gonfler.
+const STOP_GRACE_MS: f64 = 1500.0;
+
 /// Clôt les Rooms dont la course dépasse RACE_MAX_DURATION_MS. Horloge injectée (`now`)
 /// pour rester testable sans attendre 10 minutes en vrai (issue #24). Renvoie les clés
 /// des Rooms closes, pour que l'appelant y regénère le texte hors verrou.
@@ -964,8 +976,15 @@ fn stop_spam(room: &mut Room, now: i64) -> bool {
         RaceState::Racing { start_at_epoch_ms, spam_stopped_at_ms, .. }
             if spam_stopped_at_ms.is_none() =>
         {
-            // `max(0)` : un arrêt pendant le décompte (seuil atteint avant le GO, ou
-            // horloge qui recule) daterait sinon d'avant t=0, et bornerait tout log à zéro.
+            // `max(0)` : un arrêt AVANT le GO date de t=0, ce qui est exact — pendant le
+            // décompte personne n'a encore pu taper, donc borner les logs à zéro est la
+            // bonne réponse et pas une dégradation.
+            //
+            // ponytail: si l'horloge système reculait EN COURS de course, ce même `max(0)`
+            // rendrait 0 et mettrait toute la Room à 0 wpm. Plafond assumé : tout ce module
+            // suppose déjà `now_epoch_ms()` à peu près monotone (`lava_tick_room` raterait
+            // ses tics, `spam_tick_room` son plafond). Le durcir voudrait dire une horloge
+            // monotone (`Instant`) par Room, à faire pour tout le module ou pas du tout.
             *spam_stopped_at_ms = Some((now - *start_at_epoch_ms).max(0) as f64);
             true
         }
@@ -1038,7 +1057,11 @@ fn start_race(rooms: &Rooms, key: &str, player_id: &str) {
 }
 
 /// Relaie la progression d'un joueur aux autres (rendu des barres). Non autoritaire.
-fn relay_progress(rooms: &Rooms, key: &str, player_id: &str, chars_done: u32, reps: u32) {
+/// Horloge injectée (`now`), comme `lava_tick_room`/`spam_tick_room`/`close_overlong_races`
+/// : c'est ici que le seuil de Spam coupe la course, donc ici que naît l'instant d'arrêt qui
+/// borne ensuite tous les logs (#164). Le lire en interne rendait ce chemin — le principal
+/// des deux — impossible à asserter.
+fn relay_progress(rooms: &Rooms, key: &str, player_id: &str, chars_done: u32, reps: u32, now: i64) {
     let mut rooms = rooms.lock().unwrap();
     if let Some(room) = rooms.get_mut(key) {
         // Retenu pour le tic d'élimination (ADR 0015). Monotone : on ne garde que la
@@ -1081,10 +1104,8 @@ fn relay_progress(rooms: &Rooms, key: &str, player_id: &str, chars_done: u32, re
             RaceState::Lobby => false,
         };
         // `GameModeRules::on_progress` (#128) : no-op hors Spam, vérifie le seuil sous Spam.
-        // `now` suit la même convention que `tick` : l'arrêt qui peut en sortir doit être
-        // daté, c'est la borne des logs qui reviendront ensuite (#164).
         if is_racer {
-            rules(room.game_mode).on_progress(room, reps, now_epoch_ms());
+            rules(room.game_mode).on_progress(room, reps, now);
         }
     }
 }
@@ -1239,7 +1260,7 @@ fn finish_race(
         // interrogent l'état de la Room — brûlés, arrêt du Spam — et il est déjà là,
         // ouvert, pour l'éligibilité.
         let allowed = rules(room.game_mode).finish_allowed(room, player_id);
-        let stopped_at_ms = rules(room.game_mode).stopped_at_ms(room, player_id);
+        let stopped_at_ms = rules(room.game_mode).stopped_at_ms(room, player_id, now_epoch_ms());
         (room.target_text.clone(), room.game_mode, allowed, stopped_at_ms)
     };
 
@@ -1259,16 +1280,17 @@ fn finish_race(
     // un brûlé parfaitement légitime pouvait livrer 200 caractères parfaits horodatés sur
     // 2 s, faux WPM au podium et Play of the Game raflé (ADR 0011).
     //
-    // TRONQUÉ, pas rejeté : entre l'annonce (`PlayerBurned`, `SpamStop`) et l'arrêt effectif
-    // du client il y a un aller-retour réseau, une frappe en vol est donc la norme et pas
-    // une triche. La moitié qui ferme vraiment le trou est plus bas, `duration_override_ms`
-    // sur le recompute : le log gonflé de l'exemple est COMPRESSÉ, il tient tout entier sous
-    // la borne et survivrait à cette seule troncature.
+    // TRONQUÉ (au sursis près, `STOP_GRACE_MS`) et pas rejeté : entre l'annonce
+    // (`PlayerBurned`, `SpamStop`) et l'arrêt effectif du client il y a un aller-retour
+    // réseau, une frappe en vol est donc la norme et pas une triche. La moitié qui ferme
+    // vraiment le trou est plus bas, `duration_override_ms` sur le recompute : le log gonflé
+    // de l'exemple est COMPRESSÉ, il tient tout entier sous la borne et survivrait à cette
+    // seule troncature.
     //
     // `None` sous Normal, et c'est voulu : le joueur s'y arrête lui-même en franchissant la
     // ligne, aucun instant serveur à lui opposer — `requires_full_text` (#160) y suffit.
     if let Some(at) = stopped_at_ms {
-        keystrokes.retain(|k| k.t <= at);
+        keystrokes.retain(|k| k.t <= at + STOP_GRACE_MS);
     }
 
     // Sous Spam le texte cible est INFINI (ADR 0016) : plutôt que de deviner une longueur
@@ -1679,7 +1701,7 @@ mod tests {
         // créée) sont ignorés — pas de panique, pas de Room créée par effet de bord.
         let rooms = new_rooms();
         start_race(&rooms, "c1", "p1");
-        relay_progress(&rooms, "c1", "p1", 5, 0);
+        relay_progress(&rooms, "c1", "p1", 5, 0, now_epoch_ms());
         assert_eq!(record(&rooms, "c1", done("p1", 80.0)), FinishOutcome::Rejected);
         assert!(rooms.lock().unwrap().is_empty());
     }
@@ -2138,7 +2160,7 @@ mod tests {
         assert!(set_lava_interval(rooms, "c1", players[0], interval_s));
         start_race(rooms, "c1", players[0]);
         for (p, chars) in progress {
-            relay_progress(rooms, "c1", p, *chars, 0);
+            relay_progress(rooms, "c1", p, *chars, 0, now_epoch_ms());
         }
         match &rooms.lock().unwrap().get("c1").unwrap().state {
             RaceState::Racing { start_at_epoch_ms, .. } => *start_at_epoch_ms,
@@ -2164,7 +2186,7 @@ mod tests {
         assert!(burned_of(&rooms, "c1").is_empty(), "brûlé avant d'avoir pu taper");
 
         // Le premier tic tombe un intervalle APRÈS le GO, et n'emporte que le dernier.
-        relay_progress(&rooms, "c1", "p1", 42, 0);
+        relay_progress(&rooms, "c1", "p1", 42, 0, now_epoch_ms());
         game_mode_tick(&rooms, go + 5_000);
         assert_eq!(
             burned_of(&rooms, "c1").iter().map(|(id, _)| id.clone()).collect::<Vec<_>>(),
@@ -2263,7 +2285,7 @@ mod tests {
         // et le tuerait pour un artefact d'ordonnancement.
         let rooms = new_rooms();
         let t0 = lava_race(&rooms, &["p1", "p2"], 10, &[("p1", 10), ("p2", 50)]);
-        relay_progress(&rooms, "c1", "p2", 5, 0); // paquet en retard
+        relay_progress(&rooms, "c1", "p2", 5, 0, now_epoch_ms()); // paquet en retard
         game_mode_tick(&rooms, t0 + 10_000);
         assert_eq!(burned_of(&rooms, "c1")[0].0, "p1");
     }
@@ -2493,14 +2515,18 @@ mod tests {
     #[test]
     fn atteindre_le_seuil_arrete_la_course_tout_de_suite() {
         let rooms = new_rooms();
-        spam_race(&rooms, &["p1", "p2"], 10, 60);
+        let t0 = spam_race(&rooms, &["p1", "p2"], 10, 60);
         let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
 
-        relay_progress(&rooms, "c1", "p1", 27, 9); // encore une
+        relay_progress(&rooms, "c1", "p1", 27, 9, t0 + 7_000); // encore une
         assert!(!stopped(&rooms, "c1"));
-        relay_progress(&rooms, "c1", "p1", 30, 10); // seuil atteint
+        relay_progress(&rooms, "c1", "p1", 30, 10, t0 + 8_000); // seuil atteint
         assert!(stopped(&rooms, "c1"));
         assert_eq!(stops_seen(&mut rx), 1);
+        // L'arrêt par le SEUIL est daté comme celui par le plafond : c'est cet instant qui
+        // borne ensuite le log de chacun (#164), et c'est le chemin principal des deux.
+        assert_eq!(stop_ms(&rooms, "c1", "p1"), Some(8_000.0));
+        assert_eq!(stop_ms(&rooms, "c1", "p2"), Some(8_000.0));
     }
 
     #[test]
@@ -2508,12 +2534,12 @@ mod tests {
         // Un rejoignant en cours de course entre dans `players` mais jamais dans `racers`.
         // Sans le filtre, un seul `Progress` gonflé suffirait à clore la manche des autres.
         let rooms = new_rooms();
-        spam_race(&rooms, &["p1"], 10, 60);
+        let t0 = spam_race(&rooms, &["p1"], 10, 60);
         join(&rooms, "c1", "intrus");
-        relay_progress(&rooms, "c1", "intrus", 9_999, 9_999);
+        relay_progress(&rooms, "c1", "intrus", 9_999, 9_999, t0 + 5_000);
         assert!(!stopped(&rooms, "c1"));
         // Le vrai partant, lui, arrête bien la course.
-        relay_progress(&rooms, "c1", "p1", 30, 10);
+        relay_progress(&rooms, "c1", "p1", 30, 10, t0 + 6_000);
         assert!(stopped(&rooms, "c1"));
     }
 
@@ -2527,7 +2553,7 @@ mod tests {
         game_mode_tick(&rooms, t0 + 15_000);
         game_mode_tick(&rooms, t0 + 16_000);
         game_mode_tick(&rooms, t0 + 17_000);
-        relay_progress(&rooms, "c1", "p1", 90, 30); // et le seuil par-dessus
+        relay_progress(&rooms, "c1", "p1", 90, 30, t0 + 17_000); // et le seuil par-dessus
         assert_eq!(stops_seen(&mut rx), 1);
     }
 
@@ -3235,32 +3261,63 @@ mod tests {
     // plomberie (`retain` sur le log, `duration_override_ms` au recompute, prouvé côté
     // `domain/replay.rs`) ; ce qui se trompe, c'est l'instant.
 
-    /// L'instant d'arrêt serveur du mode de la Room, pour ce joueur.
-    fn stop_ms(rooms: &Rooms, key: &str, player_id: &str) -> Option<f64> {
+    /// L'instant d'arrêt serveur du mode de la Room, pour ce joueur, à l'horloge `now`.
+    fn stop_ms_at(rooms: &Rooms, key: &str, player_id: &str, now: i64) -> Option<f64> {
         let rooms = rooms.lock().unwrap();
         let room = rooms.get(key).unwrap();
-        rules(room.game_mode).stopped_at_ms(room, player_id)
+        rules(room.game_mode).stopped_at_ms(room, player_id, now)
+    }
+
+    /// Idem, à l'horloge réelle — pour les modes dont la réponse n'en dépend pas.
+    fn stop_ms(rooms: &Rooms, key: &str, player_id: &str) -> Option<f64> {
+        stop_ms_at(rooms, key, player_id, now_epoch_ms())
     }
 
     #[test]
-    fn sous_lava_chacun_est_borne_a_sa_flamme_et_le_survivant_a_la_derniere() {
+    fn sous_lava_un_brule_est_borne_a_sa_flamme_et_le_survivant_a_maintenant() {
         let rooms = new_rooms();
         let go = lava_race(&rooms, &["p1", "p2", "p3"], 5, &[("p1", 50), ("p2", 10), ("p3", 30)]);
 
-        // Avant la première élimination, rien n'est encore arrêté : personne à borner.
-        assert_eq!(stop_ms(&rooms, "c1", "p1"), None);
-
         game_mode_tick(&rooms, go + 5_000); // p2 brûle
-        assert_eq!(stop_ms(&rooms, "c1", "p2"), Some(5_000.0), "brûlé : sa propre flamme");
+        assert_eq!(stop_ms_at(&rooms, "c1", "p2", go + 9_000), Some(5_000.0), "sa flamme");
 
         game_mode_tick(&rooms, go + 10_000); // p3 brûle, p1 reste seul
-        assert_eq!(stop_ms(&rooms, "c1", "p3"), Some(10_000.0));
-        assert_eq!(stop_ms(&rooms, "c1", "p2"), Some(5_000.0), "un brûlé garde SA flamme");
+        assert_eq!(stop_ms_at(&rooms, "c1", "p3", go + 12_000), Some(10_000.0));
         assert_eq!(
-            stop_ms(&rooms, "c1", "p1"),
-            Some(10_000.0),
-            "le survivant s'arrête au décès qui l'a laissé seul, pas à ce qu'il déclare"
+            stop_ms_at(&rooms, "c1", "p2", go + 12_000),
+            Some(5_000.0),
+            "un brûlé garde SA flamme, jamais la dernière de la liste"
         );
+        assert_eq!(
+            stop_ms_at(&rooms, "c1", "p1", go + 10_200),
+            Some(10_200.0),
+            "le survivant est borné à maintenant, pas à ce qu'il déclare"
+        );
+    }
+
+    #[test]
+    fn sous_lava_le_survivant_reste_borne_meme_sans_aucune_flamme() {
+        // La régression qui rouvrait #164 EN ENTIER : `alive_racers` sort aussi les
+        // abandons, les échecs Master et les déconnexions, qui ne passent JAMAIS par
+        // `burned`. Un survivant par forfait laissait donc la liste des brûlés vide — et une
+        // borne lue dessus valait `None`, c'est-à-dire aucune borne, pour le joueur que le
+        // classement de lava met en TÊTE (non brûlé devant brûlé).
+        let rooms = new_rooms();
+        let go = lava_race(&rooms, &["p1", "p2"], 20, &[("p1", 50), ("p2", 10)]);
+        forfeit_race(&rooms, "c1", "p2"); // aucun tic n'a eu lieu : `burned` est vide
+        assert!(finish_ok(&rooms, "c1", "p1"), "dernier vivant par forfait, pas par flamme");
+        assert_eq!(stop_ms_at(&rooms, "c1", "p1", go + 3_000), Some(3_000.0));
+    }
+
+    #[test]
+    fn sous_lava_un_abandon_tardif_ne_recule_pas_la_borne_du_survivant() {
+        // L'autre moitié du même piège : une flamme ANCIENNE suivie d'un abandon tardif.
+        // Borner le survivant à la dernière flamme jetterait ici 70 s de frappe honnête.
+        let rooms = new_rooms();
+        let go = lava_race(&rooms, &["p1", "p2", "p3"], 20, &[("p1", 90), ("p2", 10), ("p3", 50)]);
+        game_mode_tick(&rooms, go + 20_000); // p2 brûle
+        forfeit_race(&rooms, "c1", "p3"); // p3 abandonne bien plus tard
+        assert_eq!(stop_ms_at(&rooms, "c1", "p1", go + 90_000), Some(90_000.0));
     }
 
     #[test]

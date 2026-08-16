@@ -19,16 +19,47 @@ volée — d'où le report hors de #163, pas l'abandon.
 
 C'est toute la différence avec Normal, et c'est ce qui rend la borne possible :
 
-- **Floor is lava** — `burned_at_ms`, déjà retenu dans `RaceState::Racing { burned }`. Le
-  dernier vivant, lui, n'a pas brûlé : ce qui l'arrête est le décès qui l'a laissé seul,
-  donc le **dernier** instant de la liste. Sans ça il serait le seul non borné du mode, et
-  c'est précisément son WPM que le podium met en tête.
+- **Floor is lava** — pour un brûlé, `burned_at_ms`, déjà retenu dans `RaceState::Racing
+  { burned }`. Pour le dernier vivant, **`now`** (voir juste en dessous).
 - **Spam** — l'instant du `SpamStop`, le même pour tout le monde. `spam_stopped` était un
   simple booléen ; il devient `spam_stopped_at_ms: Option<f64>`. Le drapeau et l'instant
   sont la même information, un champ suffit donc toujours.
 - **Normal** — `None`, et c'est voulu : le joueur s'y arrête lui-même en franchissant la
   ligne, il n'y a aucun instant serveur à lui opposer. C'est `requires_full_text` qui y
   garde l'arrivée.
+
+Sous un Mode de jeu la réponse est donc **toujours `Some` en course**. Un seul trou et
+l'exploit se rouvre en entier, comme on l'a vérifié à la revue.
+
+### Le dernier vivant se borne à `now`, pas à la dernière flamme
+
+Première version, et fausse : borner le survivant au dernier instant de `burned`. `CONTEXT`
+et `alive_racers` disent pourtant l'inverse — un **abandon**, un **échec Master** et une
+**déconnexion** sortent aussi des vivants, et ces sorties-là ne sont pas datées. D'où deux
+trous, l'un pour chaque sens :
+
+- `burned` **vide** (le dernier adversaire a abandonné avant qu'aucun tic ne tombe) : la
+  borne valait `None`, donc *aucune* borne, pour le joueur que le classement de lava met en
+  **tête** — l'exploit d'origine, intact, sur le résultat le plus visible du podium.
+- `burned` **périmé** (une flamme ancienne, puis un abandon tardif) : le survivant se voyait
+  tronqué à la flamme, jetant des dizaines de secondes de frappe parfaitement honnête.
+
+On ne devine donc pas : la borne du survivant est l'**instant présent**. Majorant sûr — on
+ne tape pas dans le futur —, il ne jette jamais rien de légitime, et il n'ouvre rien :
+traîner avant d'envoyer son `Finish` ne fait qu'agrandir son propre dénominateur, donc
+baisser son propre WPM.
+
+### Un sursis sur la troncature, pas sur la durée
+
+`STOP_GRACE_MS` (1,5 s). Sous Floor is lava, l'instant retenu est le tic **logique**
+(`n × intervalle`) alors que `PlayerBurned` part au scan du watchdog, jusqu'à
+`WATCHDOG_CHECK_INTERVAL` plus tard ; dans les deux modes il reste l'aller-retour réseau
+avant que le client ne s'arrête vraiment. Sans sursis, la troncature mangeait la dernière
+seconde de frappe **honnête** de chaque brûlé — l'inverse exact de ce que « tronquer plutôt
+que rejeter » venait de décider.
+
+Il borne les frappes retenues, **jamais la durée** : le dénominateur reste l'instant d'arrêt
+exact, donc le sursis n'ouvre aucune fenêtre à gonfler.
 
 La question vit dans la table de règles du seam (`GameModeRules::stopped_at_ms`, ADR 0017),
 à côté de `finish_allowed` : un quatrième Mode de jeu en hérite en déclarant son bloc.
