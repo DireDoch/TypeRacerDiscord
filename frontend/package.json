@@ -19,7 +19,6 @@
     "vitest": "^3.2.7"
   },
   "dependencies": {
-    "@discord/embedded-app-sdk": "^2.5.0",
-    "chart.js": "^4.4.0"
+    "@discord/embedded-app-sdk": "^2.5.0"
   }
 }

@@ -15,7 +15,7 @@
 
 import type { GameMode, PlayerEntry, RaceResult } from "../core/net";
 import { avatarUrl } from "../discord";
-import { drawChart } from "./results";
+import { drawChart } from "./chart";
 import { escapeText } from "./typing-zone";
 
 /** Places dessinées sur des marches ; au-delà, la liste latérale. */
@@ -210,8 +210,8 @@ export function wirePodium(root: HTMLElement, o: PodiumOptions): void {
         return;
       }
       detail.innerHTML = `<p class="hint">${escapeText(nameOf(o, id))}</p>
-        <div class="chart-wrap"><canvas id="podiumChart"></canvas></div>`;
-      drawChart(detail.querySelector<HTMLCanvasElement>("#podiumChart")!, r.perSecond);
+        <div class="chart-wrap" id="podiumChart"></div>`;
+      drawChart(detail.querySelector<HTMLElement>("#podiumChart")!, r.perSecond);
     });
   });
 }
