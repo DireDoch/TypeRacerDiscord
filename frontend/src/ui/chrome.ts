@@ -10,6 +10,8 @@
 
 import { avatarUrl, getIdentity } from "../discord";
 import { escapeText } from "./typing-zone";
+import { generateWithRng } from "../core/text-gen";
+import { Rng } from "../core/text-gen/rng";
 
 /**
  * Sous ce facteur, le texte à taper n'est plus lisible : on ne réduit jamais au-delà.
@@ -94,15 +96,88 @@ export function fitToViewport(app: HTMLElement, screen: HTMLElement): void {
  * Badge « c'est vous » (#92) : avatar + pseudo, monté une seule fois sur `<body>`,
  * donc hors du `zoom` de `#app` et hors de tout re-render d'écran. Il ne remplace pas
  * l'avatar mobile de la piste — ce sont deux éléments sans rapport.
+ *
+ * Le badge est posé VIDE et TOUT DE SUITE (#181), puis rempli quand le handshake
+ * Discord répond. C'est le contraire d'un écran d'attente bloquant : `CONTEXT.md` acte
+ * que le handshake est « amorcé tôt, non bloquant », et suspendre le jeu sur un
+ * aller-retour réseau qui peut échouer donnerait un écran noir au lieu d'un menu
+ * utilisable. Ce qui gênait n'était pas l'attente, c'était le SAUT — le badge
+ * apparaissait après le menu et poussait la mise en page. En réservant sa place dès la
+ * première frame, plus rien ne bouge : seul le contenu se précise.
+ *
+ * Cliquer le badge mène à l'Historique (#183), qui porte déjà l'onglet « mes
+ * faiblesses ». Il n'existe pas d'écran Profil, et `CONTEXT.md` bannit le terme sur
+ * l'entrée **Player** (`_Avoid_: Profile`).
  */
-export async function mountIdentityBadge(): Promise<void> {
-  const id = await getIdentity();
-  const el = document.createElement("div");
+export async function mountIdentityBadge(onOpen?: () => void): Promise<void> {
+  const el = document.createElement(onOpen ? "button" : "div");
   el.className = "id-badge";
+  // Squelette aux dimensions finales : la pastille et la largeur du nom sont posées
+  // avant de savoir QUI on est, donc l'arrivée de l'identité ne décale rien.
+  el.innerHTML = `<span class="id-avatar"></span><span class="id-name"></span>`;
+  if (onOpen) {
+    (el as HTMLButtonElement).type = "button";
+    el.setAttribute("aria-label", "Voir mon historique");
+    el.addEventListener("click", onOpen);
+  }
+  document.body.appendChild(el);
+
+  const id = await getIdentity();
   // Même repli que la piste : l'initiale est DERRIÈRE l'image, visible d'elle-même si
   // le CDN ne répond pas. Aucun `onerror`.
   el.innerHTML = `<span class="id-avatar">${escapeText([...id.displayName][0]?.toUpperCase() ?? "?")}<img
       src="${escapeText(avatarUrl(id.playerId, id.avatarHash))}" alt=""></span>
     <span class="id-name">${escapeText(id.displayName)}</span>`;
-  document.body.appendChild(el);
+}
+
+/** Rangées du champ de mots, et mots par rangée avant la couture. */
+const WORDFIELD_ROWS = 7;
+const WORDFIELD_WORDS = 30;
+
+/**
+ * Le champ de mots (#175) — la signature visuelle du Menu.
+ *
+ * Le fond n'est pas un décor abstrait : c'est une COURSE FANTÔME. Sept rangées de vrais
+ * mots de la word-list, tirées par le même générateur seedé que le jeu, chacune traversée
+ * par une tête de frappe corail qui avance à sa propre vitesse — la grammaire à deux états
+ * de la zone de frappe (tapé / à venir), qui tourne en boucle derrière le menu. Un champ
+ * de particules aurait pu aller sur n'importe quel produit ; celui-ci est fait de la
+ * matière même du jeu.
+ *
+ * Trois contraintes ont dicté la forme :
+ *
+ * 1. **Hors de `#screen`.** `fitToViewport` observe `#screen` et y écrit `zoom` ; le
+ *    fichier documente que si l'arête de rétroaction se refermait, le symptôme serait un
+ *    relayout forcé PAR FRAME. Le champ vit donc sur `<body>`, en `fixed`, comme le badge.
+ * 2. **Zéro JS d'animation.** Pas de canvas, pas de rAF : deux propriétés animées en CSS
+ *    (`transform` pour la dérive, `background-position` pour la tête de frappe), toutes
+ *    deux composables par le GPU.
+ * 3. **Le Menu seulement.** Derrière une zone de frappe, des mots qui bougent seraient du
+ *    bruit sur la seule chose que le joueur doit lire. Le CSS le masque partout ailleurs.
+ *
+ * Seed fixe : le champ est identique à chaque lancement. C'est un décor, il n'a aucune
+ * raison de surprendre — et un seed fixe le rend reproductible en capture d'écran.
+ */
+export function mountWordField(): void {
+  const rng = new Rng(0x7ace_b00c);
+  const field = document.createElement("div");
+  field.className = "wordfield";
+  field.setAttribute("aria-hidden", "true"); // décor : jamais annoncé, jamais atteignable
+  for (let i = 0; i < WORDFIELD_ROWS; i++) {
+    const row = document.createElement("div");
+    row.className = "wordfield-row";
+    // Le texte est écrit DEUX FOIS : la dérive se fait sur -50 % de la largeur, donc la
+    // seconde copie a exactement pris la place de la première quand la boucle reboucle.
+    // Sans ça, la rangée laisserait un trou visible à chaque tour.
+    const words = generateWithRng({ punctuation: false, numbers: false }, WORDFIELD_WORDS, rng).join(" ");
+    row.textContent = `${words} ${words} `;
+    // Vitesses volontairement premières entre elles : les rangées ne se resynchronisent
+    // jamais, donc l'œil ne trouve pas la boucle. C'est ce qui fait « plusieurs joueurs »
+    // plutôt que « une texture qui défile ».
+    row.style.setProperty("--wf-drift", `${67 + i * 13}s`);
+    row.style.setProperty("--wf-sweep", `${7 + i * 2.3}s`);
+    row.style.setProperty("--wf-delay", `${i * -3.7}s`);
+    field.appendChild(row);
+  }
+  document.body.appendChild(field);
 }

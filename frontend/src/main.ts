@@ -16,7 +16,7 @@ import { History } from "./ui/history";
 import { Learn } from "./ui/learn";
 import { Settings } from "./ui/settings";
 import { applyPreferences } from "./core/preferences";
-import { fitToViewport, mountIdentityBadge } from "./ui/chrome";
+import { fitToViewport, mountIdentityBadge, mountWordField } from "./ui/chrome";
 import { getAuthToken, updateActivity } from "./discord";
 
 // --- Bandeau d'erreurs (debug in-iframe) -------------------------------------
@@ -71,7 +71,13 @@ const root: HTMLElement = rootEl;
 const app: HTMLElement = appEl;
 
 fitToViewport(app, root);
-void mountIdentityBadge().catch((e) => showError(`Badge d'identité : ${describeError(e)}`));
+mountWordField(); // décor du Menu (#175) : posé une fois, sur <body>, hors de #screen
+// Le badge se pose VIDE tout de suite et se remplit quand Discord répond (#181) : sa
+// place est réservée dès la première frame, donc plus rien ne saute. Le clic mène à
+// l'Historique (#183) — il n'existe pas d'écran Profil, et le glossaire bannit le terme.
+void mountIdentityBadge(() => showHistory()).catch((e) =>
+  showError(`Badge d'identité : ${describeError(e)}`),
+);
 
 let screen: { destroy(): void } | null = null;
 

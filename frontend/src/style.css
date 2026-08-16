@@ -107,7 +107,10 @@ body {
 .config {
   display: flex;
   flex-wrap: wrap;
-  gap: 1.5rem;
+  /* Resserré depuis #180 : trois axes plus leurs icônes « i » coûtent plus large que
+     les quatre groupes nus d'avant, et la barre passait à la ligne sur un écran normal. */
+  gap: 1.1rem;
+  align-items: center;
   justify-content: center;
   background: var(--panel);
   border-radius: 0.6rem;
@@ -121,14 +124,29 @@ body {
 .config .axis {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.5rem;
 }
-.config .axis + .axis::before {
-  content: "|";
-  color: color-mix(in srgb, var(--sub) 45%, transparent);
-  /* Le séparateur appartient au vide entre deux axes, pas à l'axe qui le porte :
-     la marge négative le recentre dans le `gap` de `.config`. */
-  margin-left: calc(-0.75rem - 0.5em);
+/* Une règle portée par l'axe, et non un glyphe « | » posé en `::before` : le glyphe
+   était un enfant de plus dans un conteneur qui passe à la ligne, et il se retrouvait
+   orphelin en tête de ligne suivante, séparant un axe de rien du tout. Une bordure
+   reste toujours collée au bloc qu'elle borde. */
+.config .axis + .axis {
+  border-left: 1px solid color-mix(in srgb, var(--sub) 32%, transparent);
+  padding-left: 1.1rem;
+}
+/* Le Mode et ses six boutons ne laissent jamais la place à un troisième axe sur la même
+   ligne : la Difficulté passe donc à la ligne DE TOUTE FAÇON. Autant l'assumer — elle
+   prend sa propre rangée, et la règle verticale disparaît avec elle. Une bordure gauche
+   en tête de ligne, sans rien à sa gauche, est le genre de détail qui trahit une mise en
+   page subie. Le retour à la ligne sépare déjà les deux axes ; il n'a besoin de rien. */
+/* Double classe : à spécificité égale avec `.config .axis + .axis`, c'est l'ordre source
+   qui tranche — et un sélecteur plus faible laissait la bordure gauche s'appliquer quand
+   même, en petit tiret orphelin au bord de la seconde ligne. */
+.config .axis.axis-own-row {
+  flex-basis: 100%;
+  justify-content: center;
+  border-left: none;
+  padding-left: 0;
 }
 .config .group {
   display: flex;
@@ -1586,7 +1604,12 @@ button.back-btn:focus-visible {
 
 /* Badge d'identité (#92). Monté sur <body> par ui/chrome.ts : il survit à toute
    navigation sans être redessiné, et le `zoom` de mise à l'échelle de #app ne
-   l'atteint pas — même taille sur tous les écrans, quelle que soit la densité. */
+   l'atteint pas — même taille sur tous les écrans, quelle que soit la densité.
+
+   Il est devenu CLIQUABLE (#183) : il mène à l'Historique, qui porte déjà l'onglet
+   « mes faiblesses ». D'où la disparition du `pointer-events: none` d'origine — le
+   badge n'est plus un simple repère, c'est la porte d'entrée vers ce que le jeu sait
+   du joueur. */
 .id-badge {
   position: fixed;
   top: 1.1rem;
@@ -1600,7 +1623,21 @@ button.back-btn:focus-visible {
   border: 1px solid color-mix(in srgb, var(--sub) 22%, transparent);
   border-radius: 2rem;
   backdrop-filter: blur(6px);
-  pointer-events: none; /* repère, pas commande : il ne vole jamais un clic */
+  font-family: var(--font-ui);
+  cursor: pointer;
+  /* Aucune transition de géométrie : comme le bouton de retour (#179), le survol ne
+     déplace jamais une cible que l'on est en train de viser. */
+  transition:
+    border-color 0.14s,
+    background-color 0.14s;
+}
+button.id-badge:hover {
+  border-color: color-mix(in srgb, var(--main) 60%, transparent);
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+}
+button.id-badge:focus-visible {
+  outline: 2px solid var(--main);
+  outline-offset: 2px;
 }
 .id-avatar {
   position: relative;
@@ -1624,6 +1661,9 @@ button.back-btn:focus-visible {
   object-fit: cover;
 }
 .id-name {
+  /* Le squelette réserve sa place avant que l'identité arrive (#181) : le badge est
+     dessiné à sa taille finale dès la première frame, seul son contenu se précise. */
+  min-width: 5.5rem;
   max-width: 11rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1636,6 +1676,128 @@ button.back-btn:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   button.back-btn {
     transition: none;
+  }
+}
+
+/* =============================================================================
+   Champ de mots (#175) — la signature du Menu.
+
+   Une COURSE FANTÔME : sept rangées de vrais mots du jeu, chacune traversée par une
+   tête de frappe corail à sa propre vitesse. C'est la grammaire à deux états de la
+   zone de frappe — ce qui est tapé, ce qui reste à taper — qui tourne en boucle
+   derrière le menu. Le fond est fait de la matière du jeu, pas d'un effet posé dessus.
+
+   Deux propriétés animées, toutes deux composables par le GPU : `transform` pour la
+   dérive horizontale, `background-position` pour la tête de frappe. Aucun canvas,
+   aucun rAF, aucun JS après le montage.
+   ============================================================================= */
+.wordfield {
+  /* Les trois teintes du champ, dérivées des tokens du :root — aucune couleur neuve.
+     `--wf-cold` est le mot pas encore atteint, `--wf-hot` la tête de frappe, `--wf-warm`
+     sa traîne. C'est la grammaire de la zone de frappe, transposée en décor. */
+  --wf-cold: color-mix(in srgb, var(--sub) 20%, transparent);
+  --wf-warm: color-mix(in srgb, var(--main) 40%, transparent);
+  --wf-hot: color-mix(in srgb, var(--main) 78%, transparent);
+  position: fixed;
+  inset: 0;
+  /* Négatif : le champ passe derrière tout le contenu en flux (#app n'est pas
+     positionné, il gagnerait sinon) mais reste devant le fond de page. */
+  z-index: -1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2.2vh;
+  pointer-events: none; /* décor : il ne vole jamais un clic */
+  /* Masqué par défaut, révélé sur le seul écran Menu (règle plus bas). Derrière une
+     zone de frappe, des mots qui bougent seraient du bruit sur exactement ce que le
+     joueur doit lire. */
+  opacity: 0;
+  transition: opacity 0.5s ease;
+  /* La CLAIRIÈRE. Sans elle, les boutons du menu se posaient à même les mots et les
+     deux se disputaient le regard. Le champ se dissout au centre : la colonne de
+     boutons tombe dans un vide, et les mots deviennent un cadre au lieu d'un fond.
+     C'est ce masque qui autorise une opacité plus franche sur les bords — le décor
+     gagne en présence là où il ne gêne personne. */
+  mask-image: radial-gradient(ellipse 34% 46% at 50% 52%, transparent 30%, black 100%);
+  -webkit-mask-image: radial-gradient(ellipse 34% 46% at 50% 52%, transparent 30%, black 100%);
+}
+.wordfield-row {
+  flex: none;
+  width: max-content;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  /* Assez petit pour se lire comme une TEXTURE et non comme du contenu : à 2,6 rem les
+     mots se lisaient vraiment, et l'œil quittait le menu pour aller les déchiffrer. */
+  font-size: 1.65rem;
+  line-height: 1.25;
+  /* La tête de frappe : une bande corail étroite qui glisse sur un fond de mots
+     éteints. `background-clip: text` la découpe dans les glyphes eux-mêmes, ce qui
+     produit la frontière tapé/à-venir — impossible à obtenir avec un simple survol
+     de calque. `color: transparent` est ce qui laisse voir le dégradé au travers. */
+  /* L'alpha vit DANS le dégradé, pas dans une `opacity` de conteneur : sinon les mots
+     éteints et la tête de frappe sont atténués du même facteur, et la tête — qui est
+     toute la signature — se noie dans la texture qu'elle est censée traverser. Ici les
+     deux se dosent séparément : mots à 20 %, tête à 75 %. */
+  background-image: linear-gradient(
+    100deg,
+    var(--wf-cold) 0%,
+    var(--wf-cold) 36%,
+    var(--wf-warm) 44%,
+    var(--wf-hot) 50%,
+    var(--wf-warm) 56%,
+    var(--wf-cold) 64%,
+    var(--wf-cold) 100%
+  );
+  /* Tuile en PIXELS, pas en pourcentage. Une rangée fait plusieurs milliers de pixels
+     de large ; un dégradé dimensionné sur elle (`220%`) produisait une bande corail
+     immense qui passait presque tout son temps hors de la fenêtre — la tête de frappe
+     était invisible. Une tuile d'environ une largeur d'écran se répète le long de la
+     rangée : il y a toujours une tête en vue, et plusieurs par rangée se lisent comme
+     plusieurs joueurs sur la même ligne. */
+  background-size: 1200px 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation:
+    wf-drift var(--wf-drift, 80s) linear infinite,
+    wf-sweep var(--wf-sweep, 9s) linear infinite;
+  animation-delay: var(--wf-delay, 0s), var(--wf-delay, 0s);
+}
+/* -50 % : la rangée porte son texte en double, donc la seconde copie arrive
+   exactement là où était la première — la boucle ne laisse aucun trou. */
+@keyframes wf-drift {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+/* Exactement une tuile : la boucle est sans couture, la tête ne saute jamais. */
+@keyframes wf-sweep {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: -1200px 0;
+  }
+}
+
+/* Le champ n'existe que sur le Menu. `:has()` plutôt qu'un drapeau passé par main.ts :
+   une règle contre six points d'appel. Le pari est tenable — une Activity Discord est
+   un Chromium, où `:has()` a débarqué en 105 — et il se dégrade en « le fond reste
+   discrètement visible », jamais en écran cassé. */
+body:has(.menu) .wordfield {
+  opacity: 1;
+}
+
+/* L'écran fixe demandé explicitement par l'issue : « cela peut être statique ». La
+   composition reste entière, seul le mouvement s'arrête. */
+@media (prefers-reduced-motion: reduce) {
+  .wordfield-row {
+    animation: none;
+    background-position: 40% 0;
   }
 }
 
