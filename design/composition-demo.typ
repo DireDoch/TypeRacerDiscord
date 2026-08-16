@@ -13,6 +13,10 @@
 
 #set page(width: 1024pt, height: 1536pt, margin: 0pt, fill: nuit)
 #set text(fill: sourd, size: 30pt)
+// Trois bandes de 512 pt sur une page de 1536 pt : l'espacement par défaut
+// entre blocs (1.2 em) suffit à pousser la troisième sur une deuxième page, et
+// Typst refuse alors d'exporter vers un chemin PNG sans `{p}`.
+#set block(spacing: 0pt)
 
 // `length` est identique pour les trois bandes : c'est la condition pour que la
 // comparaison veuille dire quelque chose. Une échelle par bande masquerait
