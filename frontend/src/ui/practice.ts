@@ -400,7 +400,7 @@ export class Practice {
     // et son bouton « ← résultats » re-rend cet écran-ci.
     const showResults = (): void => {
       this.stopReplay = null;
-      renderResults(this.root, res, () => void this.reset(), attribution, () => {
+      renderResults(this.endScreenSlot(), res, () => void this.reset(), attribution, () => {
         this.stopReplay = runReplay(this.root, {
           targetWords: this.targetWords,
           log: this.log,
@@ -510,15 +510,45 @@ export class Practice {
       kind === "auth"
         ? "Session Discord expirée — reviens depuis le menu Discord puis réessaie."
         : "Envoi impossible (backend injoignable). Tes frappes sont gardées : réessaie.";
-    this.root.innerHTML = `
+    // Barre de config au-dessus (#176) : c'est ici qu'être coincé coûtait le plus cher.
+    // Backend injoignable, « Réessayer » échoue en boucle, et il n'y avait aucune autre
+    // sortie. Changer de Mode ou revenir au Menu perd le log non envoyé — mais c'est un
+    // choix que le joueur peut enfin faire, au lieu d'un écran sans issue.
+    this.endScreenSlot().innerHTML = `
       <section class="results">
         <p class="hint">${msg}</p>
-        <button id="retrySubmit" class="primary">Réessayer</button>
+        <div class="results-actions">
+          <button id="retrySubmit" class="primary">Réessayer</button>
+        </div>
       </section>
     `;
     this.root
       .querySelector<HTMLButtonElement>("#retrySubmit")!
       .addEventListener("click", () => void this.finish());
+  }
+
+  /**
+   * Écrans de FIN de Run (résultats, échec) : la barre de config au-dessus, puis un
+   * emplacement vide pour le contenu. Renvoie cet emplacement.
+   *
+   * Sans ça (issue #176), `renderResults` écrasait tout `#screen` — et c'est la barre
+   * de config qui porte À LA FOIS le `← menu` et les boutons de Mode. L'écran de fin
+   * solo n'offrait donc aucune sortie : ni retour au Menu, ni changement de Mode. La
+   * seule échappatoire était `quickRestartKey`, qui vaut `off` par défaut.
+   *
+   * Cliquer un Mode ici relance immédiatement (via `reset()`, déjà câblé par
+   * `wireConfigBar`) sans confirmation — le comportement Monkeytype, la référence que
+   * l'écran suit déjà pour sa fenêtre de 3 lignes.
+   */
+  private endScreenSlot(): HTMLElement {
+    this.root.innerHTML = `
+      <section class="practice">
+        ${this.configBarHtml()}
+        <div class="end-screen"></div>
+      </section>
+    `;
+    this.wireConfigBar();
+    return this.root.querySelector<HTMLElement>(".end-screen")!;
   }
 
   /** Échec Expert/Master (issue #64) : jamais soumis, Tab/Entrée relancent (onKeyDown,
@@ -527,10 +557,14 @@ export class Practice {
     const fail = this.failure;
     if (!fail) return;
     const label = this.difficulty === "master" ? "Master" : "Expert";
-    this.root.innerHTML = `
+    // Même traitement que les résultats (#176) : un échec laissait le joueur tout
+    // aussi coincé, avec « Recommencer » pour unique issue.
+    this.endScreenSlot().innerHTML = `
       <section class="results">
         <p class="hint">Échec (${label}) — ${fail.percent}% du texte</p>
-        <button id="retryFail" class="primary">Recommencer</button>
+        <div class="results-actions">
+          <button id="retryFail" class="primary">Recommencer</button>
+        </div>
       </section>
     `;
     this.root

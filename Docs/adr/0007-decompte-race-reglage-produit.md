@@ -32,3 +32,16 @@ stricte, texte 100 % exact) : il n'y a aucun classement à corriger, aucun backf
   toujours pas la même chose et ne se comparent jamais.
 - La règle produit « le décompte ne masque jamais le texte » est inchangée, et devient
   plus utile encore : 7 s de texte visible, c'est du temps de lecture réel.
+
+## Révision (2026-08-16) — le défaut passe à 5 s
+
+`DEFAULT_COUNTDOWN_S` : 7 → **5**. Exactement le genre d'ajustement que la clause
+« ajustable sans ADR ni invalidation » ci-dessus prévoyait ; noté ici seulement pour que
+le raisonnement de 2025 ne soit pas lu comme figeant encore 7 s.
+
+Ce qui change vraiment : à l'usage, 7 s d'attente immobile pèsent plus que le temps de
+lecture qu'elles offrent, et le décompte est de toute façon devenu **réglable par l'hôte**
+(`COUNTDOWN_VALUES = [3, 5, 7, 10]`) depuis que ce document a été écrit — l'argument
+« personne ne touchera ce réglage », qui justifiait la valeur fixe, ne tient plus. 5 s reste
+au-dessus des 3 s rejetés, et un salon qui veut du temps de lecture remet 7 ou 10 s en un clic.
+t=0 reste la fin du décompte : rien de mesuré ne bouge, aucun backfill.
