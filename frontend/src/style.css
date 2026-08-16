@@ -114,6 +114,22 @@ body {
   padding: 0.6rem 1rem;
   font-size: 0.85rem;
 }
+/* Un AXE = un réglage indépendant, avec son icône « i » (#180). Le Mode et sa valeur
+   partagent le leur : « 30 » n'a aucun sens sans « temps » à côté, et disparaît avec lui
+   sous citations/zen/drill. Les deux groupes restent donc serrés à l'intérieur de l'axe,
+   pendant que le `|` ne sépare que ce qui est réellement indépendant. */
+.config .axis {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.config .axis + .axis::before {
+  content: "|";
+  color: color-mix(in srgb, var(--sub) 45%, transparent);
+  /* Le séparateur appartient au vide entre deux axes, pas à l'axe qui le porte :
+     la marge négative le recentre dans le `gap` de `.config`. */
+  margin-left: calc(-0.75rem - 0.5em);
+}
 .config .group {
   display: flex;
   gap: 0.4rem;

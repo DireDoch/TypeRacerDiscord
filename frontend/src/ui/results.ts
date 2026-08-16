@@ -14,6 +14,7 @@ import {
   CategoryScale,
   Tooltip,
   Legend,
+  type Plugin,
 } from "chart.js";
 import type { AnalysisResponse, PerSecondPoint, SubmitRunResponse } from "../core/types";
 import { AUTHORITATIVE_BACKEND, fetchAnalysis, sharedErrorMessage } from "../api";
@@ -124,7 +125,39 @@ function pbLabel(res: SubmitRunResponse): string {
   return res.previousPbWpm !== null ? `${res.previousPbWpm}` : "—";
 }
 
-/** Exporté pour le podium de Race (ADR 0010) : même graphe, autre source de données. */
+/**
+ * Ligne verticale sous le curseur (#177). Lire wpm / raw / errors à un instant donné
+ * demandait de viser une courbe au pixel ; la ligne rend explicite la seconde que
+ * l'infobulle est en train de décrire.
+ *
+ * `interaction: { mode: "index", intersect: false }` était déjà posé — il ne manquait
+ * que le tracé. Un plugin local de dix lignes, pas une dépendance de plus, et il est
+ * passé PAR GRAPHE (`plugins: [crosshair]`) plutôt que par `Chart.register` : rien
+ * d'autre dans l'app ne doit hériter d'un dessin sur son canvas.
+ *
+ * `afterDatasetsDraw` : la ligne se pose sur les courbes, jamais dessous.
+ */
+const crosshair: Plugin<"line"> = {
+  id: "crosshair",
+  afterDatasetsDraw(chart) {
+    const active = chart.getActiveElements();
+    if (active.length === 0) return;
+    const { x } = active[0].element;
+    const { top, bottom } = chart.chartArea;
+    const { ctx } = chart;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(x, top);
+    ctx.lineTo(x, bottom);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(232, 236, 244, 0.35)"; // --text à 35 %, comme les hex des courbes
+    ctx.stroke();
+    ctx.restore();
+  },
+};
+
+/** Exporté pour le podium de Race (ADR 0010) : même graphe, autre source de données —
+ *  donc la ligne de survol arrive gratuitement sur le podium multijoueur aussi. */
 export function drawChart(canvas: HTMLCanvasElement, perSecond: PerSecondPoint[]): void {
   const labels = perSecond.map((p) => p.t);
   new Chart(canvas, {
@@ -154,11 +187,17 @@ export function drawChart(canvas: HTMLCanvasElement, perSecond: PerSecondPoint[]
         },
         {
           label: "errors",
-          data: perSecond.map((p) => (p.errors > 0 ? p.errors : null)),
+          // La donnée porte le vrai compte, y compris 0 (#177). Avant, un 0 devenait
+          // `null` pour effacer la croix — mais chart.js saute les `null` en mode
+          // `index`, donc l'infobulle N'AFFICHAIT PAS la ligne « errors » sur les
+          // secondes sans faute, exactement celles où on veut lire « 0 ». C'est
+          // `pointRadius` qui cache la croix maintenant : l'affichage change, la
+          // donnée reste.
+          data: perSecond.map((p) => p.errors),
           borderColor: "#ff4d6d",
           backgroundColor: "#ff4d6d",
           showLine: false,
-          pointRadius: 4,
+          pointRadius: (ctx) => ((perSecond[ctx.dataIndex]?.errors ?? 0) > 0 ? 4 : 0),
           pointStyle: "crossRot",
           yAxisID: "yErr",
         },
@@ -181,5 +220,6 @@ export function drawChart(canvas: HTMLCanvasElement, perSecond: PerSecondPoint[]
       },
       plugins: { legend: { labels: { color: "#e8ecf4" } } },
     },
+    plugins: [crosshair],
   });
 }

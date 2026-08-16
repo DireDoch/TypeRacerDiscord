@@ -41,6 +41,7 @@ import { podiumHtml, wirePodium, type PodiumOptions } from "./podium";
 import { runPlayOfTheGame } from "./potg";
 import { liveWpm } from "../live-stats";
 import { wordsHtml, placeCaret, escapeText } from "./typing-zone";
+import { infoHtml } from "./info-bubble";
 import { avatarUrl, getIdentity, proxyBase, updateActivity, type ActivityExtra } from "../discord";
 import {
   reduce,
@@ -1226,12 +1227,10 @@ export function lobbyRowHtml(row: LobbyRow): string {
   const ctl = row.locked
     ? `<span class="lobby-value">${escapeText(row.readOnly)}</span>`
     : lobbyControlHtml(row) + (row.note ? `<span class="lobby-note">${escapeText(row.note)}</span>` : "");
-  // L'explication est un <button> et non un <span> : c'est ce qui la rend atteignable au
-  // TAP (le focus l'ouvre) et au clavier, sans une ligne de JS. Le survol la donne à la
-  // souris, le focus au doigt — deux pseudo-classes, aucun écouteur.
+  // L'explication vit dans `ui/info-bubble.ts` depuis #180 : la barre de config solo
+  // en avait besoin à l'identique, et la recopier aurait fait diverger les deux.
   return `<div class="lobby-row">
-    <div class="lobby-key">${name}<button type="button" class="info"
-      aria-label="Explication : ${escapeText(row.label)}">i<span class="tip" role="tooltip">${escapeText(row.tip)}</span></button></div>
+    <div class="lobby-key">${name}${infoHtml(row.label, row.tip)}</div>
     <div class="lobby-ctl">${ctl}</div>
   </div>`;
 }

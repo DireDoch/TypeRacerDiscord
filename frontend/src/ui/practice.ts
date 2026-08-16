@@ -32,10 +32,25 @@ import { renderResults } from "./results";
 import { runReplay } from "./replay";
 import { MODE_LABELS } from "./mode-labels";
 import { wordsHtml, zenHtml, slideWindow, placeCaret } from "./typing-zone";
+import { infoHtml } from "./info-bubble";
 
 // 0 = Time infini (horloge désactivée, mots en flux continu, fin sur Shift+Enter).
 const TIME_VALUES = [15, 30, 60, 120, 0];
 const WORD_VALUES = [10, 25, 50];
+
+/**
+ * Explications des trois AXES de la barre de config (#180), servies par l'icône « i ».
+ * Une par axe, jamais une par bouton — exactement la granularité de `LOBBY_TIPS` en
+ * multijoueur : le joueur veut savoir ce que ce RÉGLAGE change, pas relire l'étiquette
+ * qu'il a déjà sous les yeux.
+ */
+const AXIS_TIPS = {
+  mode: "Ce qui décide du texte à taper et de la fin de la Run. Temps : le chrono s'arrête à la durée choisie (∞ = jusqu'à Shift+Entrée). Mots : un nombre de mots fixé. Citations : un texte imposé, de longueur variable. Zen : aucun texte cible, tout ce que tu tapes compte comme correct. Drill et Triplets : un texte fabriqué à partir de tes propres points faibles.",
+  settings:
+    "Modificateurs de texte, cumulables : « ponctuation » ajoute majuscules et signes, « chiffres » insère des nombres. Ils changent le texte généré, donc deux Runs qui ne portent pas les mêmes ne sont jamais comparées entre elles pour un record.",
+  difficulty:
+    "Une condition d'échec posée par-dessus la frappe — elle ne bloque jamais la saisie, elle arrête la Run. Normal ne change rien. Expert échoue dès qu'un mot est validé avec une faute non corrigée. Master échoue à la toute première frappe incorrecte, avant même de pouvoir corriger. La Difficulté n'entre jamais dans la comparaison d'un record.",
+} as const;
 
 
 /** Difficulté (issue #64, ADR 0013) : hors `RunConfig` — ne définit PAS le Config
@@ -708,19 +723,31 @@ export class Practice {
         : `<div class="group">${DIFFICULTIES.map(
             (d) => `<button data-difficulty="${d}" class="${this.difficulty === d ? "on" : ""}">${DIFFICULTY_LABELS[d]}</button>`,
           ).join("")}</div>`;
+    // Trois AXES, pas quatre (#180). « temps 30 » n'est pas un axe : c'est la VALEUR
+    // du Mode (`modeValue`), et le glossaire le range avec lui — Config bucket =
+    // « Mode + its value + language + active Settings ». Le code dit la même chose :
+    // `noText` fait disparaître le groupe des valeurs sous quotes/zen/drill, parce
+    // qu'une valeur sans son Mode n'existe pas. Elle reste donc COLLÉE à son Mode,
+    // dans le même axe, sans séparateur entre les deux.
+    //
+    // La Difficulté est le troisième axe et n'entre jamais dans le Config bucket :
+    // deux Difficultés ne sont jamais comparées pour un PB.
     return `
       <div class="config">
-        <div class="group">
-          ${modeBtn("time")}
-          ${modeBtn("words")}
-          ${modeBtn("quotes")}
-          ${modeBtn("zen")}
-          ${modeBtn("drill")}
-          ${modeBtn("trigram-drill")}
+        <div class="axis">
+          ${infoHtml("Mode", AXIS_TIPS.mode)}
+          <div class="group">
+            ${modeBtn("time")}
+            ${modeBtn("words")}
+            ${modeBtn("quotes")}
+            ${modeBtn("zen")}
+            ${modeBtn("drill")}
+            ${modeBtn("trigram-drill")}
+          </div>
+          ${valueGroup}
         </div>
-        ${valueGroup}
-        ${settingsGroup}
-        ${difficultyGroup}
+        ${settingsGroup ? `<div class="axis">${infoHtml("Options de texte", AXIS_TIPS.settings)}${settingsGroup}</div>` : ""}
+        ${difficultyGroup ? `<div class="axis">${infoHtml("Difficulté", AXIS_TIPS.difficulty)}${difficultyGroup}</div>` : ""}
         ${this.onExit ? `<button class="back-btn" data-nav="menu">← menu</button>` : ""}
       </div>
     `;
