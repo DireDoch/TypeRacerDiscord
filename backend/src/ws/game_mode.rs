@@ -40,6 +40,12 @@ pub struct GameModeRules {
     /// d'autre à éliminer sinon). Distinct de `MIN_PLAYERS`, qui borne le RÉGLAGE de
     /// taille de Room — une question différente.
     pub min_players_to_start: usize,
+    /// Une arrivée exige-t-elle d'avoir tapé TOUT le texte cible ? Vrai sous Normal, dont
+    /// c'est la règle de victoire ; faux sous les deux Modes de jeu, qui n'ont pas de ligne
+    /// d'arrivée (leur `Finish` livre le log de quelqu'un que le SERVEUR a déjà arrêté —
+    /// brûlé, ou stoppé par SpamStop). Sans cette garde, un `Finish` de trois caractères
+    /// annoncés en 50 ms passait pour une arrivée à 800 wpm, premier du podium.
+    pub requires_full_text: bool,
     /// Un Run sous ce mode entre-t-il dans `runs` (historique, jamais PB) ? Faux pour
     /// Floor is lava et Spam (ADR 0015, 0016) : texte imposé, jamais « terminé » au sens
     /// normal, rien à comparer d'une manche à l'autre.
@@ -134,6 +140,7 @@ fn identity_target_text(target_text: &str, _keystrokes: &[Keystroke]) -> String 
 
 const NORMAL: GameModeRules = GameModeRules {
     min_players_to_start: 1,
+    requires_full_text: true,
     persists_run: true,
     accepts_spam_settings: false,
     pending_source: |room| Some(room.text_source),
@@ -159,6 +166,7 @@ const NORMAL: GameModeRules = GameModeRules {
 const FLOOR_IS_LAVA: GameModeRules = GameModeRules {
     // ADR 0015 : seul, on est déjà le dernier vivant, la course serait finie à t=0.
     min_players_to_start: 2,
+    requires_full_text: false,
     persists_run: false,
     accepts_spam_settings: false,
     pending_source: |_room| Some(TextSource::Words { count: LAVA_WORD_COUNT }),
@@ -191,6 +199,7 @@ const SPAM: GameModeRules = GameModeRules {
     // ADR 0016 : courir seul contre un seuil ou une horloge reste un jeu, il n'y a pas
     // d'élimination qui le viderait de sens à un seul joueur.
     min_players_to_start: 1,
+    requires_full_text: false,
     persists_run: false,
     accepts_spam_settings: true,
     pending_source: |_room| None,

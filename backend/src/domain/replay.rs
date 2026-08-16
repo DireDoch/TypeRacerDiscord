@@ -42,6 +42,11 @@ struct ReplayResult {
     snapshots: Vec<Snapshot>,
     error_events: Vec<f64>,
     completions: Vec<Completion>,
+    /// Le log couvre-t-il le texte cible ENTIER, exactement ? C'est la définition même de
+    /// l'arrivée en Race (« la course ne se termine qu'une fois tout le texte tapé
+    /// exactement »), et le seul champ que le solo n'utilise pas : un Run Practice se
+    /// termine au temps ou au nombre de mots, pas à la complétion.
+    reached_end: bool,
 }
 
 // Éligibilité PB par défaut du Mode : Zen (durée variable), Drill (texte personnalisé)
@@ -224,6 +229,14 @@ fn replay_target(target_text: &str, keys: &[Keystroke]) -> ReplayResult {
         complete_word(&mut completions, word_start_t, last_key_t(keys), clen(last_tgt));
     }
 
+    // Arrivée = tous les mots verrouillés valent leur cible, ET le dernier mot est fini
+    // (verrouillé par un espace final, ou tapé exactement dans le buffer courant).
+    let locked_exacts = locked.iter().zip(target.iter()).all(|(w, t)| w == t);
+    let reached_end = !target.is_empty()
+        && locked_exacts
+        && (locked.len() >= target.len()
+            || (locked.len() == target.len() - 1 && typed == last_tgt));
+
     ReplayResult {
         correct_chars,
         raw_chars,
@@ -236,7 +249,21 @@ fn replay_target(target_text: &str, keys: &[Keystroke]) -> ReplayResult {
         snapshots,
         error_events,
         completions,
+        reached_end,
     }
+}
+
+/// Le log couvre-t-il TOUT le texte cible, exactement ?
+///
+/// C'est la question qu'une Race doit poser avant de croire un `Finish` : sans elle, un
+/// client qui annonce trois caractères justes en 50 ms est enregistré comme arrivé, avec
+/// le WPM que ça implique — premier du podium sans avoir tapé la course (constaté en
+/// test à 8 joueurs). Le recompute était déjà honnête sur CE QUI a été tapé ; il ne
+/// disait simplement pas si ça allait jusqu'au bout.
+///
+/// Rejoue le log une seconde fois : au `Finish` uniquement, sur un log déjà en mémoire.
+pub fn covers_whole_target(target_text: &str, keys: &[Keystroke]) -> bool {
+    replay_target(target_text, keys).reached_end
 }
 
 // ----------------------------------------------------------------------------
@@ -328,6 +355,7 @@ fn replay_zen(keys: &[Keystroke]) -> ReplayResult {
         snapshots,
         error_events: Vec::new(),
         completions,
+        reached_end: false, // Zen n'a pas de texte cible : rien à atteindre.
     }
 }
 
@@ -484,6 +512,39 @@ mod tests {
         // _ended : conservé pour que chaque appel montre l'endedAtMs "client" à côté du
         // log — il n'a plus d'effet, c'est tout le point de l'issue #11.
         ScoreInput { mode, mode_value, target_text: target.to_string(), keystrokes: keys }
+    }
+
+    /// Log d'une frappe par caractère, une frappe par ms — suffit pour la complétion,
+    /// qui ne regarde que le CONTENU.
+    fn tape(texte: &str) -> Vec<Keystroke> {
+        texte
+            .chars()
+            .enumerate()
+            .map(|(i, c)| Keystroke { t: (i + 1) as f64, k: c.to_string(), ctrl: None })
+            .collect()
+    }
+
+    /// L'arrivée en Race se prouve sur le log : sans ça, trois caractères annoncés en
+    /// 50 ms valaient une victoire à 800 wpm (constaté en test à 8 joueurs).
+    #[test]
+    fn une_arrivee_exige_le_texte_entier() {
+        let cible = "the quick brown fox";
+
+        assert!(covers_whole_target(cible, &tape(cible)), "texte entier, dernier mot non verrouillé");
+        assert!(covers_whole_target(cible, &tape("the quick brown fox ")), "avec l'espace final");
+
+        assert!(!covers_whole_target(cible, &tape("the")), "un seul mot");
+        assert!(!covers_whole_target(cible, &tape("the quick brown fo")), "dernier mot incomplet");
+        assert!(!covers_whole_target(cible, &tape("the quick brown fux")), "dernier mot faux");
+        assert!(!covers_whole_target(cible, &tape("the quikc brown fox")), "faute laissée en cours de route");
+        assert!(!covers_whole_target(cible, &[]), "log vide");
+
+        // Une faute CORRIGÉE reste une arrivée : la Race se finit sur le texte exact, pas
+        // sur un parcours sans faute (ADR 0013 — c'est la Difficulté qui punit l'erreur).
+        let mut avec_correction = tape("the quik");
+        avec_correction.push(Keystroke { t: 100.0, k: String::new(), ctrl: Some(ControlKey::Backspace) });
+        avec_correction.extend(tape("ck brown fox").into_iter().map(|k| Keystroke { t: k.t + 200.0, ..k }));
+        assert!(covers_whole_target(cible, &avec_correction), "faute corrigée puis texte fini");
     }
 
     #[test]

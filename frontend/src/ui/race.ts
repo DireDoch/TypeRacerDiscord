@@ -216,11 +216,18 @@ export class Race {
     }
   }
 
-  /** Arrête ma saisie et livre mon log — brûlé ou vainqueur, c'est le même geste. */
+  /** Arrête ma saisie et livre mon log — brûlé ou vainqueur, c'est le même geste.
+   *
+   *  `elapsed()` LÈVE tant que l'horloge n'a pas démarré, et un événement peut arriver
+   *  avant le GO (course clôturée pendant le décompte parce que tout le monde a quitté,
+   *  par exemple). L'exception remontait jusqu'à `onmessage` : le `Finish` n'était jamais
+   *  envoyé et la Room attendait un log qui ne viendrait plus, jusqu'au watchdog de
+   *  10 minutes. Rien à mesurer avant le GO — c'est zéro, et le log est vide de toute façon. */
   private stopAndSubmit(): void {
     if (this.doneLocal) return;
     this.doneLocal = true;
-    this.socket?.send({ type: "Finish", keystrokes: this.log, endedAtMs: this.clock.elapsed() });
+    const endedAtMs = this.clock.started ? this.clock.elapsed() : 0;
+    this.socket?.send({ type: "Finish", keystrokes: this.log, endedAtMs });
   }
 
   // --- Cycle de course --------------------------------------------------------
