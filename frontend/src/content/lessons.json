@@ -1,0 +1,1878 @@
+[
+  {
+    "title": "Posture et touches repères (F et J)",
+    "content": [
+      "Assieds-toi droit, les deux pieds au sol, les avant-bras à l'horizontale et les poignets souples, sans s'appuyer sur le bureau.",
+      "Pose tes index sur F et J : ce sont les touches repères — sens les petites bosses sous tes doigts. Les autres doigts se posent naturellement sur les touches voisines.",
+      "Règle d'or : ne regarde JAMAIS le clavier. Tes index retrouvent F et J au toucher, tout le reste se place autour. L'exercice n'utilise que F, J et l'espace (pouce)."
+    ],
+    "keys": [
+      "f",
+      "j"
+    ],
+    "tokens": 12,
+    "diagram": "home-row-fj"
+  },
+  {
+    "title": "Rangée de base — main gauche (A S D F)",
+    "content": [
+      "La rangée de base est ta position de repos : chaque doigt a sa touche et y REVIENT après chaque frappe.",
+      "Main gauche : auriculaire sur A, annulaire sur S, majeur sur D, index sur F. Chaque touche est frappée par SON doigt, jamais un autre.",
+      "Va lentement : la précision d'abord, la vitesse viendra seule. Les yeux restent sur l'écran."
+    ],
+    "keys": [
+      "a",
+      "s",
+      "d",
+      "f"
+    ],
+    "tokens": 15,
+    "diagram": "home-row-fj"
+  },
+  {
+    "title": "Rangée de base — main droite (J K L ;)",
+    "content": [
+      "Main droite : index sur J, majeur sur K, annulaire sur L, auriculaire sur le point-virgule (;).",
+      "Le point-virgule est une touche comme une autre : c'est l'auriculaire droit qui la frappe, sans regarder.",
+      "Après chaque frappe, le doigt revient sur sa touche de repos. Si tu te perds, retrouve J au toucher (la bosse) et repars."
+    ],
+    "keys": [
+      "j",
+      "k",
+      "l",
+      ";"
+    ],
+    "tokens": 15
+  },
+  {
+    "title": "Rangée de base — complète (G et H)",
+    "content": [
+      "G et H sont au centre de la rangée de base : ce sont les index qui s'étirent pour les atteindre — l'index gauche (depuis F) pour G, l'index droit (depuis J) pour H.",
+      "Après l'étirement, l'index REVIENT immédiatement sur sa touche repère. C'est ce retour systématique qui garde toute la main en place.",
+      "Cet exercice mélange les huit doigts et les deux étirements : toute la rangée de base, sans regarder."
+    ],
+    "keys": [
+      "a",
+      "s",
+      "d",
+      "f",
+      "g",
+      "h",
+      "j",
+      "k",
+      "l",
+      ";"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Rangée du haut — main gauche (Q W E R T)",
+    "content": [
+      "La rangée du haut se joue en montant depuis la rangée de base, sans déplacer la main : auriculaire vers Q, annulaire vers W, majeur vers E, index vers R puis T (étirement).",
+      "Le doigt monte, frappe, et REDESCEND sur sa touche de base. Si ta main entière bouge, tu perds tes repères.",
+      "L'exercice mélange la rangée du haut gauche et la rangée de base gauche pour ancrer les allers-retours."
+    ],
+    "keys": [
+      "q",
+      "w",
+      "e",
+      "r",
+      "t",
+      "a",
+      "s",
+      "d",
+      "f"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Rangée du haut — main droite (Y U I O P)",
+    "content": [
+      "Main droite, même principe : index vers Y (étirement) et U, majeur vers I, annulaire vers O, auriculaire vers P.",
+      "Y est l'étirement le plus difficile — l'index part de J, frappe Y et revient. Prends ton temps.",
+      "L'exercice mélange la rangée du haut droite et la rangée de base droite."
+    ],
+    "keys": [
+      "y",
+      "u",
+      "i",
+      "o",
+      "p",
+      "j",
+      "k",
+      "l"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Rangée du bas — main gauche (Z X C V B)",
+    "content": [
+      "La rangée du bas se joue en descendant : auriculaire vers Z, annulaire vers X, majeur vers C, index vers V puis B (étirement).",
+      "La descente est moins naturelle que la montée — le poignet reste souple, seul le doigt plonge et remonte.",
+      "L'exercice mélange la rangée du bas gauche et la rangée de base gauche."
+    ],
+    "keys": [
+      "z",
+      "x",
+      "c",
+      "v",
+      "b",
+      "a",
+      "s",
+      "d",
+      "f"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Rangée du bas — main droite (N M , .)",
+    "content": [
+      "Main droite : index vers N et M, majeur vers la virgule (,), annulaire vers le point (.).",
+      "La virgule et le point sont des touches à part entière, frappées sans regarder — elles reviendront partout dès qu'on tape de vraies phrases.",
+      "L'exercice mélange la rangée du bas droite et la rangée de base droite."
+    ],
+    "keys": [
+      "n",
+      "m",
+      ",",
+      ".",
+      "j",
+      "k",
+      "l"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Mots complets",
+    "content": [
+      "Toutes les lettres sont en place : on passe aux vrais mots. Un mot se tape comme une suite de frappes régulières, pas comme un sprint.",
+      "Le rythme compte plus que la vitesse : mieux vaut un tempo lent et constant que des à-coups rapides.",
+      "L'espace se frappe au pouce, sans quitter la rangée de base. Les yeux restent sur l'écran, toujours."
+    ],
+    "keys": [],
+    "tokens": 20,
+    "words": true
+  },
+  {
+    "title": "Majuscules (Shift)",
+    "content": [
+      "Une majuscule se tape avec DEUX mains : la lettre avec sa main habituelle, Shift avec l'AURICULAIRE DE L'AUTRE MAIN. « A » = Shift droit + A main gauche.",
+      "On ne verrouille jamais les majuscules avec Caps Lock pour une seule lettre — c'est le petit doigt opposé qui fait le travail.",
+      "L'exercice alterne minuscules et majuscules sur des touches déjà connues."
+    ],
+    "keys": [
+      "a",
+      "s",
+      "d",
+      "f",
+      "j",
+      "k",
+      "l",
+      "A",
+      "S",
+      "D",
+      "F",
+      "J",
+      "K",
+      "L"
+    ],
+    "tokens": 15
+  },
+  {
+    "title": "Ponctuation",
+    "content": [
+      "La ponctuation s'intègre au flux de frappe : virgule (majeur droit), point (annulaire droit), et les signes en Shift comme ? et ! suivent la règle des majuscules (Shift opposé).",
+      "L'apostrophe (') se frappe à l'auriculaire droit, juste à côté du point-virgule.",
+      "L'exercice mélange lettres et signes pour que la ponctuation ne casse plus ton rythme."
+    ],
+    "keys": [
+      ",",
+      ".",
+      "?",
+      "!",
+      "'",
+      "a",
+      "s",
+      "d",
+      "f",
+      "j",
+      "k",
+      "l"
+    ],
+    "tokens": 15
+  },
+  {
+    "title": "Chiffres (rangée du haut)",
+    "content": [
+      "La rangée des chiffres se joue depuis la rangée de base, en grand étirement : 1-2 à l'auriculaire gauche, 3 à l'annulaire, 4-5 à l'index gauche ; 6-7 à l'index droit, 8 au majeur, 9 à l'annulaire, 0 à l'auriculaire droit.",
+      "C'est la rangée la plus éloignée : la main a tendance à se perdre. Frappe le chiffre, puis REVIENS toucher tes repères F et J avant la frappe suivante.",
+      "Va très lentement — presque personne ne tape les chiffres sans regarder ; toi, si."
+    ],
+    "keys": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "0"
+    ],
+    "tokens": 15
+  },
+  {
+    "title": "Fluidité",
+    "content": [
+      "Dernière étape : enchaîner de vrais mots sans t'arrêter. La fluidité vient d'un tempo régulier — chaque frappe au même intervalle, espace compris.",
+      "Ne corrige pas chaque erreur par réflexe : garde le rythme, la précision est déjà dans tes doigts.",
+      "Tout le clavier est maintenant vu une première fois. La suite du cursus consolide : rangées enchaînées, paires de lettres fréquentes, ponctuation et symboles pas encore couverts, puis des mots et phrases plus longs."
+    ],
+    "keys": [],
+    "tokens": 30,
+    "words": true
+  },
+  {
+    "title": "Rangée du haut — fluidité (Q W E R T Y U I O P)",
+    "content": [
+      "Les leçons 5 et 6 t'ont fait monter puis REdescendre après chaque touche. Ici, tu enchaînes plusieurs touches du haut À LA SUITE, sans repasser par la base entre deux.",
+      "La main reste momentanément en position haute ; le retour à la rangée de base se fait à la fin de la séquence, pas frappe par frappe. C'est ce relâchement qui donne de la fluidité.",
+      "Exercice sur toute la rangée du haut, les deux mains mélangées."
+    ],
+    "keys": [
+      "q",
+      "w",
+      "e",
+      "r",
+      "t",
+      "y",
+      "u",
+      "i",
+      "o",
+      "p"
+    ],
+    "tokens": 20
+  },
+  {
+    "title": "Rangée du bas — fluidité (Z X C V B N M)",
+    "content": [
+      "Même principe que la rangée du haut, en sens inverse : plusieurs touches basses enchaînées avant de remonter à la base.",
+      "La rangée du bas est la moins naturelle des trois — cette fluidité se construit sur plusieurs leçons, pas en une seule.",
+      "Exercice sur toute la rangée du bas, les deux mains mélangées."
+    ],
+    "keys": [
+      "z",
+      "x",
+      "c",
+      "v",
+      "b",
+      "n",
+      "m"
+    ],
+    "tokens": 20
+  },
+  {
+    "title": "Tout le clavier — lettres mélangées",
+    "content": [
+      "Premier exercice qui mélange VRAIMENT les trois rangées, sans thème particulier : le test qui dit si les 15 leçons précédentes ont pris.",
+      "Si une touche te fait hésiter, pas de panique : repère sa rangée et son doigt — tu la retrouveras dans les prochaines leçons ciblées.",
+      "Les 26 lettres, réparties au hasard."
+    ],
+    "keys": [
+      "a",
+      "b",
+      "c",
+      "d",
+      "e",
+      "f",
+      "g",
+      "h",
+      "i",
+      "j",
+      "k",
+      "l",
+      "m",
+      "n",
+      "o",
+      "p",
+      "q",
+      "r",
+      "s",
+      "t",
+      "u",
+      "v",
+      "w",
+      "x",
+      "y",
+      "z"
+    ],
+    "tokens": 22
+  },
+  {
+    "title": "Paire fréquente — TH / HE",
+    "content": [
+      "« th » et « he » sont parmi les paires de lettres les plus fréquentes de l'anglais — elles reviennent dans « the », « that », « he », « her »… Automatiser ce geste paie sur presque chaque mot.",
+      "T (index gauche, rangée du haut) et H (index droit, rangée de base) : un aller-retour entre les deux mains, pas un doigt qui glisse d'une touche à l'autre.",
+      "Exercice concentré sur T et H, dans les deux ordres."
+    ],
+    "keys": [
+      "t",
+      "h"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Paire fréquente — IN / ER",
+    "content": [
+      "« in » et « er » ferment énormément de mots anglais (« in », « her », « after », « winter »).",
+      "I (majeur droit, rangée du haut) et N (index droit, rangée du bas) restent tous deux à droite — pas de croisement de main ici, juste un changement de rangée.",
+      "Exercice concentré sur I, N, E et R."
+    ],
+    "keys": [
+      "i",
+      "n",
+      "e",
+      "r"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Paire fréquente — AN / RE",
+    "content": [
+      "« an » et « re » ouvrent ou ferment des mots très courants (« and », « are », « re- » en préfixe de « return », « repeat »…).",
+      "A (auriculaire gauche) et N (index droit) traversent tout le clavier — un vrai croisement de mains, comme TH.",
+      "Exercice concentré sur A, N, R et E."
+    ],
+    "keys": [
+      "a",
+      "n",
+      "r",
+      "e"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Paire fréquente — ON / AT",
+    "content": [
+      "« on » et « at » terminent une quantité de mots anglais courts et très fréquents (« on », « at », « that », « button »).",
+      "O (annulaire droit) et N (index droit) restent côte à côte sur la rangée du haut puis celle du bas — un petit trajet, à répéter jusqu'à ce qu'il devienne automatique.",
+      "Exercice concentré sur O, N, A et T."
+    ],
+    "keys": [
+      "o",
+      "n",
+      "a",
+      "t"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Paire fréquente — EN / ND",
+    "content": [
+      "« en » et « nd » terminent des mots très communs (« when », « and », « friend »).",
+      "E (majeur droit) et N (index droit) sont proches ; D (index gauche) demande ensuite un vrai changement de main après le N.",
+      "Exercice concentré sur E, N et D."
+    ],
+    "keys": [
+      "e",
+      "n",
+      "d"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Voyelles doublées — OU / EA",
+    "content": [
+      "L'anglais enchaîne souvent deux voyelles qui ne se prononcent qu'une fois : « out », « house », « sea », « read ». Le clavier, lui, veut bien les deux frappes.",
+      "O et U sont voisines sur la rangée du haut, à droite ; E et A traversent tout le clavier, comme TH ou AN.",
+      "Exercice concentré sur O, U, E et A."
+    ],
+    "keys": [
+      "o",
+      "u",
+      "e",
+      "a"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Lettres doublées (SS LL EE OO TT)",
+    "content": [
+      "« miss », « tell », « see », « look », « better » : la lettre doublée est un motif à part entière, pas deux frappes indépendantes — le même doigt refrappe la même touche.",
+      "Un doigt qui vient de frapper une touche doit pouvoir la refrapper aussitôt, sans hésitation ni décalage.",
+      "Exercice concentré sur S, L, E, O et T."
+    ],
+    "keys": [
+      "s",
+      "l",
+      "e",
+      "o",
+      "t"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Mots — deuxième lot",
+    "content": [
+      "Retour aux vrais mots (comme la leçon 9), avec plus de jetons : c'est la fluidité sur mots qui progresse maintenant, pas les touches individuelles.",
+      "Le rythme reste la priorité : un tempo régulier bat toujours une pointe de vitesse suivie d'une hésitation.",
+      "Vingt-quatre mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 24,
+    "words": true
+  },
+  {
+    "title": "Majuscules — tout le clavier",
+    "content": [
+      "La leçon 10 t'a fait alterner minuscule/majuscule sur la rangée de base seulement. Ici, la règle (Shift à l'AURICULAIRE OPPOSÉ) s'applique aux 26 lettres.",
+      "Le réflexe ne change pas, seule la touche visée change : identifie la main de la lettre, prends Shift de l'AUTRE main.",
+      "Exercice sur les 26 lettres, minuscules et majuscules mélangées."
+    ],
+    "keys": [
+      "a",
+      "b",
+      "c",
+      "d",
+      "e",
+      "f",
+      "g",
+      "h",
+      "i",
+      "j",
+      "k",
+      "l",
+      "m",
+      "n",
+      "o",
+      "p",
+      "q",
+      "r",
+      "s",
+      "t",
+      "u",
+      "v",
+      "w",
+      "x",
+      "y",
+      "z",
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "H",
+      "I",
+      "J",
+      "K",
+      "L",
+      "M",
+      "N",
+      "O",
+      "P",
+      "Q",
+      "R",
+      "S",
+      "T",
+      "U",
+      "V",
+      "W",
+      "X",
+      "Y",
+      "Z"
+    ],
+    "tokens": 22
+  },
+  {
+    "title": "Parenthèses ( )",
+    "content": [
+      "Les parenthèses s'ouvrent avec Shift + 9 (auriculaire gauche pour Shift, auriculaire gauche pour 9 — les deux mains ne se gênent pas) et se ferment avec Shift + 0.",
+      "Elles s'utilisent toujours par paire : ouvrir puis fermer, sans oublier la seconde une fois lancé dans la phrase.",
+      "Exercice concentré sur les parenthèses, mélangées à quelques lettres de la rangée de base."
+    ],
+    "keys": [
+      "(",
+      ")",
+      "a",
+      "s",
+      "d",
+      "f",
+      "j",
+      "k",
+      "l"
+    ],
+    "tokens": 16
+  },
+  {
+    "title": "Guillemets et tiret ( \" - )",
+    "content": [
+      "Le guillemet double (Shift + ') encadre une citation ; le tiret (touche seule, à côté du 0) relie deux mots ou introduit une liste.",
+      "Le guillemet partage sa touche avec l'apostrophe déjà vue (leçon 11) — c'est Shift qui fait la différence.",
+      "Exercice concentré sur le guillemet et le tiret, mélangés à quelques lettres."
+    ],
+    "keys": [
+      "\"",
+      "-",
+      "a",
+      "s",
+      "d",
+      "f",
+      "j",
+      "k",
+      "l"
+    ],
+    "tokens": 16
+  },
+  {
+    "title": "Symboles (Shift + chiffres)",
+    "content": [
+      "Chaque chiffre de la leçon 12 cache un symbole en Shift : ! @ # $ % ^ & * — utiles pour les mentions, hashtags, adresses mail, calculs.",
+      "Même geste que les majuscules : Shift de l'AUTRE main, chiffre de sa main habituelle. Le point de repère (F/J) reste la base du retour.",
+      "Exercice concentré sur les huit symboles de la rangée du haut."
+    ],
+    "keys": [
+      "!",
+      "@",
+      "#",
+      "$",
+      "%",
+      "^",
+      "&",
+      "*"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Chiffres et lettres mélangés",
+    "content": [
+      "Dans un vrai texte, les chiffres n'arrivent jamais seuls : adresses, dates, codes postaux, mots de passe mélangent lettres et chiffres sans prévenir.",
+      "Le réflexe à construire : après un chiffre (rangée du haut, grand étirement), revenir directement sur F ou J avant la lettre suivante — pas de raccourci qui saute l'étape.",
+      "Exercice qui mélange quelques chiffres et quelques lettres de la rangée de base."
+    ],
+    "keys": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "0",
+      "a",
+      "s",
+      "d",
+      "f",
+      "j",
+      "k",
+      "l"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Deux-points et point-virgule ( : ; )",
+    "content": [
+      "Le point-virgule (;) est déjà connu depuis la leçon 3 — l'auriculaire droit, sans Shift. Le deux-points est le MÊME doigt, avec Shift.",
+      "Les deux annoncent une suite : le point-virgule sépare deux idées liées, le deux-points introduit ce qui suit.",
+      "Exercice concentré sur les deux, mélangés à la rangée de base droite."
+    ],
+    "keys": [
+      ":",
+      ";",
+      "j",
+      "k",
+      "l"
+    ],
+    "tokens": 16
+  },
+  {
+    "title": "Slash et underscore ( / _ )",
+    "content": [
+      "Le slash (/) sert aux URLs, aux fractions, aux dates ; l'underscore (Shift + -) relie des mots dans un identifiant (« nom_de_variable »).",
+      "Le slash est à l'auriculaire droit, tout en bas du clavier — un étirement à sentir la première fois, puis à automatiser.",
+      "Exercice concentré sur les deux, mélangés à quelques lettres."
+    ],
+    "keys": [
+      "/",
+      "_",
+      "j",
+      "k",
+      "l",
+      ";"
+    ],
+    "tokens": 16
+  },
+  {
+    "title": "Paire fréquente — ES / TI",
+    "content": [
+      "« es » termine les pluriels et les verbes (« goes », « makes ») ; « ti » ouvre des suffixes très courants (« -tion », « -tial »).",
+      "E, S, T et I sont tous à portée de la rangée de base ou juste au-dessus — un bon terrain pour construire de la vitesse SANS sacrifier la précision.",
+      "Exercice concentré sur E, S, T et I."
+    ],
+    "keys": [
+      "e",
+      "s",
+      "t",
+      "i"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Mots — troisième lot",
+    "content": [
+      "Encore des mots réels, avec davantage de jetons — l'endurance progresse en même temps que la précision.",
+      "Si l'accuracy chute vers la fin de l'exercice, c'est un signe de fatigue de concentration, pas de vitesse : ralentis plutôt que de forcer.",
+      "Vingt-six mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 26,
+    "words": true
+  },
+  {
+    "title": "Consolidation — ponctuation et symboles",
+    "content": [
+      "Revue de tout ce qui a été introduit depuis la leçon 26 : parenthèses, guillemet, tiret, symboles Shift, deux-points, slash, underscore — rien de nouveau, juste du rappel.",
+      "C'est la ponctuation et les symboles qui cassent le plus souvent le rythme d'un texte réel — les avoir déjà rencontrés une fois change tout le jour où ils reviennent.",
+      "Exercice concentré sur les dix symboles vus dans ce lot de leçons."
+    ],
+    "keys": [
+      "(",
+      ")",
+      "\"",
+      "-",
+      "!",
+      "@",
+      "#",
+      "$",
+      "%",
+      "^",
+      "&",
+      "*",
+      ":",
+      ";",
+      "/",
+      "_"
+    ],
+    "tokens": 24
+  },
+  {
+    "title": "Mots — clôture du lot",
+    "content": [
+      "Dernière leçon de ce lot : mots réels, tempo régulier, comme la Fluidité de la leçon 13 mais avec l'aisance de rangées et symboles en plus depuis.",
+      "Le prochain lot du cursus enchaîne sur des mots plus longs et des majuscules en contexte de phrase plutôt que de touches isolées.",
+      "Trente mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 30,
+    "words": true
+  },
+  {
+    "title": "Crochets [ ]",
+    "content": [
+      "Les crochets (Shift + touche à côté du P pour l'un, Shift + la suivante pour l'autre) encadrent une référence, un index de tableau, une note.",
+      "Comme les parenthèses déjà vues, ils s'ouvrent et se ferment TOUJOURS en paire — l'auriculaire droit fait l'aller-retour entre les deux.",
+      "Exercice concentré sur les crochets, mélangés à quelques lettres."
+    ],
+    "keys": [
+      "[",
+      "]",
+      "a",
+      "s",
+      "d",
+      "f",
+      "j",
+      "k",
+      "l"
+    ],
+    "tokens": 16
+  },
+  {
+    "title": "Accolades { }",
+    "content": [
+      "Les accolades (Shift + crochet) délimitent un bloc — omniprésentes dans le code, utiles aussi pour un ensemble ou une note en aparté.",
+      "Même touche que les crochets, Shift en plus : le doigt ne change pas, seul le geste de la main opposée s'ajoute.",
+      "Exercice concentré sur les accolades, mélangées à quelques lettres."
+    ],
+    "keys": [
+      "{",
+      "}",
+      "a",
+      "s",
+      "d",
+      "f",
+      "j",
+      "k",
+      "l"
+    ],
+    "tokens": 16
+  },
+  {
+    "title": "Chevrons < >",
+    "content": [
+      "Les chevrons (Shift + virgule, Shift + point) comparent (« plus petit que », « plus grand que ») ou encadrent une balise.",
+      "Ils partagent leurs touches avec la virgule et le point déjà vus (leçon 11) — encore une fois, c'est Shift qui change tout.",
+      "Exercice concentré sur les chevrons, mélangés à quelques lettres."
+    ],
+    "keys": [
+      "<",
+      ">",
+      "a",
+      "s",
+      "d",
+      "f",
+      "j",
+      "k",
+      "l"
+    ],
+    "tokens": 16
+  },
+  {
+    "title": "Plus, égal, tilde ( + = ~ )",
+    "content": [
+      "Le signe égal (touche seule, à côté du 0) et le plus (Shift + égal) servent aux calculs et aux affectations ; le tilde (Shift + la touche la plus à gauche) est plus rare, mais revient dans les chemins de fichiers.",
+      "Trois touches proches du 0 et de la ligne du haut — un vrai étirement, comme les chiffres de la leçon 12.",
+      "Exercice concentré sur les trois, mélangés à quelques lettres."
+    ],
+    "keys": [
+      "+",
+      "=",
+      "~",
+      "a",
+      "s",
+      "d",
+      "f",
+      "j",
+      "k",
+      "l"
+    ],
+    "tokens": 16
+  },
+  {
+    "title": "Pipe et barre oblique inverse ( | \\ )",
+    "content": [
+      "La barre verticale (Shift + barre oblique inverse) sépare des options ou des colonnes ; la barre oblique inverse seule échappe un caractère ou navigue un chemin Windows.",
+      "Toutes deux vivent au même endroit, tout en haut à droite du clavier — un repère à mémoriser une bonne fois.",
+      "Exercice concentré sur les deux, mélangés à quelques lettres."
+    ],
+    "keys": [
+      "|",
+      "\\",
+      "j",
+      "k",
+      "l",
+      ";"
+    ],
+    "tokens": 16
+  },
+  {
+    "title": "Majuscules et ponctuation mélangées",
+    "content": [
+      "Une vraie phrase alterne minuscules, une majuscule en tête, et de la ponctuation qui la clôt — pas des blocs séparés comme dans les leçons précédentes.",
+      "L'enchaînement Shift → lettre → reste du mot → point doit devenir un seul geste fluide, pas trois réflexes séparés.",
+      "Exercice qui mélange majuscules, minuscules et ponctuation de base."
+    ],
+    "keys": [
+      "A",
+      "a",
+      "S",
+      "s",
+      "D",
+      "d",
+      "F",
+      "f",
+      "J",
+      "j",
+      "K",
+      "k",
+      "L",
+      "l",
+      ".",
+      ",",
+      "'"
+    ],
+    "tokens": 20
+  },
+  {
+    "title": "Paire fréquente — LE / DE",
+    "content": [
+      "« le » et « de » terminent ou ouvrent une quantité de mots anglais (« table », « little », « de- » en préfixe de « define », « decide »).",
+      "L (annulaire droit) et E (majeur droit) restent à droite ; D (index gauche) impose un vrai changement de main juste après.",
+      "Exercice concentré sur L, E et D."
+    ],
+    "keys": [
+      "l",
+      "e",
+      "d"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Paire fréquente — RO / CO",
+    "content": [
+      "« ro » et « co » ouvrent des mots très communs (« room », « from », « code », « come »).",
+      "R (index gauche) et O (annulaire droit) traversent le clavier ; C (majeur gauche) et O restent proches d'un même geste main gauche puis droite.",
+      "Exercice concentré sur R, O et C."
+    ],
+    "keys": [
+      "r",
+      "o",
+      "c"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Paire fréquente — VE / ME",
+    "content": [
+      "« ve » et « me » terminent des mots courants (« have », « give », « me », « time »).",
+      "V (index gauche, rangée du bas) est un étirement déjà vu en leçon 7 ; M (index droit, rangée du bas) est son miroir à droite.",
+      "Exercice concentré sur V, E et M."
+    ],
+    "keys": [
+      "v",
+      "e",
+      "m"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Paire fréquente — AS / AR",
+    "content": [
+      "« as » et « ar » apparaissent dans des mots très fréquents (« as », «are », « car », « start »).",
+      "A (auriculaire gauche) reste fixe, S (annulaire gauche) et R (index gauche) sont ses deux voisins immédiats sur la rangée de base et celle du haut.",
+      "Exercice concentré sur A, S et R."
+    ],
+    "keys": [
+      "a",
+      "s",
+      "r"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Paire fréquente — ST / NT",
+    "content": [
+      "« st » et « nt » terminent une multitude de mots anglais (« first », « last », « want », « front »).",
+      "S (annulaire gauche) et T (index gauche) restent à gauche ; N (index droit) et T retraversent le clavier — deux dynamiques différentes dans une seule leçon.",
+      "Exercice concentré sur S, T et N."
+    ],
+    "keys": [
+      "s",
+      "t",
+      "n"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Terminaison fréquente — ING",
+    "content": [
+      "« -ing » ferme presque tous les verbes au participe présent anglais (« typing », « reading », « learning ») — la terminaison la plus fréquente du cursus.",
+      "I, N et G s'enchaînent index droit → index droit → index gauche : deux lettres de la même main, puis un changement.",
+      "Exercice concentré sur I, N et G."
+    ],
+    "keys": [
+      "i",
+      "n",
+      "g"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Terminaison fréquente — TION",
+    "content": [
+      "« -tion » ferme une grande famille de noms anglais (« action », « position », « solution ») — quatre lettres qui reviennent toujours ensemble, dans le même ordre.",
+      "T, I, O et N s'enchaînent en restant proches du centre du clavier — peu de déplacement, beaucoup de répétition.",
+      "Exercice concentré sur T, I, O et N."
+    ],
+    "keys": [
+      "t",
+      "i",
+      "o",
+      "n"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Terminaisons fréquentes — ED / LY",
+    "content": [
+      "« -ed » marque le passé (« typed », « learned ») ; « -ly » transforme un adjectif en adverbe (« quickly », « slowly »).",
+      "Deux terminaisons courtes, très fréquentes, qui ferment la liste des suffixes de ce cursus — le reste viendra naturellement avec la pratique de mots réels.",
+      "Exercice concentré sur E, D, L et Y."
+    ],
+    "keys": [
+      "e",
+      "d",
+      "l",
+      "y"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Mots — quatrième lot",
+    "content": [
+      "Encore des mots réels : après les paires et terminaisons des dernières leçons, ce lot vérifie qu'elles se sont intégrées au flux normal de frappe.",
+      "Ne pense plus \"lettre par lettre\" : laisse le mot entier venir, comme un seul geste.",
+      "Vingt-huit mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 28,
+    "words": true
+  },
+  {
+    "title": "Identifiants — lettres, chiffres et underscore",
+    "content": [
+      "Un identifiant de code (« nom_variable_2 »), un mot de passe, un nom de fichier mélangent librement lettres, chiffres et underscore, sans espace entre eux.",
+      "Sans espace pour respirer, le rythme doit venir des doigts, pas d'une pause visuelle entre les types de caractères.",
+      "Exercice qui mélange lettres, chiffres et underscore."
+    ],
+    "keys": [
+      "a",
+      "s",
+      "d",
+      "f",
+      "j",
+      "k",
+      "l",
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "_"
+    ],
+    "tokens": 20
+  },
+  {
+    "title": "Guillemet simple et accent grave ( ' ` )",
+    "content": [
+      "L'apostrophe/guillemet simple (déjà vue en leçon 11) encadre aussi une citation courte ; l'accent grave (Shift + tilde) délimite du code inline dans un texte technique.",
+      "Deux touches discrètes mais fréquentes dès qu'un texte cite ou code quelque chose.",
+      "Exercice concentré sur les deux, mélangés à quelques lettres."
+    ],
+    "keys": [
+      "'",
+      "`",
+      "a",
+      "s",
+      "d",
+      "f",
+      "j",
+      "k",
+      "l"
+    ],
+    "tokens": 16
+  },
+  {
+    "title": "Mots longs — premier passage",
+    "content": [
+      "Les mots de 8 lettres et plus demandent de tenir le rythme plus longtemps sans relâcher — c'est l'endurance qui est testée, pas une touche en particulier.",
+      "Si tu ralentis en fin de mot long, c'est normal au début : ça se resserre avec la répétition.",
+      "Vingt-quatre mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 24,
+    "words": true
+  },
+  {
+    "title": "Mots longs — deuxième passage",
+    "content": [
+      "Même exercice, un peu plus long : l'objectif est de garder la MÊME accuracy du premier au dernier mot, sans chute en fin de série.",
+      "Une accuracy qui chute en fin d'exercice signale la fatigue de concentration — la solution est de ralentir, pas de forcer.",
+      "Vingt-huit mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 28,
+    "words": true
+  },
+  {
+    "title": "Consolidation — symboles étendus",
+    "content": [
+      "Revue de tout ce qui a été introduit depuis les crochets : crochets, accolades, chevrons, plus/égal/tilde, pipe/barre oblique inverse, guillemet simple, accent grave — rien de nouveau, juste du rappel.",
+      "Ce sont les symboles les plus rares du cursus : les revoir une dernière fois avant les leçons suivantes, plus centrées sur les mots et les phrases.",
+      "Exercice concentré sur les symboles de ce lot."
+    ],
+    "keys": [
+      "[",
+      "]",
+      "{",
+      "}",
+      "<",
+      ">",
+      "+",
+      "=",
+      "~",
+      "|",
+      "\\",
+      "'",
+      "`"
+    ],
+    "tokens": 24
+  },
+  {
+    "title": "Dates (chiffres et slash ou tiret)",
+    "content": [
+      "Une date s'écrit en chiffres séparés par un slash ou un tiret (« 21/07/2026 », « 2026-07-21 ») — un motif qui revient dans presque tous les formulaires.",
+      "Le retour sur F/J entre deux groupes de chiffres reste la clé : le slash ou le tiret est l'occasion de ce retour, pas un obstacle.",
+      "Exercice qui mélange chiffres, slash et tiret."
+    ],
+    "keys": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "0",
+      "/",
+      "-"
+    ],
+    "tokens": 20
+  },
+  {
+    "title": "Montants (chiffres, point et dollar)",
+    "content": [
+      "Un prix s'écrit avec un point décimal et un symbole monétaire (« 19.99$ », « $19.99 selon la convention) — chiffres et symboles s'enchaînent sans espace.",
+      "Le point ici n'est pas la ponctuation de fin de phrase déjà vue (leçon 11) : c'est un SÉPARATEUR, au milieu d'un nombre.",
+      "Exercice qui mélange chiffres, point et symbole dollar."
+    ],
+    "keys": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "0",
+      ".",
+      "$"
+    ],
+    "tokens": 20
+  },
+  {
+    "title": "Pourcentages et unités",
+    "content": [
+      "« 50% », « 10km », « 3kg » : un nombre collé à une unité ou un symbole, sans espace — encore un motif très fréquent dans un texte réel.",
+      "Après le chiffre, l'unité s'enchaîne directement : pas de pause, pas de retour aux repères entre les deux.",
+      "Exercice qui mélange chiffres, pourcentage et quelques lettres d'unités."
+    ],
+    "keys": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "0",
+      "%",
+      "k",
+      "m",
+      "g"
+    ],
+    "tokens": 20
+  },
+  {
+    "title": "Heures (chiffres et deux-points)",
+    "content": [
+      "Une heure s'écrit avec un deux-points entre les groupes de chiffres (« 14:30 ») — le deux-points déjà vu (leçon 30), ici en contexte numérique plutôt que grammatical.",
+      "Le rythme est court et répétitif : deux chiffres, deux-points, deux chiffres — un excellent exercice de régularité.",
+      "Exercice qui mélange chiffres et deux-points."
+    ],
+    "keys": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "0",
+      ":"
+    ],
+    "tokens": 20
+  },
+  {
+    "title": "Transitions rapides — chiffres vers rangée de base",
+    "content": [
+      "Jusqu'ici, chaque exercice chiffres+lettres laissait le temps de revenir sur F/J. Ici, le rythme accélère : les allers-retours s'enchaînent plus vite, sans ralentir le tempo.",
+      "Si tu perds tes repères, ralentis plutôt que de continuer à l'aveugle — la précision prime toujours sur la vitesse (ADR du cursus).",
+      "Exercice qui mélange chiffres et rangée de base, à un tempo plus soutenu (plus de jetons, même règle de précision)."
+    ],
+    "keys": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "0",
+      "a",
+      "s",
+      "d",
+      "f",
+      "j",
+      "k",
+      "l"
+    ],
+    "tokens": 24
+  },
+  {
+    "title": "Transitions rapides — chiffres et symboles combinés",
+    "content": [
+      "Dernier cran : chiffres, symboles Shift (leçon 28) et lettres, tous mélangés — la combinaison la plus proche d'un vrai mot de passe ou d'une référence produit.",
+      "Rien de nouveau dans les touches elles-mêmes : c'est leur enchaînement rapide, sans thème prévisible, qui est le vrai exercice.",
+      "Exercice qui mélange chiffres, symboles et lettres."
+    ],
+    "keys": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "0",
+      "!",
+      "@",
+      "#",
+      "$",
+      "%",
+      "a",
+      "s",
+      "d",
+      "f"
+    ],
+    "tokens": 24
+  },
+  {
+    "title": "Mots composés (trait d'union)",
+    "content": [
+      "« well-known », « up-to-date », « long-term » : deux mots ou plus reliés par un tiret, sans espace autour — un mot composé se tape comme un seul bloc.",
+      "Le tiret casse rarement le rythme s'il est anticipé : il se frappe comme n'importe quelle autre touche de la rangée du haut.",
+      "Exercice qui mélange lettres et tiret."
+    ],
+    "keys": [
+      "a",
+      "s",
+      "d",
+      "f",
+      "j",
+      "k",
+      "l",
+      "-"
+    ],
+    "tokens": 20
+  },
+  {
+    "title": "Abréviations courantes (point)",
+    "content": [
+      "« etc. », « e.g. », « i.e. », « Mr. », « Dr. » : des abréviations ponctuées d'un ou plusieurs points, parfois collés à une majuscule.",
+      "Chaque point se frappe comme en fin de phrase (leçon 11), simplement plus rapproché — sans les espaces qui l'accompagnent d'habitude.",
+      "Exercice qui mélange majuscules, minuscules et points rapprochés."
+    ],
+    "keys": [
+      "e",
+      "g",
+      "i",
+      "M",
+      "r",
+      "D",
+      "."
+    ],
+    "tokens": 20
+  },
+  {
+    "title": "Acronymes (majuscules enchaînées)",
+    "content": [
+      "« USA », « HTML », « CSS » : plusieurs majuscules de suite, sans minuscule entre elles — Shift reste ENFONCÉ le temps du sigle plutôt que relâché à chaque lettre.",
+      "Pour 2-3 lettres, pas besoin de Caps Lock : un seul Shift maintenu suffit, et c'est plus rapide à relâcher ensuite.",
+      "Exercice concentré sur des majuscules enchaînées."
+    ],
+    "keys": [
+      "U",
+      "S",
+      "A",
+      "H",
+      "T",
+      "M",
+      "L",
+      "C"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Codes et références (chiffres et majuscules)",
+    "content": [
+      "Un code postal, une référence produit, un numéro de série mélangent souvent majuscules et chiffres, sans logique de mot (« A1B 2C3 », « REF-2026 »).",
+      "Sans mot reconnaissable pour t'aider, seule la mémoire des touches individuelles fonctionne ici — c'est voulu, c'est le cas le plus exigeant du cursus.",
+      "Exercice qui mélange chiffres et majuscules."
+    ],
+    "keys": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "0",
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F"
+    ],
+    "tokens": 20
+  },
+  {
+    "title": "Mots — cinquième lot",
+    "content": [
+      "Retour aux mots réels après une série de leçons plus techniques (dates, montants, codes) — l'occasion de vérifier que le rythme naturel n'a pas été perdu.",
+      "Un mot ordinaire doit se sentir plus facile qu'un code ou une référence : si ce n'est pas le cas, ralentis et laisse le rythme revenir.",
+      "Vingt-six mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 26,
+    "words": true
+  },
+  {
+    "title": "Paire fréquente — OW / AI",
+    "content": [
+      "« ow » et « ai » apparaissent dans des mots courants (« how », « now », « main », « rain »).",
+      "O (annulaire droit) et W (annulaire gauche) sont un vrai croisement ; A et I restent chacun sur leur rangée, aux extrémités opposées.",
+      "Exercice concentré sur O, W, A et I."
+    ],
+    "keys": [
+      "o",
+      "w",
+      "a",
+      "i"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Paire fréquente — UR / LD",
+    "content": [
+      "« ur » et « ld » terminent des mots fréquents (« sure », « your », « old », « world »).",
+      "U et R sont voisins sur la rangée du haut à droite ; L et D traversent le clavier, un vrai changement de main.",
+      "Exercice concentré sur U, R, L et D."
+    ],
+    "keys": [
+      "u",
+      "r",
+      "l",
+      "d"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Terminaisons fréquentes — ABLE / MENT",
+    "content": [
+      "« -able » (« readable », « comfortable ») et « -ment » (« moment », « comment ») ferment des mots plus longs que les terminaisons courtes déjà vues.",
+      "Cinq lettres qui reviennent ensemble, dans le même ordre — comme « -tion » (leçon 47), un motif à mémoriser en bloc.",
+      "Exercice concentré sur A, B, L, E, M, N et T."
+    ],
+    "keys": [
+      "a",
+      "b",
+      "l",
+      "e",
+      "m",
+      "n",
+      "t"
+    ],
+    "tokens": 20
+  },
+  {
+    "title": "Terminaisons fréquentes — NESS / FUL",
+    "content": [
+      "« -ness » (« happiness », « darkness ») et « -ful » (« useful », « careful ») transforment un adjectif en nom ou renforcent son sens.",
+      "N, E, S sont déjà des touches très pratiquées à ce stade du cursus ; F et U le sont moins ensemble — c'est ce qui est ciblé ici.",
+      "Exercice concentré sur N, E, S, F, U et L."
+    ],
+    "keys": [
+      "n",
+      "e",
+      "s",
+      "f",
+      "u",
+      "l"
+    ],
+    "tokens": 20
+  },
+  {
+    "title": "Mots composés (apostrophe)",
+    "content": [
+      "« don't », « can't », « it's », « we're » : les contractions anglaises collent une apostrophe au milieu du mot, sans espace.",
+      "L'apostrophe (auriculaire droit, leçon 11) s'insère ICI comme une lettre de plus dans le mot, pas comme une ponctuation de fin.",
+      "Exercice qui mélange lettres et apostrophe."
+    ],
+    "keys": [
+      "d",
+      "o",
+      "n",
+      "c",
+      "a",
+      "t",
+      "i",
+      "s",
+      "w",
+      "e",
+      "r",
+      "'"
+    ],
+    "tokens": 20
+  },
+  {
+    "title": "Chiffres romains (I V X L C D M)",
+    "content": [
+      "Les chiffres romains servent encore aux numéros de chapitre, aux siècles, à certaines énumérations (« Chapitre IV », « XXe siècle »).",
+      "Toujours en MAJUSCULES, toujours les mêmes sept lettres — un cas particulier facile à automatiser une fois repéré.",
+      "Exercice concentré sur I, V, X, L, C, D et M en majuscules."
+    ],
+    "keys": [
+      "I",
+      "V",
+      "X",
+      "L",
+      "C",
+      "D",
+      "M"
+    ],
+    "tokens": 18
+  },
+  {
+    "title": "Mots — sixième lot",
+    "content": [
+      "Un nouveau lot de mots réels, pour la dernière fois avant la consolidation qui clôt ce lot de leçons.",
+      "L'objectif à ce stade n'est plus de découvrir de nouvelles touches, mais de stabiliser l'accuracy sur tout ce qui a été vu.",
+      "Trente mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 30,
+    "words": true
+  },
+  {
+    "title": "Mots — septième lot",
+    "content": [
+      "Encore un lot de mots réels, le plus long jusqu'ici — l'endurance construite depuis la leçon 13 se mesure sur la durée, pas sur un seul exercice.",
+      "Si l'accuracy tient du premier au dernier mot, la leçon suivante (consolidation) devrait se sentir facile en comparaison.",
+      "Trente-deux mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 32,
+    "words": true
+  },
+  {
+    "title": "Consolidation — chiffres et symboles combinés",
+    "content": [
+      "Revue de tout ce qui a été introduit depuis les dates : dates, montants, heures, pourcentages/unités, acronymes, codes — rien de nouveau, juste du rappel à un tempo réaliste.",
+      "C'est cette combinaison-là — chiffres et symboles mêlés aux lettres — qui revient le plus souvent dans un vrai usage quotidien du clavier.",
+      "Exercice qui mélange chiffres et symboles de ce lot."
+    ],
+    "keys": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "0",
+      "/",
+      "-",
+      ".",
+      "$",
+      "%",
+      ":"
+    ],
+    "tokens": 26
+  },
+  {
+    "title": "Rythme et régularité",
+    "content": [
+      "À partir d'ici, plus aucune touche n'est nouvelle : le cursus travaille le RYTHME — un intervalle régulier entre chaque frappe, plutôt qu'une pointe de vitesse suivie d'un ralentissement.",
+      "Un tempo constant, même modeste, bat toujours des à-coups rapides : c'est ce que mesure le Burst dans tes statistiques de Runs (Solo).",
+      "Exercice sur la rangée de base et la rangée du haut mélangées, à un rythme volontairement stable."
+    ],
+    "keys": [
+      "a",
+      "s",
+      "d",
+      "f",
+      "g",
+      "h",
+      "j",
+      "k",
+      "l",
+      ";",
+      "q",
+      "w",
+      "e",
+      "r",
+      "t",
+      "y",
+      "u",
+      "i",
+      "o",
+      "p"
+    ],
+    "tokens": 24
+  },
+  {
+    "title": "Mots — huitième lot",
+    "content": [
+      "Un nouveau lot de mots réels, au tempo travaillé dans la leçon précédente : régulier, sans à-coups.",
+      "Écoute (ou sens) le rythme de tes propres frappes — un métronome intérieur vaut mieux qu'un chronomètre.",
+      "Vingt-huit mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 28,
+    "words": true
+  },
+  {
+    "title": "Rappel clavier complet — lettres",
+    "content": [
+      "Grand rappel : les 26 lettres, minuscules et majuscules, comme à la leçon 25 — mais avec davantage de jetons, pour une vraie épreuve d'endurance.",
+      "Si une touche précise te fait encore hésiter à ce stade, c'est elle qu'il faut retravailler isolément (Drill, en Solo, cible automatiquement tes points faibles).",
+      "Exercice sur les 26 lettres, minuscules et majuscules mélangées."
+    ],
+    "keys": [
+      "a",
+      "b",
+      "c",
+      "d",
+      "e",
+      "f",
+      "g",
+      "h",
+      "i",
+      "j",
+      "k",
+      "l",
+      "m",
+      "n",
+      "o",
+      "p",
+      "q",
+      "r",
+      "s",
+      "t",
+      "u",
+      "v",
+      "w",
+      "x",
+      "y",
+      "z",
+      "A",
+      "B",
+      "C",
+      "D",
+      "E",
+      "F",
+      "G",
+      "H",
+      "I",
+      "J",
+      "K",
+      "L",
+      "M",
+      "N",
+      "O",
+      "P",
+      "Q",
+      "R",
+      "S",
+      "T",
+      "U",
+      "V",
+      "W",
+      "X",
+      "Y",
+      "Z"
+    ],
+    "tokens": 26
+  },
+  {
+    "title": "Rappel clavier complet — chiffres et ponctuation",
+    "content": [
+      "Deuxième grand rappel : chiffres et ponctuation de base (leçons 12 et 11), le duo le plus fréquent dans un texte ordinaire.",
+      "Ponctuation et chiffres partagent souvent la même main que le mot qui les précède — pas de pause avant de les frapper.",
+      "Exercice qui mélange chiffres et ponctuation de base."
+    ],
+    "keys": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "0",
+      ",",
+      ".",
+      "?",
+      "!",
+      "'"
+    ],
+    "tokens": 24
+  },
+  {
+    "title": "Mots — neuvième lot",
+    "content": [
+      "Encore des mots réels — la répétition, à ce stade du cursus, sert surtout à consolider ce qui est déjà acquis, pas à découvrir.",
+      "Si cette leçon te semble facile, c'est bon signe : la fluidité progresse.",
+      "Trente mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 30,
+    "words": true
+  },
+  {
+    "title": "Rappel — symboles étendus",
+    "content": [
+      "Troisième grand rappel : crochets, accolades, chevrons, pipe, backtick (leçons 36 à 45) — les symboles les plus rares du cursus, donc les plus vite oubliés sans révision.",
+      "Rien de nouveau ici, seulement la mémoire des touches qu'il faut entretenir.",
+      "Exercice qui mélange les symboles étendus."
+    ],
+    "keys": [
+      "[",
+      "]",
+      "{",
+      "}",
+      "<",
+      ">",
+      "+",
+      "=",
+      "~",
+      "|",
+      "\\",
+      "'",
+      "`"
+    ],
+    "tokens": 24
+  },
+  {
+    "title": "Rappel — majuscules et acronymes",
+    "content": [
+      "Quatrième rappel : majuscules enchaînées (leçon 64) et mélange majuscules/minuscules/ponctuation (leçon 41) — le duo le plus fréquent dans un texte technique.",
+      "Le Shift maintenu pour un sigle court reste le bon réflexe — pas de Caps Lock pour 2-3 lettres.",
+      "Exercice qui mélange majuscules enchaînées et ponctuation."
+    ],
+    "keys": [
+      "U",
+      "S",
+      "A",
+      "H",
+      "T",
+      "M",
+      "L",
+      "C",
+      ".",
+      ","
+    ],
+    "tokens": 22
+  },
+  {
+    "title": "Mots longs — dernier passage",
+    "content": [
+      "Dernier passage sur les mots longs (8 lettres et plus) : l'endurance sur un mot entier ne devrait plus faiblir en fin de frappe, comme aux leçons 53 et 54.",
+      "Un mot long réussi du premier au dernier caractère, au même rythme, est un bon indicateur que le cursus a fait son travail.",
+      "Vingt-huit mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 28,
+    "words": true
+  },
+  {
+    "title": "Rappel — mots composés et abréviations",
+    "content": [
+      "Cinquième rappel : trait d'union, apostrophe, abréviations pointées (leçons 62, 63, 72) — la ponctuation qui s'insère AU MILIEU d'un mot plutôt qu'autour.",
+      "Ce sont ces motifs qui distinguent un texte tapé couramment d'un texte tapé mot par mot, avec une pause à chaque frontière.",
+      "Exercice qui mélange lettres, tiret, apostrophe et point."
+    ],
+    "keys": [
+      "a",
+      "s",
+      "d",
+      "f",
+      "j",
+      "k",
+      "l",
+      "-",
+      "'",
+      "."
+    ],
+    "tokens": 22
+  },
+  {
+    "title": "Mots — dixième lot",
+    "content": [
+      "Dixième lot de mots réels — la moitié de ce dernier grand groupe de leçons est passée.",
+      "Continue au même tempo qu'à la leçon précédente : la régularité, pas l'accélération, reste l'objectif.",
+      "Trente mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 30,
+    "words": true
+  },
+  {
+    "title": "Endurance — série longue",
+    "content": [
+      "Le plus long exercice de mots du cursus jusqu'ici : l'objectif n'est plus la découverte, mais la tenue — garder la même accuracy du premier au dernier mot.",
+      "Si la concentration lâche en cours de route, une courte pause volontaire (Tab pour recommencer) vaut mieux qu'insister en dégradant l'accuracy.",
+      "Trente-six mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 36,
+    "words": true
+  },
+  {
+    "title": "Précision sous fatigue",
+    "content": [
+      "Un exercice long comme le précédent laisse apparaître les erreurs qui n'arrivaient qu'en fin de série — celles de fatigue de concentration, pas de méconnaissance d'une touche.",
+      "Repérer CE moment où l'accuracy commence à glisser est utile : c'est ton signal personnel pour ralentir, en Lesson comme dans un vrai Run.",
+      "Trente-deux mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 32,
+    "words": true
+  },
+  {
+    "title": "Mots — onzième lot",
+    "content": [
+      "Onzième lot de mots réels, retour à une longueur plus modeste après les deux leçons d'endurance.",
+      "Profite de ce répit pour viser une accuracy plus haute que ton minimum requis — la marge se reconstruit ici.",
+      "Vingt-six mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 26,
+    "words": true
+  },
+  {
+    "title": "Rappel — codes, dates et montants",
+    "content": [
+      "Sixième rappel : dates, montants, heures, codes (leçons 56 à 65) — la combinaison chiffres+symboles+majuscules la plus fréquente en usage réel.",
+      "C'est probablement la famille de motifs la plus rentable à maîtriser : formulaires, factures, références reviennent partout.",
+      "Exercice qui mélange chiffres, symboles et majuscules de ce thème."
+    ],
+    "keys": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "0",
+      "/",
+      "-",
+      ".",
+      "$",
+      ":",
+      "A",
+      "B",
+      "C"
+    ],
+    "tokens": 26
+  },
+  {
+    "title": "Mots — douzième lot",
+    "content": [
+      "Douzième lot de mots réels — la répétition continue de consolider ce qui, à ce stade, doit déjà être largement automatique.",
+      "Si une touche précise ralentit encore ta frappe dans ce lot, note-la : c'est elle qu'un Drill ciblé (Solo) corrigera le plus vite.",
+      "Trente mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 30,
+    "words": true
+  },
+  {
+    "title": "Régularité du tempo",
+    "content": [
+      "Retour explicite sur le rythme (comme la leçon 76) : à ce stade avancé, la régularité du tempo compte plus que la vitesse de pointe — c'est elle qui distingue une frappe experte d'une frappe simplement rapide.",
+      "Le Burst de tes Runs (Solo) mesure exactement ça : le pic de vitesse d'un mot isolé. Un bon typiste n'a pas besoin d'un Burst très élevé si son rythme ne varie jamais.",
+      "Trente mots de la liste standard, tempo stable visé."
+    ],
+    "keys": [],
+    "tokens": 30,
+    "words": true
+  },
+  {
+    "title": "Mots — treizième lot",
+    "content": [
+      "Treizième lot de mots réels — encore un pas vers la clôture du cursus.",
+      "À ce stade, il n'y a plus grand-chose à expliquer : seulement à répéter, jusqu'à ce que ce soit un réflexe et non un effort.",
+      "Trente-deux mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 32,
+    "words": true
+  },
+  {
+    "title": "Révision générale — tout mélangé",
+    "content": [
+      "Dernier grand rappel du cursus : lettres, chiffres et ponctuation de base, tous mélangés sans thème — le test le plus proche d'un texte réel tapé au clavier.",
+      "S'il reste une hésitation ici, ce n'est plus une question de leçon manquante : c'est une question de répétition, que les Runs (Solo) et Drill continueront d'apporter.",
+      "Exercice large, sans thème particulier."
+    ],
+    "keys": [
+      "a",
+      "b",
+      "c",
+      "d",
+      "e",
+      "f",
+      "g",
+      "h",
+      "i",
+      "j",
+      "k",
+      "l",
+      "m",
+      "n",
+      "o",
+      "p",
+      "q",
+      "r",
+      "s",
+      "t",
+      "u",
+      "v",
+      "w",
+      "x",
+      "y",
+      "z",
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "0",
+      ",",
+      ".",
+      "?",
+      "!",
+      "'"
+    ],
+    "tokens": 30
+  },
+  {
+    "title": "Mots — quatorzième lot",
+    "content": [
+      "Quatorzième lot de mots réels — la routine de ce dernier tronçon du cursus continue de payer, exercice après exercice.",
+      "Garde le même soin qu'à la toute première Lesson : la précision d'abord, toujours.",
+      "Trente mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 30,
+    "words": true
+  },
+  {
+    "title": "Vers les vraies phrases",
+    "content": [
+      "Le cursus Apprendre travaille des MOTS, pas des phrases grammaticales complètes — pour de vraies phrases avec majuscule en tête et ponctuation naturelle, direction Solo, Mode Time ou Words avec le Setting Punctuation activé, ou le Mode Quotes pour du texte déjà écrit.",
+      "Ce que ce cursus t'a donné — ne pas regarder le clavier, un rythme régulier, les touches et symboles automatisés — est ce qui rend CES phrases-là faciles à taper, une fois là-bas.",
+      "Dernier lot de mots avant la clôture : vingt-huit mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 28,
+    "words": true
+  },
+  {
+    "title": "Mots — quinzième lot",
+    "content": [
+      "Avant-dernier lot du cursus — plus qu'une poignée de leçons avant la fin.",
+      "Rien de nouveau à apprendre ici : seulement à profiter de la fluidité acquise.",
+      "Trente-deux mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 32,
+    "words": true
+  },
+  {
+    "title": "Fluidité — enchaînement sans pause",
+    "content": [
+      "Comme la Fluidité de la leçon 13, mais avec tout le clavier derrière toi cette fois : enchaîne les mots sans pause volontaire entre eux, comme le fait un typiste expérimenté.",
+      "Ne corrige pas chaque erreur par réflexe — garde le rythme, la précision est déjà dans tes doigts à ce stade.",
+      "Trente mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 30,
+    "words": true
+  },
+  {
+    "title": "Mots — dernière ligne droite",
+    "content": [
+      "Avant-dernière leçon du cursus : un dernier lot de mots réels avant la clôture.",
+      "Prends un instant pour remarquer le chemin parcouru depuis la leçon 1 — F et J, une bosse sous les index, et rien d'autre au départ.",
+      "Trente-deux mots de la liste standard."
+    ],
+    "keys": [],
+    "tokens": 32,
+    "words": true
+  },
+  {
+    "title": "Rappel — paires et terminaisons fréquentes",
+    "content": [
+      "Dernier rappel ciblé : les paires de lettres et terminaisons anglaises les plus fréquentes vues depuis la leçon 17 (th, in, er, an, re, on, at, en, nd, ing, tion…), toutes mélangées.",
+      "Ce sont ces motifs, plus que les lettres individuelles, qui font la différence entre taper lettre par lettre et taper un mot entier comme un seul geste.",
+      "Exercice qui mélange les touches de ces paires fréquentes."
+    ],
+    "keys": [
+      "t",
+      "h",
+      "i",
+      "n",
+      "e",
+      "r",
+      "a",
+      "o",
+      "d",
+      "g"
+    ],
+    "tokens": 24
+  },
+  {
+    "title": "Fluidité finale",
+    "content": [
+      "Dernière leçon du cursus « Apprendre ». Le clavier entier, sans jamais le regarder, un rythme qui tient sur la durée : c'est ce qui a été construit, leçon après leçon, depuis la posture et les repères F/J.",
+      "Ne corrige pas chaque erreur par réflexe — garde le rythme, la précision est déjà dans tes doigts.",
+      "Après cette leçon : place aux Runs (Solo, tous Modes), au Mode Drill pour cibler tes points faibles précis, et à Trigram Drill pour le contexte autour de tes fautes. Le cursus t'a préparé le terrain — le reste vient de la pratique."
+    ],
+    "keys": [],
+    "tokens": 34,
+    "words": true
+  }
+]

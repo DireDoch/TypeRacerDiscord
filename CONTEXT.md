@@ -389,7 +389,8 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
   réglages voisins. `applyPreferences()` est appelé par `main.ts` avant le premier écran
   (la police doit être en place au premier rendu, pas après un clignotement).
 - Écran **Apprendre** (`ui/learn.ts`, entrée au menu) : cursus complet (issues #4, #8) —
-  liste des Lessons (verrouillée/disponible/complétée), 13 leçons réelles dans
+  liste des Lessons (verrouillée/disponible/complétée), les 100 Lessons du cursus, contenu en DONNÉE
+  (`src/content/lessons.json`, #201) et moteur dans
   `core/learn.ts` (posture + F/J, rangées de base/haut/bas, majuscules, ponctuation,
   chiffres, mots complets, fluidité) avec le **barème statique par tranches** (70/80/90 %
   d'accuracy sur 0/5/10, modifiable en un seul endroit) et le générateur de séquences
