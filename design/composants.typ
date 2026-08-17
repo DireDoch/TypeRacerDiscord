@@ -389,7 +389,12 @@
 ///
 /// Renvoie des éléments de dessin comme les composants qu'elle appelle : une
 /// scène reste elle-même composable.
-#let scene(voiture: true, clavier: true, couleur: corail, debord: 0) = {
+/// `sol` peint la dalle. C'est le SEUL contraste qui survive à 96 px, la taille
+/// réelle du grand visuel dans le pop-out de profil (#171) : un petit ajout posé
+/// à côté de la voiture y tient dans 3 px, une dalle qui change de couleur se
+/// voit de loin. C'est ce qui sépare `lobby` (éteinte) de `race` (éclairée) —
+/// les feux et les traînées ne sont plus que le second détail, lu en grand.
+#let scene(voiture: true, clavier: true, couleur: corail, sol: sourd, debord: 0) = {
   import cetz.draw: *
 
   // `group` cantonne la translation : elle ne fuit pas sur ce que l'appelant
@@ -404,7 +409,7 @@
   if clavier {
     group({
       if not voiture { translate((0, _scene-centre - _scene-bas / 2)) }
-      _clavier(debord: debord)
+      _clavier(couleur: sol, debord: debord)
     })
   }
 }

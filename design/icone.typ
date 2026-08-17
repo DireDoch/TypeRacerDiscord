@@ -17,7 +17,7 @@
 // 1024 pt à 72 PPI = 1024 px. Le petit visuel de la Rich Presence est
 // `app-icon` (voir `app-icon.typ`), il n'est pas dans cette liste.
 
-#import "composants.typ": cetz, clavier, corail, feux, logo, nuit, scene, sol-lave, vitesse, voiture
+#import "composants.typ": cetz, clavier, feux, nuit, scene, sol-lave, sourd, texte, voiture
 
 #let etat = sys.inputs.at("etat", default: "race")
 
@@ -35,18 +35,29 @@
 // pour tous les `length` ci-dessous, et ce qui dépasse ne coûte rien.
 #let DEBORD = 2.6
 
+// UN seul `length` pour les six. La voiture fait 10.1 unités de large : à 3.3 cm
+// elle occupe 92 % des 1024 px, contre 73 % avant (#171 — « ~28 % du carré est
+// vide »). C'est du zoom gratuit, rien n'est redessiné.
+//
+// Partagé et non réglé état par état : six valeurs, c'était six cadrages à
+// re-régler au premier composant qui bouge, et chacune tirée vers le bas par
+// l'élément le plus large de SON état — c'est comme ça que `race` était le plus
+// petit des six pour loger des traînées illisibles à 96 px.
+#let LONGUEUR = 3.3cm
+
 #let visuels = (
-  // Menu : le seul à porter le wordmark. Les cinq autres sont icon-only (#115),
-  // un mot ne survit pas à la réduction de la Rich Presence quand il partage la
-  // place avec une scène — ici il l'a pour lui.
+  // Menu : la scène nue, au repos, dalle neutre — c'est l'état par défaut, et
+  // c'est de ne RIEN ajouter qu'il se reconnaît.
+  //
+  // Le wordmark n'y est plus (#171) : à 96 px il faisait 4 px de haut, une
+  // bouillie grise où le rouge du 2ᵉ « p » — la faute de frappe, tout le propos
+  // du logo — disparaissait entièrement. Ce fichier écrivait lui-même qu'« un
+  // mot ne survit pas à la réduction de la Rich Presence » et le mettait quand
+  // même. Le wordmark garde ses deux emplois où il est lu en grand :
+  // `app-icon.typ` et `cover.typ`.
   menu: place(
     center + horizon,
-    stack(
-      dir: ttb,
-      spacing: 1.5cm,
-      align(center)[#logo(taille-texte: 2.4cm)],
-      cetz.canvas(length: 2.5cm, { scene(debord: DEBORD) }),
-    ),
+    cetz.canvas(length: LONGUEUR, { scene(debord: DEBORD) }),
   ),
 
   // Practice : voiture seule, sans le clavier de la course. `scene()` la
@@ -54,27 +65,34 @@
   // autres au lieu de flotter plus haut.
   // Seule icône sans sol, donc seule à rester en `align` : rien n'y déborde.
   practice: align(center + horizon)[
-    #cetz.canvas(length: 2.9cm, { scene(clavier: false) })
+    #cetz.canvas(length: LONGUEUR, { scene(clavier: false) })
   ],
 
   // Lobby : la scène au repos sous les feux de départ. Un seul feu allumé —
   // c'est l'attente qui définit un salon, pas le départ.
+  // Dalle ÉTEINTE (#171) : le feu unique fait 3 px à 96 px, il ne peut pas
+  // porter la distinction tout seul. La piste sombre, elle, se lit de loin.
   lobby: place(
     center + horizon,
-    cetz.canvas(length: 2.6cm, {
-      scene(debord: DEBORD)
+    cetz.canvas(length: LONGUEUR, {
+      scene(sol: sourd.darken(45%), debord: DEBORD)
       feux(allumes: 1)
     }),
   ),
 
-  // Race : la même scène, lancée. Les traînées débordent derrière l'arrière du
-  // véhicule (x négatif), d'où un `length` plus court : la boîte est plus large.
+  // Race : la même scène, lancée. Dalle ÉCLAIRÉE (#171), pendant exact du sol
+  // éteint du lobby : c'est la piste qui dit « ça court ». `texte` et pas
+  // `braise` — un sol jaune se confondrait avec la lave et avec les touches
+  // martelées du spam à cette taille.
+  //
+  // `vitesse()` retiré : les traînées partent 3 unités DERRIÈRE la voiture,
+  // c'est-à-dire qu'elles élargissaient la boîte d'un tiers et payaient le
+  // cadrage des six (voir `LONGUEUR`) pour trois traits de 3 px que #171 a
+  // justement constatés illisibles. Le composant reste, `background.typ`
+  // l'affiche en grand, là où il se lit.
   race: place(
     center + horizon,
-    cetz.canvas(length: 2.5cm, {
-      scene(debord: DEBORD)
-      vitesse()
-    }),
+    cetz.canvas(length: LONGUEUR, { scene(sol: texte, debord: DEBORD) }),
   ),
 
   // Floor is lava : la piste a été remplacée par la lave, et la voiture est en
@@ -82,7 +100,7 @@
   // dégage aussi l'espace où les bulles se voient, sous la caisse.
   "floor-is-lava": place(
     center + horizon,
-    cetz.canvas(length: 2.7cm, {
+    cetz.canvas(length: LONGUEUR, {
       import cetz.draw: *
       sol-lave(debord: DEBORD)
       group({
@@ -98,7 +116,7 @@
   // bas de caisse, et c'est justement ce jaillissement qui dit « spam ».
   spam: place(
     center + horizon,
-    cetz.canvas(length: 2.7cm, {
+    cetz.canvas(length: LONGUEUR, {
       import cetz.draw: *
       clavier(accents: (0, 2, 4), debord: DEBORD)
       group({
