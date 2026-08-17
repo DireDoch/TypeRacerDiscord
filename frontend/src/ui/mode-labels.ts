@@ -8,6 +8,7 @@
 
 import type { RunConfig } from "../core/types";
 import type { Difficulty } from "../core/difficulty";
+import type { GameMode } from "../core/net";
 
 export const MODE_LABELS: Record<RunConfig["mode"], string> = {
   time: "temps",
@@ -24,6 +25,17 @@ export const DIFFICULTY_LABELS: Record<Difficulty, string> = {
   normal: "Normal",
   expert: "Expert",
   master: "Master",
+};
+
+/** Les Modes de jeu offerts (ADR 0015, 0016). Un seul à la fois : ils ne se cumulent pas. */
+export const GAME_MODES: GameMode[] = ["normal", "floorIsLava", "spam"];
+
+/** Deux lecteurs depuis #203 : la ligne « Mode de jeu » du lobby et le bandeau
+ *  `modeArtHtml` de `race.ts` — d'où leur place ici, avec les autres libellés. */
+export const GAME_MODE_LABELS: Record<GameMode, string> = {
+  normal: "Normal",
+  floorIsLava: "Floor is lava",
+  spam: "Spam",
 };
 
 /**
