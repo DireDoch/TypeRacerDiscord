@@ -1,5 +1,6 @@
 // =============================================================================
-//  learn.test.ts — barème par tranches + générateur de séquences sur touches fixes.
+//  learn.test.ts — barème par tranches, générateur de séquences, et les invariants
+//  du cursus lu depuis `src/content/lessons.json` (#201).
 // =============================================================================
 
 import { describe, expect, it } from "vitest";
@@ -66,6 +67,33 @@ describe("LESSONS (cursus complet)", () => {
     for (const l of LESSONS) {
       const ex = generateLessonExercise(l, new Rng(1));
       expect(ex).toHaveLength(l.tokens);
+    }
+  });
+
+  // Depuis #201 le cursus est une DONNÉE (`src/content/lessons.json`) et le `as Lesson[]`
+  // de `learn.ts` est le seul endroit où on lui fait confiance : ces vérifications-là sont
+  // ce qui remplace le typage d'un littéral TypeScript.
+
+  it("aucun titre en double — la liste se navigue au titre", () => {
+    const titles = LESSONS.map((l) => l.title);
+    expect(new Set(titles).size).toBe(titles.length);
+  });
+
+  it("aucun paragraphe de contenu vide", () => {
+    for (const l of LESSONS) {
+      for (const p of l.content) expect(p.trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  it("les touches d'un exercice sont des caractères simples", () => {
+    for (const l of LESSONS) {
+      for (const k of l.keys) expect([...k]).toHaveLength(1);
+    }
+  });
+
+  it("une référence d'illustration, si elle existe, n'est pas vide (ADR 0006)", () => {
+    for (const l of LESSONS) {
+      if (l.diagram !== undefined) expect(l.diagram.trim().length).toBeGreaterThan(0);
     }
   });
 });
