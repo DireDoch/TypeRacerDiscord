@@ -33,3 +33,22 @@ ici — leurs notes vivent sur la page des releases GitHub.
   autorité sur le papier mais annonçait `0.1.0` là où les tags publiés en étaient à
   `v0.0.3`, et `frontend/package.json` disait encore `0.0.0`. Le manifeste du backend
   tranche désormais, et il est juste.
+- En entrant dans un salon, le réglage « Décompte » annonçait 7 secondes une fraction de
+  seconde avant de retomber sur la vraie valeur du salon. Il affiche tout de suite la
+  bonne.
+
+### Sous le capot
+
+Rien de visible en jeu, mais c'est ce qui rend la suite plus sûre à écrire.
+
+- Le cœur d'une partie tapée — l'horloge, le texte, le relevé de frappe, la condition
+  d'échec — est désormais au même endroit pour les trois écrans où l'on tape (solo,
+  course, Apprendre), au lieu d'être recâblé trois fois. Il est testé pour la première
+  fois, et deux écarts entre les trois écrans ont disparu au passage.
+- Les réglages de salon offerts par le lobby et ceux que le serveur accepte sont
+  maintenant vérifiés l'un contre l'autre à chaque build. Quand les deux divergeaient,
+  un réglage cliqué ne faisait rien du tout, sans le moindre message.
+- Les leçons d'Apprendre sont devenues un fichier de contenu à part : les relire ou les
+  corriger ne demande plus d'ouvrir du code.
+- Le moteur multijoueur, jusque-là un seul fichier de 3 300 lignes, est séparé en trois —
+  le fil réseau, le salon, la course.
