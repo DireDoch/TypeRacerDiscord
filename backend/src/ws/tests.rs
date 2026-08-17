@@ -1534,30 +1534,45 @@ fn expert_est_refuse_comme_reglage_de_salon() {
 }
 
 #[test]
-fn fail_rejette_si_la_room_n_est_pas_sous_master() {
+fn fail_hors_master_est_enregistre_en_abandon() {
+    // #186 : l'ÉCHEC est refusé (la Room n'est pas sous Master), mais le message n'est
+    // pas jeté en silence — son auteur s'est déjà arrêté de taper côté client, et sans
+    // réponse il restait sur « Terminé — en attente des autres… ». Seul, la course
+    // entière restait ouverte jusqu'au watchdog.
     let rooms = new_rooms();
     join(&rooms, "c1", "p1"); // Difficulté par défaut : Normal
     start_race(&rooms, "c1", "p1");
     let target = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
     let bad = wrong_keystroke(target.split(' ').next().unwrap_or(""));
-    assert!(!fail_race(&rooms, "c1", "p1", vec![bad]));
-    assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    assert!(fail_race(&rooms, "c1", "p1", vec![bad]), "dernier partant : la course se clôt");
+    assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
 }
 
 #[test]
-fn fail_rejette_une_fausse_declaration() {
+fn une_fausse_declaration_d_echec_devient_un_abandon() {
     let rooms = new_rooms();
     join(&rooms, "c1", "p1");
+    join(&rooms, "c1", "p2");
     assert!(set(&rooms, "c1", "p1", RoomSetting::Difficulty(Difficulty::Master)));
     start_race(&rooms, "c1", "p1");
     let target = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
     let first_word = target.split(' ').next().unwrap_or("");
+    let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
     // Le client PRÉTEND avoir échoué, mais son log tape le mot EXACTEMENT : le
     // serveur rejoue contre son propre texte et NE confirme PAS d'échec.
     let correct: Vec<Keystroke> =
         first_word.chars().map(|c| Keystroke { t: 100.0, k: c.to_string(), ctrl: None }).collect();
-    assert!(!fail_race(&rooms, "c1", "p1", correct));
-    assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
+    assert!(!fail_race(&rooms, "c1", "p1", correct), "p2 court encore");
+
+    // Sorti de la course en ABANDON, pas en échec : le pourcentage d'échec aurait
+    // maquillé en faute une déclaration que le serveur n'a pas confirmée.
+    let ok = matches!(
+        rx.try_recv(),
+        Ok(ServerEvent::PlayerFinished { ref player_id, forfeit: true, failed_percent: None, .. })
+            if player_id == "p1"
+    );
+    assert!(ok, "abandon diffusé pour p1");
+    assert!(fail_race(&rooms, "c1", "p2", vec![wrong_keystroke(first_word)])); // clôture
 }
 
 #[test]
