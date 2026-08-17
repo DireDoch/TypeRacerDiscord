@@ -1,6 +1,26 @@
 # TypeRacerDiscord
 A embedded game for playing with your friend in discord
 
+## Documentation
+
+**[`Docs/documentation.pdf`](Docs/documentation.pdf)** — la documentation technique du
+projet : ce que le jeu fait, comment chaque bloc a été construit, et comment le système
+tient debout. Source Typst dans [`Docs/documentation.typ`](Docs/documentation.typ),
+recompilable avec :
+
+```sh
+typst compile --root . Docs/documentation.typ Docs/documentation.pdf
+```
+
+Ce README garde ce que le PDF ne couvre pas volontairement : la mise en place locale et le
+runbook complet du portail Discord (tunnel, URL Mappings, App Testers, pièges).
+
+| Aussi | |
+| --- | --- |
+| [`CONTEXT.md`](CONTEXT.md) | le glossaire de domaine — autorité sur le nommage |
+| [`Docs/API.md`](Docs/API.md) | le contrat HTTP détaillé, corps de requête compris |
+| [`Docs/adr/`](Docs/adr/) | les 19 décisions d'architecture |
+
 ## Démarrage rapide
 
 ```sh
@@ -34,8 +54,8 @@ exige `APININJAS_API_KEY` (sinon 502 → le Mode Quotes affiche une erreur).
 ## Tests automatisés
 
 ```sh
-cd frontend && npx vitest run   # 28 tests (domaine TS = référence de l'algo)
-cd backend  && cargo test       # 13 tests (parité Rust + store SQLite)
+cd frontend && npx vitest run   # 382 tests (domaine TS = référence de l'algo)
+cd backend  && cargo test       # 159 tests (parité Rust + store SQLite)
 ```
 
 ## Test manuel
