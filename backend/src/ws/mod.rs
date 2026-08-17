@@ -278,52 +278,41 @@ pub async fn handle_socket(
             _ => continue,
         };
         match serde_json::from_str::<ClientEvent>(&text) {
+            // Un Réglage de salon = une variante `RoomSetting` (#204). Le dispatch ne sait
+            // plus lesquels demandent d'aller rechercher un texte : `SettingOutcome` le dit.
             Ok(ClientEvent::SetTextSource { source }) => {
-                // `match` direct sur `SettingOutcome` (ADR 0017) : seul `AppliedNeedsRetext`
-                // déclenche `spawn_refresh_text`, sans passer par un `bool` qui masquerait
-                // la distinction si `RoomSetting::apply` en venait à renvoyer `Applied` ici.
-                let outcome = apply_setting(&rooms, &key, &player_id, RoomSetting::TextSource(source));
-                if outcome == SettingOutcome::AppliedNeedsRetext {
-                    spawn_refresh_text(rooms.clone(), key.clone(), quotes.clone());
-                }
+                apply_room_setting(&rooms, &key, &player_id, RoomSetting::TextSource(source), &quotes)
             }
             Ok(ClientEvent::SetMaxPlayers { max }) => {
-                set_max_players(&rooms, &key, &player_id, max as usize);
+                apply_room_setting(&rooms, &key, &player_id, RoomSetting::MaxPlayers(max as usize), &quotes)
             }
             Ok(ClientEvent::SetCountdown { seconds }) => {
-                set_countdown(&rooms, &key, &player_id, seconds);
+                apply_room_setting(&rooms, &key, &player_id, RoomSetting::Countdown(seconds), &quotes)
             }
             Ok(ClientEvent::SetReadyCheck { enabled }) => {
-                set_ready_check(&rooms, &key, &player_id, enabled);
+                apply_room_setting(&rooms, &key, &player_id, RoomSetting::ReadyCheck(enabled), &quotes)
             }
+            // PAS un Réglage de salon (ADR 0017) : n'importe quel présent se marque prêt.
             Ok(ClientEvent::SetReady { ready }) => {
                 set_ready(&rooms, &key, &player_id, ready);
             }
             Ok(ClientEvent::SetDifficulty { difficulty }) => {
-                set_difficulty(&rooms, &key, &player_id, difficulty);
+                apply_room_setting(&rooms, &key, &player_id, RoomSetting::Difficulty(difficulty), &quotes)
             }
             Ok(ClientEvent::SetGameMode { mode }) => {
-                // Comme SetTextSource (ADR 0017) : `match` direct sur `SettingOutcome`, pas
-                // sur un `bool`. Le mode impose son texte (ADR 0015) — `AppliedNeedsRetext`
-                // le regénère hors verrou, la Source peut demander un aller-retour.
-                let outcome = apply_setting(&rooms, &key, &player_id, RoomSetting::GameMode(mode));
-                if outcome == SettingOutcome::AppliedNeedsRetext {
-                    spawn_refresh_text(rooms.clone(), key.clone(), quotes.clone());
-                }
+                apply_room_setting(&rooms, &key, &player_id, RoomSetting::GameMode(mode), &quotes)
             }
             Ok(ClientEvent::SetLavaInterval { seconds }) => {
-                set_lava_interval(&rooms, &key, &player_id, seconds);
+                apply_room_setting(&rooms, &key, &player_id, RoomSetting::LavaInterval(seconds), &quotes)
             }
-            // Le texte est reposé sous le verrou (le mot répété) : rien à regénérer hors
-            // verrou, contrairement à `SetTextSource`/`SetGameMode`.
             Ok(ClientEvent::SetSpamWord { word }) => {
-                set_spam_word(&rooms, &key, &player_id, word);
+                apply_room_setting(&rooms, &key, &player_id, RoomSetting::SpamWord(word), &quotes)
             }
             Ok(ClientEvent::SetSpamThreshold { count }) => {
-                set_spam_threshold(&rooms, &key, &player_id, count);
+                apply_room_setting(&rooms, &key, &player_id, RoomSetting::SpamThreshold(count), &quotes)
             }
             Ok(ClientEvent::SetSpamTimeCap { seconds }) => {
-                set_spam_time_cap(&rooms, &key, &player_id, seconds);
+                apply_room_setting(&rooms, &key, &player_id, RoomSetting::SpamTimeCap(seconds), &quotes)
             }
             Ok(ClientEvent::StartRace) => start_race(&rooms, &key, &player_id),
             Ok(ClientEvent::Progress { chars_done, reps }) => {
@@ -601,29 +590,23 @@ fn normalize_quote(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// SetTextSource : Réglage de salon (#129). `bool` = accepté, pour les tests — le
-/// dispatch, lui, `match` `SettingOutcome` directement (ADR 0017) : il a besoin de
-/// distinguer `AppliedNeedsRetext` (déclenche `spawn_refresh_text` hors verrou), pas
-/// seulement « accepté ».
-fn set_text_source(rooms: &Rooms, key: &str, player_id: &str, source: TextSource) -> bool {
-    apply_setting(rooms, key, player_id, RoomSetting::TextSource(source)).accepted()
-}
-
-/// SetMaxPlayers : Réglage de salon (#129).
-fn set_max_players(rooms: &Rooms, key: &str, player_id: &str, max: usize) -> bool {
-    apply_setting(rooms, key, player_id, RoomSetting::MaxPlayers(max)).accepted()
-}
-
-/// SetCountdown : Réglage de salon (#129).
-fn set_countdown(rooms: &Rooms, key: &str, player_id: &str, seconds: u32) -> bool {
-    apply_setting(rooms, key, player_id, RoomSetting::Countdown(seconds)).accepted()
-}
-
-/// SetReadyCheck : Réglage de salon (#129). Vide les prêts déjà marqués à chaque bascule
-/// (ON ou OFF) — une activation repart de zéro, une désactivation ne laisse pas des
-/// prêts stales si le réglage est réactivé plus tard.
-fn set_ready_check(rooms: &Rooms, key: &str, player_id: &str, enabled: bool) -> bool {
-    apply_setting(rooms, key, player_id, RoomSetting::ReadyCheck(enabled)).accepted()
+/// Applique un Réglage de salon, puis relance la génération de texte HORS VERROU si le
+/// Réglage l'exige (une Quote demande un aller-retour réseau, ADR 0017).
+///
+/// Quels Réglages l'exigent n'est PAS connu ici : `SettingOutcome::AppliedNeedsRetext` le
+/// dit. Avant #204, chaque `Set*` du dispatch passait par une fonction `set_*` à son nom
+/// qui n'ajoutait rien à `apply_setting` — dix passe-plats, et la connaissance du retext
+/// recopiée dans deux bras du `match`.
+fn apply_room_setting(
+    rooms: &Rooms,
+    key: &RoomKey,
+    player_id: &str,
+    setting: RoomSetting,
+    quotes: &Arc<QuoteClient>,
+) {
+    if apply_setting(rooms, key, player_id, setting) == SettingOutcome::AppliedNeedsRetext {
+        spawn_refresh_text(rooms.clone(), key.clone(), quotes.clone());
+    }
 }
 
 /// SetReady : n'importe quel présent se marque prêt/pas prêt, hors course. Un absent
@@ -648,42 +631,6 @@ fn set_ready(rooms: &Rooms, key: &str, player_id: &str, ready: bool) -> bool {
 /// OFF (défaut) : toujours vrai, comportement de départ inchangé.
 fn all_present_ready(room: &Room) -> bool {
     !room.ready_check || room.players.iter().all(|p| room.ready.contains(p))
-}
-
-/// SetDifficulty : Réglage de salon (#129) — Expert n'en fait pas partie (ADR 0013),
-/// rejeté par `RoomSetting::value_is_valid`.
-fn set_difficulty(rooms: &Rooms, key: &str, player_id: &str, difficulty: Difficulty) -> bool {
-    apply_setting(rooms, key, player_id, RoomSetting::Difficulty(difficulty)).accepted()
-}
-
-/// SetGameMode : Réglage de salon (#129, ADR 0015). `bool` = accepté, pour les tests —
-/// même remarque que `set_text_source` : le dispatch `match` `SettingOutcome`
-/// directement, lui.
-fn set_game_mode(rooms: &Rooms, key: &str, player_id: &str, mode: GameMode) -> bool {
-    apply_setting(rooms, key, player_id, RoomSetting::GameMode(mode)).accepted()
-}
-
-/// SetSpamWord : Réglage de salon (#129, ADR 0016) — la garde « refusé hors Spam » et la
-/// régénération synchrone du texte vivent dans `RoomSetting::apply`.
-fn set_spam_word(rooms: &Rooms, key: &str, player_id: &str, word: Option<String>) -> bool {
-    apply_setting(rooms, key, player_id, RoomSetting::SpamWord(word)).accepted()
-}
-
-/// SetSpamThreshold : Réglage de salon (#129). Accepté même hors Spam — le réglage est
-/// simplement inerte, et le lobby peut le préparer avant de basculer.
-fn set_spam_threshold(rooms: &Rooms, key: &str, player_id: &str, count: u32) -> bool {
-    apply_setting(rooms, key, player_id, RoomSetting::SpamThreshold(count)).accepted()
-}
-
-/// SetSpamTimeCap : Réglage de salon (#129), même patron.
-fn set_spam_time_cap(rooms: &Rooms, key: &str, player_id: &str, seconds: u32) -> bool {
-    apply_setting(rooms, key, player_id, RoomSetting::SpamTimeCap(seconds)).accepted()
-}
-
-/// SetLavaInterval : Réglage de salon (#129). Accepté même sous `Normal` — le réglage
-/// est simplement inerte, et le lobby peut le préparer avant de basculer.
-fn set_lava_interval(rooms: &Rooms, key: &str, player_id: &str, seconds: u32) -> bool {
-    apply_setting(rooms, key, player_id, RoomSetting::LavaInterval(seconds)).accepted()
 }
 
 /// Inscrit la présence, s'abonne à la diffusion, puis re-diffuse RoomState à tous. Le
@@ -1621,6 +1568,12 @@ fn now_epoch_nanos() -> u128 {
 mod tests {
     use super::*;
 
+    /// Applique un Réglage de salon (#204) : `apply_setting` + son verdict en `bool`.
+    /// Échafaudage de test — le dispatch, lui, lit `SettingOutcome` en entier.
+    fn set(rooms: &Rooms, key: &str, player_id: &str, setting: RoomSetting) -> bool {
+        apply_setting(rooms, key, player_id, setting).accepted()
+    }
+
     fn s(v: &[&str]) -> Vec<String> {
         v.iter().map(|x| x.to_string()).collect()
     }
@@ -2161,14 +2114,14 @@ mod tests {
         for p in players {
             join(rooms, "c1", p);
         }
-        assert!(set_game_mode(rooms, "c1", players[0], GameMode::FloorIsLava));
-        assert!(set_lava_interval(rooms, "c1", players[0], interval_s));
+        assert!(set(rooms, "c1", players[0], RoomSetting::GameMode(GameMode::FloorIsLava)));
+        assert!(set(rooms, "c1", players[0], RoomSetting::LavaInterval(interval_s)));
         // Décompte au tier MAXIMUM, jamais celui par défaut : `LAVA_INTERVAL_VALUES`
         // commence à 5 s, or le défaut vaut 5 s lui aussi (#185) — un test qui veut un
         // intervalle plus court que le décompte n'aurait donc plus aucune marge. Le
         // fixer ici rend toute la suite lava indépendante de ce défaut ; les autres
         // tests s'ancrent sur le `go` renvoyé, la longueur du décompte leur est neutre.
-        assert!(set_countdown(rooms, "c1", players[0], 10));
+        assert!(set(rooms, "c1", players[0], RoomSetting::Countdown(10)));
         start_race(rooms, "c1", players[0]);
         for (p, chars) in progress {
             relay_progress(rooms, "c1", p, *chars, 0, now_epoch_ms());
@@ -2324,7 +2277,7 @@ mod tests {
     fn floor_is_lava_refuse_de_partir_seul() {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
-        assert!(set_game_mode(&rooms, "c1", "p1", GameMode::FloorIsLava));
+        assert!(set(&rooms, "c1", "p1", RoomSetting::GameMode(GameMode::FloorIsLava)));
         start_race(&rooms, "c1", "p1");
         // Seul = déjà dernier vivant = course finie à t=0.
         assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
@@ -2337,14 +2290,14 @@ mod tests {
     fn le_mode_impose_son_texte_et_rend_la_source_inerte() {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
-        set_text_source(&rooms, "c1", "p1", TextSource::Words { count: 15 });
-        set_game_mode(&rooms, "c1", "p1", GameMode::FloorIsLava);
+        set(&rooms, "c1", "p1", RoomSetting::TextSource(TextSource::Words { count: 15 }));
+        set(&rooms, "c1", "p1", RoomSetting::GameMode(GameMode::FloorIsLava));
         assert_eq!(
             pending_source(&rooms, "c1"),
             Some(TextSource::Words { count: LAVA_WORD_COUNT })
         );
         // La Source du lobby est gardée, pas écrasée : elle reprend effet au retour.
-        set_game_mode(&rooms, "c1", "p1", GameMode::Normal);
+        set(&rooms, "c1", "p1", RoomSetting::GameMode(GameMode::Normal));
         assert_eq!(pending_source(&rooms, "c1"), Some(TextSource::Words { count: 15 }));
     }
 
@@ -2356,8 +2309,8 @@ mod tests {
         // passer la régression.
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
-        set_text_source(&rooms, "c1", "p1", TextSource::Words { count: 15 });
-        set_game_mode(&rooms, "c1", "p1", GameMode::FloorIsLava);
+        set(&rooms, "c1", "p1", RoomSetting::TextSource(TextSource::Words { count: 15 }));
+        set(&rooms, "c1", "p1", RoomSetting::GameMode(GameMode::FloorIsLava));
 
         let quotes = Arc::new(QuoteClient::from_env());
         spawn_refresh_text(rooms.clone(), "c1".to_string(), quotes);
@@ -2383,7 +2336,7 @@ mod tests {
         join(&rooms, "c1", "alice");
         join(&rooms, "c1", "bob");
         join(&rooms, "c1", "carol");
-        set_game_mode(&rooms, "c1", "alice", GameMode::FloorIsLava);
+        set(&rooms, "c1", "alice", RoomSetting::GameMode(GameMode::FloorIsLava));
         start_race(&rooms, "c1", "alice");
         let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
 
@@ -2400,7 +2353,7 @@ mod tests {
         join(&rooms, "c1", "p1");
         join(&rooms, "c1", "p2");
         join(&rooms, "c1", "p3");
-        set_game_mode(&rooms, "c1", "p1", GameMode::FloorIsLava);
+        set(&rooms, "c1", "p1", RoomSetting::GameMode(GameMode::FloorIsLava));
         start_race(&rooms, "c1", "p1");
         let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
 
@@ -2453,9 +2406,9 @@ mod tests {
         for p in players {
             join(rooms, "c1", p);
         }
-        assert!(set_game_mode(rooms, "c1", players[0], GameMode::Spam));
-        assert!(set_spam_threshold(rooms, "c1", players[0], threshold));
-        assert!(set_spam_time_cap(rooms, "c1", players[0], cap_s));
+        assert!(set(rooms, "c1", players[0], RoomSetting::GameMode(GameMode::Spam)));
+        assert!(set(rooms, "c1", players[0], RoomSetting::SpamThreshold(threshold)));
+        assert!(set(rooms, "c1", players[0], RoomSetting::SpamTimeCap(cap_s)));
         start_race(rooms, "c1", players[0]);
         match &rooms.lock().unwrap().get("c1").unwrap().state {
             RaceState::Racing { start_at_epoch_ms, .. } => *start_at_epoch_ms,
@@ -2490,9 +2443,9 @@ mod tests {
     fn le_texte_est_le_mot_repete_et_la_source_devient_inerte() {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
-        assert!(set_text_source(&rooms, "c1", "p1", TextSource::Quote));
-        assert!(set_game_mode(&rooms, "c1", "p1", GameMode::Spam));
-        assert!(set_spam_word(&rooms, "c1", "p1", Some("wow".to_string())));
+        assert!(set(&rooms, "c1", "p1", RoomSetting::TextSource(TextSource::Quote)));
+        assert!(set(&rooms, "c1", "p1", RoomSetting::GameMode(GameMode::Spam)));
+        assert!(set(&rooms, "c1", "p1", RoomSetting::SpamWord(Some("wow".to_string()))));
 
         let text = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
         let words: Vec<&str> = text.split(' ').collect();
@@ -2508,7 +2461,7 @@ mod tests {
     fn le_mot_par_defaut_vient_de_la_liste_de_la_source_mots() {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
-        assert!(set_game_mode(&rooms, "c1", "p1", GameMode::Spam));
+        assert!(set(&rooms, "c1", "p1", RoomSetting::GameMode(GameMode::Spam)));
         let text = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
         let word = spam_word_of(&text);
         assert!(!word.is_empty());
@@ -2520,15 +2473,15 @@ mod tests {
     fn un_mot_personnalise_invalide_est_refuse() {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
-        set_game_mode(&rooms, "c1", "p1", GameMode::Spam);
+        set(&rooms, "c1", "p1", RoomSetting::GameMode(GameMode::Spam));
         // Un espace ferait silencieusement DEUX mots cibles et casserait le comptage.
-        assert!(!set_spam_word(&rooms, "c1", "p1", Some("deux mots".to_string())));
-        assert!(!set_spam_word(&rooms, "c1", "p1", Some(String::new())));
-        assert!(!set_spam_word(&rooms, "c1", "p1", Some("a".repeat(21))));
-        assert!(!set_spam_word(&rooms, "c1", "p1", Some("saut\nligne".to_string())));
+        assert!(!set(&rooms, "c1", "p1", RoomSetting::SpamWord(Some("deux mots".to_string()))));
+        assert!(!set(&rooms, "c1", "p1", RoomSetting::SpamWord(Some(String::new()))));
+        assert!(!set(&rooms, "c1", "p1", RoomSetting::SpamWord(Some("a".repeat(21)))));
+        assert!(!set(&rooms, "c1", "p1", RoomSetting::SpamWord(Some("saut\nligne".to_string()))));
         // Chiffres et ponctuation À L'INTÉRIEUR du mot : acceptés, seule la forme compte.
-        assert!(set_spam_word(&rooms, "c1", "p1", Some("l33t!".to_string())));
-        assert!(set_spam_word(&rooms, "c1", "p1", Some("a".repeat(20))));
+        assert!(set(&rooms, "c1", "p1", RoomSetting::SpamWord(Some("l33t!".to_string()))));
+        assert!(set(&rooms, "c1", "p1", RoomSetting::SpamWord(Some("a".repeat(20)))));
     }
 
     #[test]
@@ -2602,11 +2555,11 @@ mod tests {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
         let before = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
-        assert!(!set_spam_word(&rooms, "c1", "p1", Some("wow".to_string())));
+        assert!(!set(&rooms, "c1", "p1", RoomSetting::SpamWord(Some("wow".to_string()))));
         assert_eq!(rooms.lock().unwrap().get("c1").unwrap().target_text, before);
         // Les deux autres restent préparables d'avance, eux.
-        assert!(set_spam_threshold(&rooms, "c1", "p1", 30));
-        assert!(set_spam_time_cap(&rooms, "c1", "p1", 45));
+        assert!(set(&rooms, "c1", "p1", RoomSetting::SpamThreshold(30)));
+        assert!(set(&rooms, "c1", "p1", RoomSetting::SpamTimeCap(45)));
     }
 
     #[test]
@@ -2624,7 +2577,7 @@ mod tests {
         // horloge reste un jeu cohérent, il n'y a pas d'élimination à vider de son sens.
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
-        set_game_mode(&rooms, "c1", "p1", GameMode::Spam);
+        set(&rooms, "c1", "p1", RoomSetting::GameMode(GameMode::Spam));
         start_race(&rooms, "c1", "p1");
         assert!(rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
     }
@@ -2811,7 +2764,7 @@ mod tests {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1"); // owner
         join(&rooms, "c1", "p2");
-        set_game_mode(&rooms, "c1", "p1", GameMode::Spam); // pour que SpamWord soit recevable
+        set(&rooms, "c1", "p1", RoomSetting::GameMode(GameMode::Spam)); // pour que SpamWord soit recevable
 
         for setting in un_reglage_de_chaque_sorte() {
             assert_eq!(apply_setting(&rooms, "c1", "p2", setting), SettingOutcome::Rejected);
@@ -2822,7 +2775,7 @@ mod tests {
     fn aucun_reglage_de_salon_ne_change_pendant_une_course() {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
-        set_game_mode(&rooms, "c1", "p1", GameMode::Spam);
+        set(&rooms, "c1", "p1", RoomSetting::GameMode(GameMode::Spam));
         start_race(&rooms, "c1", "p1");
 
         for setting in un_reglage_de_chaque_sorte() {
@@ -2857,10 +2810,10 @@ mod tests {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
         for count in [1, 31, 100_000] {
-            assert!(!set_text_source(&rooms, "c1", "p1", TextSource::Words { count }));
+            assert!(!set(&rooms, "c1", "p1", RoomSetting::TextSource(TextSource::Words { count })));
         }
         for count in WORDS_LENGTHS {
-            assert!(set_text_source(&rooms, "c1", "p1", TextSource::Words { count }));
+            assert!(set(&rooms, "c1", "p1", RoomSetting::TextSource(TextSource::Words { count })));
         }
     }
 
@@ -2868,7 +2821,7 @@ mod tests {
     fn la_revanche_respecte_la_longueur_choisie() {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
-        set_text_source(&rooms, "c1", "p1", TextSource::Words { count: 15 });
+        set(&rooms, "c1", "p1", RoomSetting::TextSource(TextSource::Words { count: 15 }));
 
         start_race(&rooms, "c1", "p1");
         assert_eq!(record(&rooms, "c1", done("p1", 60.0)), FinishOutcome::RaceOver);
@@ -2986,10 +2939,10 @@ mod tests {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
         for max in [0, 1, 9, 999] {
-            assert!(!set_max_players(&rooms, "c1", "p1", max));
+            assert!(!set(&rooms, "c1", "p1", RoomSetting::MaxPlayers(max)));
         }
         for max in MIN_PLAYERS..=MAX_PLAYERS {
-            assert!(set_max_players(&rooms, "c1", "p1", max));
+            assert!(set(&rooms, "c1", "p1", RoomSetting::MaxPlayers(max)));
         }
     }
 
@@ -2997,7 +2950,7 @@ mod tests {
     fn la_taille_reglee_remplace_le_plafond_dur() {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
-        set_max_players(&rooms, "c1", "p1", 2);
+        set(&rooms, "c1", "p1", RoomSetting::MaxPlayers(2));
         join(&rooms, "c1", "p2"); // 2e place : encore libre
 
         assert_eq!(join_channel(&rooms, "c1", "p3", ident("p3")).err(), Some(JoinError::Full));
@@ -3012,7 +2965,7 @@ mod tests {
         for i in 0..4 {
             join(&rooms, "c1", &format!("p{i}"));
         }
-        assert!(set_max_players(&rooms, "c1", "p0", 2));
+        assert!(set(&rooms, "c1", "p0", RoomSetting::MaxPlayers(2)));
         assert_eq!(players_of(&rooms, "c1").len(), 4); // les 4 présents restent
 
         assert_eq!(join_channel(&rooms, "c1", "p9", ident("p9")).err(), Some(JoinError::Full));
@@ -3031,10 +2984,10 @@ mod tests {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
         for seconds in [0, 1, 4, 6, 8, 11, 999] {
-            assert!(!set_countdown(&rooms, "c1", "p1", seconds));
+            assert!(!set(&rooms, "c1", "p1", RoomSetting::Countdown(seconds)));
         }
         for seconds in COUNTDOWN_VALUES {
-            assert!(set_countdown(&rooms, "c1", "p1", seconds));
+            assert!(set(&rooms, "c1", "p1", RoomSetting::Countdown(seconds)));
         }
     }
 
@@ -3060,7 +3013,7 @@ mod tests {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1"); // owner
         join(&rooms, "c1", "p2");
-        set_ready_check(&rooms, "c1", "p1", true);
+        set(&rooms, "c1", "p1", RoomSetting::ReadyCheck(true));
 
         start_race(&rooms, "c1", "p1"); // personne n'est prêt : ignoré
         assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
@@ -3088,11 +3041,11 @@ mod tests {
     fn la_bascule_du_ready_check_vide_les_prets() {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
-        set_ready_check(&rooms, "c1", "p1", true);
+        set(&rooms, "c1", "p1", RoomSetting::ReadyCheck(true));
         set_ready(&rooms, "c1", "p1", true);
 
-        set_ready_check(&rooms, "c1", "p1", false);
-        set_ready_check(&rooms, "c1", "p1", true); // réactivé : repart de zéro
+        set(&rooms, "c1", "p1", RoomSetting::ReadyCheck(false));
+        set(&rooms, "c1", "p1", RoomSetting::ReadyCheck(true)); // réactivé : repart de zéro
         start_race(&rooms, "c1", "p1"); // p1 n'est plus marqué prêt : ignoré
         assert!(!rooms.lock().unwrap().get("c1").unwrap().state.is_racing());
     }
@@ -3101,7 +3054,7 @@ mod tests {
     fn une_nouvelle_manche_redemande_la_confirmation() {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
-        set_ready_check(&rooms, "c1", "p1", true);
+        set(&rooms, "c1", "p1", RoomSetting::ReadyCheck(true));
         set_ready(&rooms, "c1", "p1", true);
         start_race(&rooms, "c1", "p1");
         assert_eq!(record(&rooms, "c1", done("p1", 60.0)), FinishOutcome::RaceOver);
@@ -3134,7 +3087,7 @@ mod tests {
         // (mot soumis faux) est inatteignable dès que la course force la correction.
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
-        assert!(!set_difficulty(&rooms, "c1", "p1", Difficulty::Expert));
+        assert!(!set(&rooms, "c1", "p1", RoomSetting::Difficulty(Difficulty::Expert)));
         assert_eq!(difficulty_of(&rooms, "c1"), Difficulty::Normal);
     }
 
@@ -3153,7 +3106,7 @@ mod tests {
     fn fail_rejette_une_fausse_declaration() {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
-        assert!(set_difficulty(&rooms, "c1", "p1", Difficulty::Master));
+        assert!(set(&rooms, "c1", "p1", RoomSetting::Difficulty(Difficulty::Master)));
         start_race(&rooms, "c1", "p1");
         let target = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
         let first_word = target.split(' ').next().unwrap_or("");
@@ -3169,7 +3122,7 @@ mod tests {
     fn master_confirme_l_echec_a_la_1ere_frappe_fausse() {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
-        assert!(set_difficulty(&rooms, "c1", "p1", Difficulty::Master));
+        assert!(set(&rooms, "c1", "p1", RoomSetting::Difficulty(Difficulty::Master)));
         start_race(&rooms, "c1", "p1");
         let target = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
         let bad = wrong_keystroke(target.split(' ').next().unwrap_or(""));
@@ -3184,7 +3137,7 @@ mod tests {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
         join(&rooms, "c1", "p2");
-        assert!(set_difficulty(&rooms, "c1", "p1", Difficulty::Master));
+        assert!(set(&rooms, "c1", "p1", RoomSetting::Difficulty(Difficulty::Master)));
         start_race(&rooms, "c1", "p1");
         let target = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
         let mut rx = rooms.lock().unwrap().get("c1").unwrap().tx.subscribe();
@@ -3204,7 +3157,7 @@ mod tests {
         let rooms = new_rooms();
         join(&rooms, "c1", "p1");
         join(&rooms, "c1", "p2");
-        assert!(set_difficulty(&rooms, "c1", "p1", Difficulty::Master));
+        assert!(set(&rooms, "c1", "p1", RoomSetting::Difficulty(Difficulty::Master)));
         start_race(&rooms, "c1", "p1");
         let target = rooms.lock().unwrap().get("c1").unwrap().target_text.clone();
         let words: Vec<&str> = target.split(' ').collect();
