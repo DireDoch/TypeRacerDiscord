@@ -178,8 +178,10 @@ uniquement (pas de navigation au curseur). Voir `frontend/src/core/types.ts`.
 
 **Origine du temps (t=0).**
 Horloge **monotone** (`performance.now()`, jamais `Date.now()`), seul `RunClock.start()`
-(`core/clock.ts`) bascule — mais l'événement qui déclenche t=0 dépend du contexte, et donc
-ce que mesure le temps de réaction aussi :
+(`core/clock.ts`) bascule — appelé par `RunSession` (`core/run-session.ts`, #199), qui
+possède l'horloge, le contrôleur, le log et la Difficulté d'une Run et que les trois écrans
+tapables partagent. Mais l'événement qui déclenche t=0 dépend du contexte, et donc ce que
+mesure le temps de réaction aussi :
 - **Solo** (Practice, Apprendre) : t=0 = la **1re frappe** du Player. Pas de décompte, pas
   de délai imposé ; le temps de réaction n'est **pas** mesuré (il n'y a personne d'autre à
   attendre). Décision explicite — voir `Docs/adr/0004-solo-sans-decompte.md`.
@@ -350,7 +352,9 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
 
 **Frontend (`frontend/`).**
 - `core/` domaine pur, testé (clock, types, input `free`/`blocking`-stub, text-gen seedé,
-  `stats/scoreboard`) — la **référence** de l'algo.
+  `stats/scoreboard`) — la **référence** de l'algo. `run-session.ts` (#199) en fait
+  l'ASSEMBLAGE : une Run tapée = horloge + contrôleur + log + Difficulté, derrière un seul
+  `press()`. Practice, Race et Apprendre la partagent au lieu de recâbler les briques.
 - UI Practice (`src/ui/`, `main.ts`, Vite) : machine d'état idle→running→finished (pas de
   décompte en solo, t=0 = 1re frappe — ADR 0004), graphe chart.js. Lancement `npm run dev`.
 - `src/api.ts` branché sur le backend autoritaire : `submitRun` → `POST /api/runs` avec header

@@ -2,18 +2,16 @@
 //  ui/practice.ts — écran de Practice (saisie libre, solo, MVP).
 //
 //  Machine d'état : idle → running → finished.
-//  Câble le core/ pur : generateWithRng (texte seedé), RunClock (t=0 monotone),
-//  FreeInput (curseur libre, log brut). À la fin : api.submitRun → résultats.
+//  Câble le core/ pur : generateWithRng (texte seedé) et RunSession (#199 : horloge
+//  t=0, curseur libre, log brut, Difficulté). À la fin : api.submitRun → résultats.
 //
 //  t=0 = la 1re frappe (PAS de décompte en solo — ADR 0004, CONTEXT.md « Origine du
 //  temps »). Le temps de réaction n'est pas mesuré : personne d'autre n'attend.
 // =============================================================================
 
-import type { RunConfig, RunPhase, KeystrokeLog, Keystroke } from "../core/types";
-import { RunClock } from "../core/clock";
-import { FreeInput } from "../core/input/free-input";
-import type { InputController } from "../core/input/controller";
-import { detectDifficultyFailure, type Difficulty, type DifficultyFailure } from "../core/difficulty";
+import type { RunConfig, RunPhase } from "../core/types";
+import { RunSession } from "../core/run-session";
+import { type Difficulty, type DifficultyFailure } from "../core/difficulty";
 import {
   QUICK_RESTART_DOM_KEY,
   QUICK_RESTART_LABELS,
@@ -103,9 +101,9 @@ export class Practice {
   private targetWords: string[] = [];
   /** Rng du Run courant, conservé pour re-générer des lots en Time infini (déterminisme). */
   private rng: Rng | null = null;
-  private controller: InputController = new FreeInput([]);
-  private clock = new RunClock();
-  private log: KeystrokeLog = [];
+  /** La Run tapée : horloge, buffer, log, Difficulté (#199). Reconstruite à chaque
+   *  `reset()` — c'est aussi ce qui remet t=0 et vide le log. */
+  private session = new RunSession([]);
   private rafId = 0;
   /** Arrêt du Replay en cours (rAF) si on quitte l'écran par reset()/destroy(). */
   private stopReplay: (() => void) | null = null;
@@ -157,8 +155,6 @@ export class Practice {
     this.stopReplay = null;
     this.phase = "idle";
     this.seed = (Math.random() * 0x7fffffff) | 0;
-    this.clock.reset();
-    this.log = [];
     this.rng = null;
     this.quoteId = undefined;
     this.quoteAuthor = undefined;
@@ -175,7 +171,7 @@ export class Practice {
     if (this.config.mode === "quotes") {
       // La Quote est récupérée côté serveur (proxy API-Ninjas) — pas de génération locale.
       this.targetWords = [];
-      this.controller = new FreeInput([]);
+      this.session = new RunSession([]);
       this.loadingText = true;
       this.render();
       try {
@@ -202,7 +198,7 @@ export class Practice {
       // tous les kinds confondus par sévérité).
       const wantTrigram = this.config.mode === "trigram-drill";
       this.targetWords = [];
-      this.controller = new FreeInput([]);
+      this.session = new RunSession([]);
       this.loadingText = true;
       this.render();
       try {
@@ -235,7 +231,9 @@ export class Practice {
       this.targetWords = [];
     }
 
-    this.controller = new FreeInput(this.targetWords, loadPreferences().stopOnError);
+    // Session neuve : t=0 remis à zéro, log vidé, Difficulté et stop-on-error figés pour
+    // CE Run (les deux ne changent que par un `reset()`, jamais en cours de frappe).
+    this.session = new RunSession(this.targetWords, this.difficulty, loadPreferences().stopOnError);
     this.render();
   }
 
@@ -256,7 +254,7 @@ export class Practice {
   /** Time infini : garde toujours des mots en avance du curseur (flux continu). */
   private retopIfNeeded(): void {
     if (this.config.mode !== "time" || this.config.modeValue !== 0 || !this.rng) return;
-    if (this.targetWords.length - this.controller.view().wordIndex > ENDLESS_LOOKAHEAD) return;
+    if (this.targetWords.length - this.session.view().wordIndex > ENDLESS_LOOKAHEAD) return;
     for (const w of generateWithRng(this.config, ENDLESS_BATCH, this.rng)) {
       this.targetWords.push(w); // même tableau que FreeInput.target (référence partagée).
     }
@@ -272,7 +270,7 @@ export class Practice {
   /** 1re frappe : t=0 ici (pas de décompte en solo — ADR 0004), et elle compte déjà. */
   private beginRun(e: KeyboardEvent): void {
     this.phase = "running";
-    this.clock.start(); // t=0
+    this.session.start(); // t=0 = cette frappe-ci (ADR 0004), calé avant tout rendu
     this.render();
     this.loop();
     this.handleTypingKey(e);
@@ -285,42 +283,35 @@ export class Practice {
     const wrong = this.isWrongKeystroke(e.key);
     if (prefs.soundOnError && wrong) playErrorSound(prefs.soundVolume);
 
-    const viewBefore = this.controller.view();
-    const now = this.clock.elapsed();
-    const k: Keystroke | null = this.controller.handleKey(e.key, e.ctrlKey, now);
-    if (k) {
-      this.log.push(k);
-      // Précision live (issue #67) : seulement ce qui entre RÉELLEMENT au log (une
-      // frappe bloquée par stop-on-error n'a jamais eu lieu de ce point de vue).
-      if (k.k.length > 0) {
-        this.totalKeystrokes++;
-        if (!wrong) this.correctKeystrokes++;
-      }
+    const step = this.session.press(e.key, e.ctrlKey);
+    if (!step) return;
+    // Précision live (issue #67) : seulement ce qui entre RÉELLEMENT au log (une
+    // frappe bloquée par stop-on-error n'a jamais eu lieu de ce point de vue).
+    if (step.keystroke && step.keystroke.k.length > 0) {
+      this.totalKeystrokes++;
+      if (!wrong) this.correctKeystrokes++;
     }
     // Burst live (issue #67) : 1re frappe d'un mot neuf → départ du chrono du mot ;
     // mot verrouillé ou vidé (backspace-word) → plus de mot en cours à mesurer.
-    const viewAfter = this.controller.view();
-    if (viewAfter.wordIndex !== viewBefore.wordIndex || viewAfter.typed.length === 0) {
+    if (step.after.wordIndex !== step.before.wordIndex || step.after.typed.length === 0) {
       this.wordStartMs = null;
-    } else if (viewBefore.typed.length === 0 && viewAfter.typed.length > 0) {
-      this.wordStartMs = now;
+    } else if (step.before.typed.length === 0 && step.after.typed.length > 0) {
+      this.wordStartMs = step.at;
     }
     // Difficulté (issue #64, ADR 0013) : évaluée sur le log free-input, indépendamment
-    // du contrôleur — Zen n'a pas de texte cible, la Difficulté n'y a pas de sens.
-    if (this.difficulty !== "normal" && this.config.mode !== "zen") {
-      const fail = detectDifficultyFailure(this.difficulty, this.targetWords, this.log);
-      if (fail) {
-        this.failRun(fail);
-        return;
-      }
+    // du contrôleur — Zen n'a pas de texte cible, la Difficulté n'y a pas de sens (la
+    // session le sait : sans texte cible, elle n'échoue jamais).
+    if (step.failure) {
+      this.failRun(step.failure);
+      return;
     }
-    if (!this.isEndless() && this.controller.isComplete()) {
+    if (!this.isEndless() && step.complete) {
       void this.finish();
       return;
     }
     this.retopIfNeeded(); // Time infini : réalimente si le curseur approche du bout.
     this.renderWords();
-    this.updateLiveBar(this.clock.elapsed());
+    this.updateLiveBar(this.session.elapsed);
   }
 
   /**
@@ -331,7 +322,7 @@ export class Practice {
    */
   private isWrongKeystroke(key: string): boolean {
     if (this.config.mode === "zen") return false;
-    const view = this.controller.view();
+    const view = this.session.view();
     const tgt = this.targetWords[view.wordIndex] ?? "";
     if (key === " ") return view.typed.length > 0 && view.typed !== tgt;
     if (key.length === 1) {
@@ -355,7 +346,7 @@ export class Practice {
   /** Boucle d'affichage : compteur live + fin de Run en mode Time. */
   private loop(): void {
     if (this.phase !== "running") return;
-    const elapsed = this.clock.elapsed();
+    const elapsed = this.session.elapsed;
 
     if (this.config.mode === "time" && this.config.modeValue > 0 && elapsed >= this.config.modeValue * 1000) {
       void this.finish();
@@ -390,7 +381,7 @@ export class Practice {
   private async finish(): Promise<void> {
     cancelAnimationFrame(this.rafId);
     this.phase = "finished";
-    const endedAtMs = this.clock.started ? this.clock.elapsed() : 0;
+    const endedAtMs = this.session.elapsed;
 
     let res: Awaited<ReturnType<typeof submitRun>>;
     try {
@@ -399,11 +390,11 @@ export class Practice {
         seed: this.seed,
         targetText: this.targetWords.join(" "),
         quoteId: this.config.mode === "quotes" ? this.quoteId : undefined,
-        keystrokes: this.log,
+        keystrokes: this.session.log,
         endedAtMs,
       });
     } catch (e) {
-      // Le log (this.log) n'est pas touché : "réessayer" relance finish() avec les mêmes frappes.
+      // Le log (`session.log`) n'est pas touché : "réessayer" relance finish() avec les mêmes frappes.
       this.renderSubmitError(isIdentityError(e) ? "auth" : "network");
       return;
     }
@@ -419,7 +410,7 @@ export class Practice {
       renderResults(this.endScreenSlot(), res, () => void this.reset(), attribution, () => {
         this.stopReplay = runReplay(this.root, {
           targetWords: this.targetWords,
-          log: this.log,
+          log: this.session.log,
           zen: this.config.mode === "zen",
           onBack: showResults,
         });
@@ -512,7 +503,7 @@ export class Practice {
   private renderWords(): void {
     const el = this.root.querySelector<HTMLElement>("#words");
     if (!el) return;
-    const view = this.controller.view();
+    const view = this.session.view();
     el.innerHTML =
       this.config.mode === "zen"
         ? zenHtml(view, this.phase === "running")
@@ -536,7 +527,7 @@ export class Practice {
     );
   }
 
-  /** POST /api/runs raté : le Run (this.log) reste en mémoire, "réessayer" relance finish(). */
+  /** POST /api/runs raté : le Run (`session.log`) reste en mémoire, "réessayer" relance finish(). */
   private renderSubmitError(kind: "auth" | "network"): void {
     const msg =
       kind === "auth"
@@ -616,9 +607,9 @@ export class Practice {
     if (this.phase === "running") {
       wpm =
         this.config.mode === "zen"
-          ? liveWpmZen(this.controller.view(), elapsed)
-          : liveWpm(this.targetWords, this.controller.view(), elapsed);
-      burst = liveBurst(this.controller.view(), this.targetWords, this.wordStartMs, elapsed);
+          ? liveWpmZen(this.session.view(), elapsed)
+          : liveWpm(this.targetWords, this.session.view(), elapsed);
+      burst = liveBurst(this.session.view(), this.targetWords, this.wordStartMs, elapsed);
     }
     const accuracy = liveAccuracy(this.correctKeystrokes, this.totalKeystrokes);
     const elapsedS = Math.floor(elapsed / 1000);
@@ -630,10 +621,10 @@ export class Practice {
       const remaining = Math.max(0, Math.ceil(this.config.modeValue - elapsed / 1000));
       progress = `<span class="timer">${remaining}s</span>`;
     } else if (this.config.mode === "words") {
-      const done = this.controller.view().wordIndex;
+      const done = this.session.view().wordIndex;
       progress = `<span class="timer">${done}/${this.config.modeValue}</span>`;
     } else if (this.config.mode === "quotes" || this.isDrillLike()) {
-      const done = this.controller.view().wordIndex;
+      const done = this.session.view().wordIndex;
       progress = `<span class="timer">${done}/${this.targetWords.length}</span>`;
     }
     // Styles live (issue #67) : "off" masque l'indicateur, rien d'autre — pas de
@@ -671,7 +662,7 @@ export class Practice {
       const retry = this.quickRestartHint();
       return `<div class="loading">${base} ${retry ? `${retry} pour réessayer.` : "Change de mode pour réessayer."}</div>`;
     }
-    const view = this.controller.view();
+    const view = this.session.view();
     if (this.config.mode === "zen") {
       // Idle : rien encore tapé, le placeholder invite à démarrer plutôt que le rendu Zen vide.
       if (this.phase === "idle") return `<div class="loading">Zen · tape librement — Shift+Enter pour terminer.</div>`;

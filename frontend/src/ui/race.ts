@@ -4,7 +4,7 @@
 //  Machine d'état pilotée par le SERVEUR : connecting → lobby → countdown →
 //  running → over. Le serveur possède seed/texte (RoomState) et t=0 (RaceStart).
 //   - RaceStart = signal « go » : décompte local de `countdownS` (texte visible
-//     pour lire le 1er mot) puis RunClock.start() — SEUL point de bascule du temps
+//     pour lire le 1er mot) puis RunSession.start() — SEUL point de bascule du temps
 //     côté client.
 //   - Saisie : FreeInput (curseur libre) → le flux n'est JAMAIS bloqué, on écrit et
 //     on avance malgré les fautes (comme le solo). Mais la course ne se TERMINE que
@@ -13,12 +13,9 @@
 //     → RaceOver. Owner (1er arrivé) : seul à voir le bouton « Démarrer ».
 // =============================================================================
 
-import type { Keystroke } from "../core/types";
 import type { InputView } from "../core/input/controller";
-import { RunClock } from "../core/clock";
 import { Countdown } from "../core/countdown";
-import { FreeInput } from "../core/input/free-input";
-import { detectDifficultyFailure } from "../core/difficulty";
+import { RunSession, isTypingKey } from "../core/run-session";
 import {
   RaceSocket,
   type ClientEvent,
@@ -82,9 +79,9 @@ export class Race {
    *  `topUpSpamText` (FreeInput tient `targetWords` par référence). */
   private state: RaceState = initialRaceState();
 
-  private clock = new RunClock();
-  private controller = new FreeInput([]);
-  private log: Keystroke[] = [];
+  /** La Run tapée : horloge, buffer, log, Difficulté (#199). En Race t=0 vient du
+   *  serveur — `start()` est appelée par le Countdown local, jamais par une frappe. */
+  private session = new RunSession([]);
   private doneLocal = false;
   /** Nombre de mots verrouillés au dernier `Progress` diffusé (#94) — le seul déclencheur. */
   private lastLockedSent = 0;
@@ -255,8 +252,7 @@ export class Race {
   private stopAndSubmit(): void {
     if (this.doneLocal) return;
     this.doneLocal = true;
-    const endedAtMs = this.clock.started ? this.clock.elapsed() : 0;
-    this.socket?.send({ type: "Finish", keystrokes: this.log, endedAtMs });
+    this.socket?.send({ type: "Finish", keystrokes: this.session.log, endedAtMs: this.session.elapsed });
   }
 
   // --- Cycle de course --------------------------------------------------------
@@ -274,7 +270,7 @@ export class Race {
     // Contrôleur neuf dès le décompte : le texte ENTIER s'affiche vierge (le joueur lit
     // le début pendant l'attente) — indispensable après une revanche (état stale).
     this.doneLocal = false;
-    this.controller = new FreeInput(this.state.targetWords);
+    this.session = new RunSession(this.state.targetWords, this.state.difficulty);
     this.countdown = new Countdown(
       this.state.countdownS,
       (n) => {
@@ -296,10 +292,12 @@ export class Race {
       activityExtra(this.state),
     );
     this.doneLocal = false;
-    this.log = [];
     this.lastLockedSent = 0; // revanche : sans ça, aucun Progress ne repartirait
-    this.controller = new FreeInput(this.state.targetWords);
-    this.clock.start(); // t=0 (pilotée par RaceStart, plus par un décompte local isolé)
+    // Session neuve à t=0 plutôt que celle du décompte : une frappe anticipée pendant le
+    // rebours n'a pas pu entrer au log (`press` la refuse tant que `start()` n'a pas eu
+    // lieu), mais repartir de zéro garde la garantie même si le rebours est sauté.
+    this.session = new RunSession(this.state.targetWords, this.state.difficulty);
+    this.session.start(); // t=0 = RaceStart, jamais une frappe
     this.render();
     this.loop();
   }
@@ -319,7 +317,7 @@ export class Race {
    */
   private myReps(): number {
     if (this.state.gameMode !== "spam") return 0;
-    return spamReps(this.state.targetWords[0] ?? "", this.controller.view());
+    return spamReps(this.state.targetWords[0] ?? "", this.session.view());
   }
 
   /**
@@ -336,7 +334,7 @@ export class Race {
     if (this.state.gameMode !== "spam") return;
     const word = this.state.targetWords[0];
     if (word === undefined) return;
-    const n = spamRefill(this.state.targetWords.length, this.controller.view().wordIndex);
+    const n = spamRefill(this.state.targetWords.length, this.session.view().wordIndex);
     if (n === 0) return;
     for (let i = 0; i < n; i++) this.state.targetWords.push(word);
     this.state.targetText = this.state.targetWords.join(" ");
@@ -344,7 +342,7 @@ export class Race {
 
   /** charsDone = mots verrouillés (+ espaces) + préfixe correct du mot courant. */
   private charsDone(): number {
-    const v = this.controller.view();
+    const v = this.session.view();
     const n = v.lockedWords.reduce((a, w) => a + w.length, 0) + v.lockedWords.length;
     const t = this.state.targetWords[v.wordIndex] ?? "";
     let i = 0;
@@ -354,24 +352,23 @@ export class Race {
 
   private onKeyDown(e: KeyboardEvent): void {
     if (this.state.phase !== "running" || this.doneLocal) return;
-    if (e.key !== "Backspace" && e.key !== " " && e.key.length !== 1) return;
+    if (!isTypingKey(e.key)) return;
     e.preventDefault();
 
-    const k = this.controller.handleKey(e.key, e.ctrlKey, this.clock.elapsed());
-    if (k) this.log.push(k);
+    // `requireStart` : en Race, t=0 appartient au serveur. Une frappe arrivée avant le
+    // « GO » est refusée plutôt que d'ouvrir le chrono en avance (#199).
+    const step = this.session.press(e.key, e.ctrlKey, true);
+    if (!step) return;
 
     // Difficulté Master (issue #71, ADR 0013) : détectée localement sur le log free-input,
     // avant tout le reste. Le serveur REJOUE contre son propre texte pour confirmer avant
     // d'enregistrer un Échec — jamais fait confiance sur la seule parole du client.
-    if (this.state.difficulty === "master") {
-      const fail = detectDifficultyFailure("master", this.state.targetWords, this.log);
-      if (fail) {
-        this.doneLocal = true;
-        this.socket?.send({ type: "Fail", keystrokes: this.log });
-        this.renderWords();
-        this.renderBars();
-        return;
-      }
+    if (step.failure) {
+      this.doneLocal = true;
+      this.socket?.send({ type: "Fail", keystrokes: this.session.log });
+      this.renderWords();
+      this.renderBars();
+      return;
     }
 
     // Progress ne part QU'AU verrouillage d'un mot (#94), plus à chaque frappe : les
@@ -383,7 +380,7 @@ export class Race {
     // le curseur ne doit jamais se retrouver au-delà de la fin du tableau.
     this.topUpSpamText();
 
-    const locked = this.controller.view().lockedWords.length;
+    const locked = this.session.view().lockedWords.length;
     if (locked !== this.lastLockedSent) {
       this.lastLockedSent = locked;
       // Un verrouillage est exactement l'instant où une répétition se termine : c'est
@@ -396,9 +393,9 @@ export class Race {
     // mais il faut avoir corrigé ses fautes pour terminer). Sous Spam et floor is lava
     // c'est inatteignable par construction — le texte n'a pas de fin —, et c'est le
     // serveur qui arrête la course (`SpamStop`, `PlayerBurned`).
-    if (raceComplete(this.state.targetWords, this.controller.view())) {
+    if (raceComplete(this.state.targetWords, this.session.view())) {
       this.doneLocal = true;
-      this.socket?.send({ type: "Finish", keystrokes: this.log, endedAtMs: this.clock.elapsed() });
+      this.socket?.send({ type: "Finish", keystrokes: this.session.log, endedAtMs: this.session.elapsed });
     }
     this.renderWords();
     this.renderBars();
@@ -714,7 +711,7 @@ export class Race {
   }
 
   private wordsAreaHtml(): string {
-    return wordsHtml(this.state.targetWords, this.controller.view(), !this.doneLocal);
+    return wordsHtml(this.state.targetWords, this.session.view(), !this.doneLocal);
   }
 
   private renderBars(): void {
@@ -728,12 +725,12 @@ export class Race {
     }
     const live = this.root.querySelector<HTMLElement>("#liveBar");
     if (live) {
-      const wpm = this.doneLocal ? 0 : liveWpm(this.state.targetWords, this.controller.view(), this.clock.elapsed());
+      const wpm = this.doneLocal ? 0 : liveWpm(this.state.targetWords, this.session.view(), this.session.elapsed);
       // Le décompte avant la prochaine brûlure : c'est lui qui rend le mode angoissant.
       // Tant qu'il reste quelqu'un à éliminer — sinon la course est déjà jouée.
       const lava =
         this.state.gameMode === "floorIsLava" && alive(this.state).length > 1
-          ? `<span class="live-lava">🔥 ${nextBurnIn(this.clock.elapsed(), this.state.lavaIntervalS)} s</span>`
+          ? `<span class="live-lava">🔥 ${nextBurnIn(this.session.elapsed, this.state.lavaIntervalS)} s</span>`
           : "";
       // Les DEUX façons de gagner, côte à côte (ADR 0016) : ce qu'il me reste à taper, et
       // ce qu'il me reste de temps pour le faire. Une seule des deux affichée laisserait
@@ -741,7 +738,7 @@ export class Race {
       const spam =
         this.state.gameMode === "spam"
           ? `<span class="live-spam">${this.myReps()} / ${this.state.spamThreshold} ×</span>
-             <span class="live-spam">⏱ ${capRemaining(this.clock.elapsed(), this.state.spamTimeCapS)} s</span>`
+             <span class="live-spam">⏱ ${capRemaining(this.session.elapsed, this.state.spamTimeCapS)} s</span>`
           : "";
       live.innerHTML = `<span class="live-wpm">${wpm} wpm</span>${lava}${spam}`;
     }
@@ -758,7 +755,7 @@ export class Race {
     // donc celle que la piste doit montrer (ADR 0016).
     const spam = this.state.gameMode === "spam";
     const total = spam ? Math.max(1, this.state.spamThreshold) : Math.max(1, this.state.targetText.length);
-    const elapsed = this.clock.elapsed();
+    const elapsed = this.session.elapsed;
     // Le condamné en sursis (ADR 0015) : marqué EN PERMANENCE, pas seulement au tic.
     // C'est ça, le mode — pas des morts surprises, mais quelques secondes à se voir
     // dernier en tapant plus vite. Calculé en local sur la même règle que le serveur ;
