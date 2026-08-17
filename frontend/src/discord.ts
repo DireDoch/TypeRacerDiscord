@@ -94,8 +94,22 @@ export function closeActivity(): void {
   closeSdk?.();
 }
 
-/** SDK courant, pour `updateActivity` — `null` hors Discord ou avant le handshake (issue #111). */
+/**
+ * SDK courant, pour `updateActivity` — `null` hors Discord ou avant le handshake (issue #111).
+ * Posé seulement après `authenticate()` : `setActivity` exige le scope `rpc.activities.write`,
+ * que la session RPC n'a pas tant qu'elle n'est pas authentifiée. L'avoir posé dès `ready()`
+ * faisait partir la commande trop tôt, pour un rejet côté Discord.
+ */
 let activitySdk: DiscordSDK | null = null;
+
+/**
+ * Dernier état demandé AVANT que le SDK soit prêt, rejoué à la fin du handshake.
+ * `main.ts` monte le Menu sans attendre l'identité (le handshake est volontairement
+ * non bloquant) : sans ce report, `updateActivity("menu")` tombait toujours dans le
+ * `return` ci-dessous. C'est-à-dire que la présence du Menu — la seule que voie un
+ * joueur qui lance l'Activity et ne clique nulle part — n'était JAMAIS envoyée.
+ */
+let pendingActivity: [ActivityState, ActivityExtra] | null = null;
 
 /**
  * Écran/état affiché au Player, pour la Rich Presence (issue #111). `lobby`/`race`/
@@ -186,7 +200,11 @@ export interface ActivityExtra {
  * actif d'un onglet oublié depuis deux heures.
  */
 export function updateActivity(activityState: ActivityState, extra: ActivityExtra = {}): void {
-  if (!activitySdk) return;
+  if (!activitySdk) {
+    // Hors Discord ce report ne sera jamais rejoué (le SDK n'arrive pas) : c'est le no-op.
+    pendingActivity = [activityState, extra];
+    return;
+  }
   const preset = ACTIVITY_PRESETS[activityState];
   void activitySdk.commands
     .setActivity({
@@ -236,7 +254,6 @@ async function resolveIdentity(): Promise<Identity> {
   const sdk = new DiscordSDK(clientId);
   await sdk.ready();
   closeSdk = () => void sdk.close(RPCCloseCodes.CLOSE_NORMAL, "Fermé depuis le menu");
-  activitySdk = sdk;
 
   const { code } = await sdk.commands.authorize({
     client_id: clientId,
@@ -260,6 +277,16 @@ async function resolveIdentity(): Promise<Identity> {
   const { access_token }: TokenResponse = await res.json();
 
   const auth = await sdk.commands.authenticate({ access_token });
+
+  // La session RPC porte enfin `rpc.activities.write` : on ouvre la Rich Presence et on
+  // rejoue l'écran déjà affiché (le Menu, dans tous les cas de figure).
+  activitySdk = sdk;
+  if (pendingActivity) {
+    const [state, extra] = pendingActivity;
+    pendingActivity = null;
+    updateActivity(state, extra);
+  }
+
   // `global_name` est le nom d'affichage moderne ; `username` reste le repli des vieux
   // comptes. Le SDK ne le type pas toujours, d'où la vue étroite.
   const user = auth.user as { id: string; username: string; global_name?: string | null; avatar?: string | null };
