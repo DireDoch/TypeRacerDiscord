@@ -449,10 +449,19 @@ pub(crate) fn forfeit_race(rooms: &Rooms, key: &str, player_id: &str) -> bool {
 
 /// Échec Difficulté Master (issue #71, ADR 0013) : le client a détecté localement sa 1re
 /// frappe incorrecte, mais le serveur REJOUE le log contre SON texte avant d'y croire —
-/// même frontière de confiance que Finish. Rejette si la Room n'est pas sous Master, si
-/// le partant n'est pas éligible, ou si le recompute ne confirme PAS d'échec (le client
-/// s'est trompé, ou a triché). Renvoie `true` si cet échec a CLOS la course, comme
-/// `forfeit_race`/`finish_race`.
+/// même frontière de confiance que Finish. Seul le partant NON éligible est ignoré (déjà
+/// fini, ou jamais parti : il n'y a rien à débloquer). Renvoie `true` si cet échec a CLOS
+/// la course, comme `forfeit_race`/`finish_race`.
+///
+/// Un `Fail` non confirmé — Room pas sous Master, ou recompute qui ne voit aucune faute —
+/// est enregistré en ABANDON, jamais laissé sans réponse (#186). Même garde que les deux
+/// de `finish_race` (#160, #163), pour la même raison : qui envoie ce message s'est DÉJÀ
+/// arrêté de taper côté client (`doneLocal`), et le rejeter en silence le laissait devant
+/// « Terminé — en attente des autres… » sans bouton, jusqu'au watchdog de 10 minutes —
+/// seul, c'est toute la course qui ne se clôturait plus. L'abandon dit la vérité sur ce
+/// qui s'est passé (il n'est pas arrivé au bout) et libère la fin pour les autres. Aucune
+/// porte ouverte à la triche : c'est le pire classement possible, et abandonner est déjà
+/// à un clic.
 pub(crate) fn fail_race(rooms: &Rooms, key: &str, player_id: &str, keystrokes: Vec<Keystroke>) -> bool {
     let (target_text, difficulty) = {
         let rooms = rooms.lock().unwrap();
@@ -470,11 +479,14 @@ pub(crate) fn fail_race(rooms: &Rooms, key: &str, player_id: &str, keystrokes: V
         (room.target_text.clone(), room.difficulty)
     };
     if difficulty != Difficulty::Master {
-        return false; // Room pas sous Master : rien à confirmer, requête ignorée
+        return forfeit_race(rooms, key, player_id); // rien à confirmer hors Master
     }
     let target_words: Vec<String> = target_text.split(' ').map(str::to_string).collect();
     let Some(fail) = detect_difficulty_failure(Difficulty::Master, &target_words, &keystrokes) else {
-        return false; // le recompute NE confirme PAS d'échec : rejeté
+        // Le recompute NE confirme PAS d'échec : l'ÉCHEC est refusé (il ne sera pas
+        // classé comme tel), mais l'auteur est quand même sorti de la course.
+        eprintln!("Fail non confirmé ({player_id}) : enregistré en abandon");
+        return forfeit_race(rooms, key, player_id);
     };
     // Log vide : un échec n'est, comme un abandon, jamais choisi pour un Play of the Game.
     record_finish(rooms, key, RaceResult::failed(player_id, fail.percent), Vec::new())

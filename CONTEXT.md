@@ -17,7 +17,7 @@ A competitive Run inside a Room, on the **same free input** as Practice: an erro
 _Avoid_: Match, Duel, Course, Blocking input.
 
 **Abandon (forfeit)**:
-Giving up the current Race **without leaving the Room** — the Player's car stops, they are ranked last and labelled « abandon » (never « 0 wpm »), and they stay in the lobby to play the next Race. Recorded as an arrival at 0 WPM carrying an explicit `forfeit` flag, so it unblocks the finish for everyone else instead of making them wait out the watchdog. No Run is ever persisted for an Abandon: nothing to exclude from PBs, nothing to pollute the history. A Player who simply **disconnects** produces the exact same record — one code path for both.
+Giving up the current Race **without leaving the Room** — the Player's car stops, they are ranked last and labelled « abandon » (never « 0 wpm »), and they stay in the lobby to play the next Race. Recorded as an arrival at 0 WPM carrying an explicit `forfeit` flag, so it unblocks the finish for everyone else instead of making them wait out the watchdog. No Run is ever persisted for an Abandon: nothing to exclude from PBs, nothing to pollute the history. A Player who simply **disconnects** produces the exact same record — one code path for both. It is also where every *unconfirmed* end-of-race claim lands: a `Finish` the server's replay doesn't see reaching the end of the text, a `Finish` sent under a Mode de jeu that never asked for one, a `Failed` the replay doesn't confirm. The Player has already stopped typing when any of those arrive, so the server answers with the one record that is both true and unblocking rather than dropping the message in silence.
 _Avoid_: Quit, Leave, Give up, DNF.
 
 **Difficulté (Difficulty)**:
