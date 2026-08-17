@@ -184,9 +184,10 @@ ce que mesure le temps de réaction aussi :
   de délai imposé ; le temps de réaction n'est **pas** mesuré (il n'y a personne d'autre à
   attendre). Décision explicite — voir `Docs/adr/0004-solo-sans-decompte.md`.
 - **Multijoueur** (Race) : t=0 = la **fin du décompte** (« GO »), déclenché par `RaceStart`,
-  l'événement serveur qui synchronise tous les Players. Le décompte local dure **7 s**
-  (texte visible en entier pendant l'attente, jamais masqué — 7 s = le temps de voir la
-  grille de départ et de lire le premier mot) ; le temps de réaction (GO → 1re frappe)
+  l'événement serveur qui synchronise tous les Players. Le décompte local dure ce que le
+  Réglage de salon dit — **5 s par défaut** (#185), texte visible en entier pendant
+  l'attente, jamais masqué : le temps de voir la grille de départ et de lire le premier
+  mot ; le temps de réaction (GO → 1re frappe)
   **est** compté — il reflète la réactivité du Player face à un signal partagé, pas un
   artefact de mesure. La **durée** du décompte est un réglage produit ajustable sans ADR
   ni invalidation (ADR 0007) : elle ne change pas ce qui est mesuré, et la Race n'est
@@ -365,7 +366,7 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
 
 - Écran **Race** (`ui/race.ts`) : lobby (cartes de présence avec avatar + nom, owner 👑,
   Code de partie, réglage de la Source de texte pour l'hôte), décompte de
-  `RACE_COUNTDOWN_S` = **7 s** (ADR 0007) avec texte entier, **piste** (une ligne par
+  `countdownS` (**5 s** par défaut, ADR 0007) avec texte entier, **piste** (une ligne par
   joueur : avatar en tête de progression, nom, WPM live à la ligne d'arrivée — les
   anciennes barres recostumées en CSS, aucun canvas), revanche.
 - Écran **Podium** (`ui/podium.ts`, ADR 0010) : trois marches + les autres visibles à

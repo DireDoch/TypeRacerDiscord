@@ -72,7 +72,8 @@ export const ROOM_SIZES = [2, 3, 4, 5, 6, 7, 8] as const;
  *  de déclenchement y est inatteignable (voir `ws/mod.rs::set_difficulty`). */
 export const ROOM_DIFFICULTIES: Difficulty[] = ["normal", "master"];
 
-/** Miroir de `ws/mod.rs` : durées de décompte réglables (ADR 0007). 7 = défaut. */
+/** Miroir de `ws/mod.rs` : durées de décompte réglables (ADR 0007). Le défaut vit dans
+ *  `initialRaceState()`, vérifié contre `test-vectors/room-settings.json` (#202). */
 export const COUNTDOWN_VALUES = [3, 5, 7, 10] as const;
 
 /**

@@ -3,7 +3,7 @@
 //
 //  Machine d'état pilotée par le SERVEUR : connecting → lobby → countdown →
 //  running → over. Le serveur possède seed/texte (RoomState) et t=0 (RaceStart).
-//   - RaceStart = signal « go » : décompte local de RACE_COUNTDOWN_S (texte visible
+//   - RaceStart = signal « go » : décompte local de `countdownS` (texte visible
 //     pour lire le 1er mot) puis RunClock.start() — SEUL point de bascule du temps
 //     côté client.
 //   - Saisie : FreeInput (curseur libre) → le flux n'est JAMAIS bloqué, on écrit et
@@ -64,17 +64,6 @@ export type RaceIntent =
   | { kind: "create" }
   | { kind: "code"; code: string };
 
-/**
- * Durée du décompte qui précède une Race (ADR 0007). C'est un réglage PRODUIT, pas une
- * unité de mesure : t=0 reste la fin du décompte quelle que soit la valeur, et la Race
- * n'est jamais PB-eligible — la changer n'invalide donc rien (contrairement à l'ADR 0004,
- * qui déplaçait t=0 lui-même en solo). 7 s = le temps de voir la grille de départ et de
- * lire le premier mot du texte, qui reste visible EN ENTIER pendant tout le décompte.
- *
- * Valeur de repli avant le premier `RoomState` (issue #61) — la Room réelle porte la
- * valeur réglée par l'owner dans `countdownS`, qui la remplace dès qu'elle arrive.
- */
-export const RACE_COUNTDOWN_S = 7;
 
 // `Phase`, `RacerState` et `advanceState` vivent désormais dans `core/race-state.ts`
 // (issue #132/#139) : c'est l'état piloté par le serveur, plus une décision de vue.
@@ -123,7 +112,9 @@ export class Race {
    * voir passer.
    */
   private lastActivity = "";
-  private countdownN = RACE_COUNTDOWN_S;
+  /** Décompte affiché. Amorcé au repli de l'état initial, remplacé par la durée
+   *  réglée dans la Room dès le premier `RoomState` (#61, #202). */
+  private countdownN = this.state.countdownS;
   private countdown: Countdown | null = null;
   private rafId = 0;
 

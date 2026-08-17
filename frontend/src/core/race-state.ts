@@ -128,7 +128,11 @@ export function initialRaceState(): RaceState {
     code: null,
     textSource: { kind: "quote" },
     maxPlayers: 8,
-    countdownS: 7, // RACE_COUNTDOWN_S de race.ts — dupliqué le temps de la bascule (#140)
+    // Le repli avant le premier `RoomState` — SEUL endroit du client qui le porte
+    // (#202) : `RACE_COUNTDOWN_S` disait encore 7 alors que le serveur pose 5 (#185),
+    // et le lobby affichait 7 puis sautait à 5. Vérifié contre
+    // `test-vectors/room-settings.json`, que le serveur lit aussi.
+    countdownS: 5,
     readyCheck: false,
     difficulty: "normal",
     gameMode: "normal",

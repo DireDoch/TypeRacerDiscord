@@ -184,39 +184,177 @@ pub fn apply_setting(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::difficulty::Difficulty;
+    use serde::Deserialize;
 
     // Acceptance criterion (#129) : le domaine de validité de chaque Réglage se teste
     // sur la VALEUR seule, sans Room, sans Mutex, sans broadcast::Receiver.
+    //
+    // Depuis #202 les paliers ne sont plus écrits ici : ils viennent de
+    // `test-vectors/room-settings.json`, que `frontend/src/core/net.test.ts` lit AUSSI.
+    // Le client offre ces valeurs, le serveur les revalide — quand les deux divergent, le
+    // joueur clique et rien ne bouge (`apply_setting` répond `Rejected` sans rien
+    // renvoyer). Changer un palier d'un seul côté fait maintenant rougir les deux CI.
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Domains {
+        words_lengths: Vec<u32>,
+        max_players: Vec<usize>,
+        countdown: Vec<u32>,
+        lava_interval: Vec<u32>,
+        spam_threshold: Vec<u32>,
+        spam_time_cap: Vec<u32>,
+        difficulties: Vec<Difficulty>,
+        game_modes: Vec<GameMode>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Rejected {
+        words_lengths: Vec<u32>,
+        max_players: Vec<usize>,
+        countdown: Vec<u32>,
+        lava_interval: Vec<u32>,
+        spam_threshold: Vec<u32>,
+        spam_time_cap: Vec<u32>,
+        difficulties: Vec<Difficulty>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Defaults {
+        words_length: u32,
+        max_players: usize,
+        countdown: u32,
+        lava_interval: u32,
+        spam_threshold: u32,
+        spam_time_cap: u32,
+        difficulty: Difficulty,
+        game_mode: GameMode,
+        ready_check: bool,
+        spam_word: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct SpamWordVectors {
+        max_len: usize,
+        valid: Vec<String>,
+        invalid: Vec<String>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Vectors {
+        domains: Domains,
+        rejected: Rejected,
+        defaults: Defaults,
+        spam_word: SpamWordVectors,
+    }
+
+    fn vectors() -> Vectors {
+        serde_json::from_str(include_str!("../../../test-vectors/room-settings.json"))
+            .expect("test-vectors/room-settings.json lisible")
+    }
+
+    /// Le vecteur est l'AUTORITÉ : sans ce test, changer une constante déplacerait le
+    /// domaine et le test qui le vérifie en même temps, et le client resterait seul à
+    /// offrir l'ancien palier.
+    #[test]
+    fn les_constantes_du_serveur_sont_exactement_le_vecteur() {
+        let d = vectors().domains;
+        assert_eq!(WORDS_LENGTHS.to_vec(), d.words_lengths, "longueurs de la Source Mots");
+        assert_eq!((MIN_PLAYERS..=MAX_PLAYERS).collect::<Vec<_>>(), d.max_players, "tailles de Room");
+        assert_eq!(COUNTDOWN_VALUES.to_vec(), d.countdown, "durées de décompte");
+        assert_eq!(LAVA_INTERVAL_VALUES.to_vec(), d.lava_interval, "intervalles d'élimination");
+        assert_eq!(SPAM_THRESHOLD_VALUES.to_vec(), d.spam_threshold, "seuils de répétitions");
+        assert_eq!(SPAM_TIME_CAP_VALUES.to_vec(), d.spam_time_cap, "plafonds de temps");
+        assert_eq!(SPAM_WORD_MAX_LEN, vectors().spam_word.max_len, "longueur max du mot de Spam");
+    }
+
+    /// Ce qu'une Room neuve porte. `#185` a fait passer le décompte de 7 à 5 s sans que
+    /// les replis du client suivent : le vecteur tient maintenant les deux.
+    #[test]
+    fn les_defauts_d_une_room_neuve_sont_ceux_du_vecteur() {
+        let room = super::super::new_room("c1".to_string(), None, "p1");
+        let d = vectors().defaults;
+        assert_eq!(room.max_players, d.max_players);
+        assert_eq!(room.countdown_s, d.countdown);
+        assert_eq!(room.lava_interval_s, d.lava_interval);
+        assert_eq!(room.spam_threshold, d.spam_threshold);
+        assert_eq!(room.spam_time_cap_s, d.spam_time_cap);
+        assert_eq!(room.difficulty, d.difficulty);
+        assert_eq!(room.game_mode, d.game_mode);
+        assert_eq!(room.ready_check, d.ready_check);
+        assert_eq!(room.spam_word, d.spam_word);
+        // Le texte d'une Room neuve est TOUJOURS des mots, même si la Source par défaut
+        // est Quote (CONTEXT.md) — c'est cette longueur-là que le vecteur nomme.
+        assert_eq!(super::super::ROOM_WORD_COUNT, d.words_length);
+    }
 
     #[test]
-    fn domaine_de_validite_de_chaque_reglage() {
-        let cases: Vec<(&str, RoomSetting, bool)> = vec![
-            ("longueur autorisée", RoomSetting::TextSource(TextSource::Words { count: 15 }), true),
-            ("longueur arbitraire", RoomSetting::TextSource(TextSource::Words { count: 31 }), false),
-            ("citation toujours valide", RoomSetting::TextSource(TextSource::Quote), true),
-            ("taille dans la plage", RoomSetting::MaxPlayers(4), true),
-            ("taille à zéro", RoomSetting::MaxPlayers(0), false),
-            ("taille au-dessus du plafond dur", RoomSetting::MaxPlayers(999), false),
-            ("décompte autorisé", RoomSetting::Countdown(5), true),
-            ("décompte hors palier", RoomSetting::Countdown(4), false),
-            ("ready-check : toujours valide (bool nu)", RoomSetting::ReadyCheck(true), true),
-            ("difficulté Master", RoomSetting::Difficulty(Difficulty::Master), true),
-            ("Expert n'est pas un Réglage de salon (ADR 0013)", RoomSetting::Difficulty(Difficulty::Expert), false),
-            ("mode : toujours valide au niveau valeur", RoomSetting::GameMode(GameMode::Spam), true),
-            ("mot par défaut (None)", RoomSetting::SpamWord(None), true),
-            ("mot valide", RoomSetting::SpamWord(Some("l33t!".to_string())), true),
-            ("mot avec espace : casserait le comptage", RoomSetting::SpamWord(Some("deux mots".to_string())), false),
-            ("mot vide", RoomSetting::SpamWord(Some(String::new())), false),
-            ("mot démesuré", RoomSetting::SpamWord(Some("a".repeat(21))), false),
-            ("seuil autorisé", RoomSetting::SpamThreshold(20), true),
-            ("seuil hors palier", RoomSetting::SpamThreshold(17), false),
-            ("plafond de temps autorisé", RoomSetting::SpamTimeCap(30), true),
-            ("plafond de temps hors palier", RoomSetting::SpamTimeCap(300), false),
-            ("intervalle lava autorisé", RoomSetting::LavaInterval(10), true),
-            ("intervalle lava hors palier", RoomSetting::LavaInterval(7), false),
-        ];
-        for (label, setting, expected) in cases {
-            assert_eq!(setting.value_is_valid(), expected, "{label}");
+    fn tout_le_domaine_du_vecteur_est_accepte() {
+        let d = vectors().domains;
+        let accepted: Vec<(&str, RoomSetting)> = [
+            d.words_lengths
+                .iter()
+                .map(|c| ("longueur Mots", RoomSetting::TextSource(TextSource::Words { count: *c })))
+                .collect::<Vec<_>>(),
+            d.max_players.iter().map(|m| ("taille de Room", RoomSetting::MaxPlayers(*m))).collect(),
+            d.countdown.iter().map(|s| ("décompte", RoomSetting::Countdown(*s))).collect(),
+            d.lava_interval.iter().map(|s| ("intervalle lava", RoomSetting::LavaInterval(*s))).collect(),
+            d.spam_threshold.iter().map(|c| ("seuil Spam", RoomSetting::SpamThreshold(*c))).collect(),
+            d.spam_time_cap.iter().map(|s| ("plafond Spam", RoomSetting::SpamTimeCap(*s))).collect(),
+            d.difficulties.iter().map(|x| ("difficulté", RoomSetting::Difficulty(*x))).collect(),
+            d.game_modes.iter().map(|m| ("mode de jeu", RoomSetting::GameMode(*m))).collect(),
+            vec![
+                ("citation", RoomSetting::TextSource(TextSource::Quote)),
+                ("ready-check activé", RoomSetting::ReadyCheck(true)),
+                ("ready-check désactivé", RoomSetting::ReadyCheck(false)),
+                ("mot de Spam par défaut", RoomSetting::SpamWord(None)),
+            ],
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        for (label, setting) in accepted {
+            assert!(setting.value_is_valid(), "{label} : refusé alors que le vecteur l'offre");
+        }
+    }
+
+    #[test]
+    fn tout_ce_que_le_vecteur_dit_hors_palier_est_refuse() {
+        let r = vectors().rejected;
+        let refused: Vec<(&str, RoomSetting)> = [
+            r.words_lengths
+                .iter()
+                .map(|c| ("longueur Mots", RoomSetting::TextSource(TextSource::Words { count: *c })))
+                .collect::<Vec<_>>(),
+            r.max_players.iter().map(|m| ("taille de Room", RoomSetting::MaxPlayers(*m))).collect(),
+            r.countdown.iter().map(|s| ("décompte", RoomSetting::Countdown(*s))).collect(),
+            r.lava_interval.iter().map(|s| ("intervalle lava", RoomSetting::LavaInterval(*s))).collect(),
+            r.spam_threshold.iter().map(|c| ("seuil Spam", RoomSetting::SpamThreshold(*c))).collect(),
+            r.spam_time_cap.iter().map(|s| ("plafond Spam", RoomSetting::SpamTimeCap(*s))).collect(),
+            // Expert (ADR 0013) : sa condition de déclenchement est inatteignable en Race.
+            r.difficulties.iter().map(|x| ("difficulté", RoomSetting::Difficulty(*x))).collect(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        for (label, setting) in refused {
+            assert!(!setting.value_is_valid(), "{label} : accepté alors que le vecteur le refuse");
+        }
+    }
+
+    #[test]
+    fn le_mot_personnalise_de_spam_suit_le_vecteur() {
+        let w = vectors().spam_word;
+        for word in w.valid {
+            assert!(RoomSetting::SpamWord(Some(word.clone())).value_is_valid(), "refusé : {word:?}");
+        }
+        for word in w.invalid {
+            assert!(!RoomSetting::SpamWord(Some(word.clone())).value_is_valid(), "accepté : {word:?}");
         }
     }
 }
