@@ -510,16 +510,26 @@ export class Race {
       case "lobby":
         return (
           this.codeHtml() +
-          // Deux colonnes : QUI est là à gauche, ce qu'on va jouer à droite. Empilée sous
-          // les Réglages, la liste des joueurs se retrouvait sous la ligne de flottaison
-          // dès que le salon en comptait trois — or c'est elle qu'on regarde en attendant,
-          // et c'est elle qui porte les « prêt ». Le bouton personnel « Se dire prêt » la
-          // suit : on se déclare là où on lit son propre état.
+          // TROIS colonnes, une question par colonne : QUI est là (roster), CE QU'ON RÈGLE
+          // (rien que les Réglages), CE QU'ON VA JOUER (le visuel du Mode, encadré).
+          // Empilée sous les Réglages, la liste des joueurs se retrouvait sous la ligne de
+          // flottaison dès que le salon en comptait trois — or c'est elle qu'on regarde en
+          // attendant, et c'est elle qui porte les « prêt ». Le bouton personnel « Se dire
+          // prêt » la suit : on se déclare là où on lit son propre état.
+          //
+          // Le visuel sort de la colonne des Réglages : posé au-dessus d'eux, il poussait
+          // la première ligne réglable vers le bas et se lisait comme un en-tête de
+          // formulaire. Dans sa propre colonne, il ne pousse plus rien et son cadre à
+          // taille FIXE (`.lobby-body > .mode-art`, CSS) donne à la colonne une largeur qui
+          // ne bouge pas d'un mode à l'autre — le milieu ne se réaligne plus quand on
+          // change de Mode de jeu.
           //
           // Les Réglages de salon se DÉCLARENT (`lobbyRows()`, sur le modèle de
           // `settings.ts:sections()`) et se rendent dans UNE grille (#95, issue #131) —
           // c'est le conteneur commun qui les aligne, pas dix méthodes qui se ressemblent
-          // de loin. La Source est absente de la liste dès qu'un Mode de jeu impose son
+          // de loin. Ils sont désormais enfant DIRECT de la grille : le `<div
+          // class="lobby-config">` qui les emballait avec le visuel n'avait plus rien à
+          // grouper. La Source est absente de la liste dès qu'un Mode de jeu impose son
           // texte (ADR 0015, 0016) : l'afficher laisserait croire qu'on peut encore le choisir.
           `<div class="lobby-body">
              <div class="lobby-roster">
@@ -527,10 +537,8 @@ export class Race {
                ${this.cardsHtml()}
                ${this.readyBtnHtml()}
              </div>
-             <div class="lobby-config">
-               ${modeArtHtml(this.state.gameMode)}
-               <div class="lobby-settings">${lobbyRows(this.state, this.me).map(lobbyRowHtml).join("")}</div>
-             </div>
+             <div class="lobby-settings">${lobbyRows(this.state, this.me).map(lobbyRowHtml).join("")}</div>
+             ${modeArtHtml(this.state.gameMode)}
            </div>` +
           this.startBtnHtml() +
           this.exitBtnHtml()

@@ -843,22 +843,44 @@ button.secondary.ready:hover {
   padding: 0.5rem 0;
   color: var(--sub);
 }
-/* --- Lobby en deux colonnes ------------------------------------------------
-   QUI est là à gauche, ce qu'on va jouer à droite. Empilée sous les Réglages, la liste
-   des joueurs passait sous la ligne de flottaison dès trois joueurs — or c'est elle
-   qu'on regarde en attendant, et c'est elle qui porte les « prêt ».
-   Sous le même seuil que le reste de la feuille, les deux colonnes se remettent en pile
-   et le roster reste EN PREMIER : en panneau réduit aussi, on veut d'abord voir qui est là. */
+/* --- Lobby en trois colonnes -----------------------------------------------
+   Une question par colonne : QUI est là (roster), CE QU'ON RÈGLE (rien que les
+   Réglages), CE QU'ON VA JOUER (le visuel du Mode, encadré à droite).
+   Empilée sous les Réglages, la liste des joueurs passait sous la ligne de flottaison
+   dès trois joueurs — or c'est elle qu'on regarde en attendant, et c'est elle qui porte
+   les « prêt ».
+   La 3e colonne est en `--art-w` FIXE, pas en `auto` ni en fraction : sa largeur ne doit
+   dépendre ni du mode affiché ni de la place restante, sinon la colonne du milieu se
+   réaligne à chaque changement de Mode de jeu.
+   Deux replis plutôt qu'un : le visuel repasse SOUS les Réglages avant que la grille ne
+   s'effondre en pile, parce que c'est lui qui devient à l'étroit le premier — et dans les
+   deux cas le roster reste EN PREMIER, en panneau réduit aussi on veut d'abord voir qui
+   est là. */
 .lobby-body {
+  /* La largeur de la 3e colonne ET celle du cadre qui l'occupe : une seule source, sinon
+     les deux dérivent et le cadre ne remplit plus sa colonne. */
+  --art-w: 15rem;
   display: grid;
-  grid-template-columns: minmax(14rem, 20rem) 1fr;
+  grid-template-columns: minmax(14rem, 20rem) minmax(0, 1fr) var(--art-w);
   align-items: start;
   gap: 1.2rem;
   width: 100%;
 }
+@media (max-width: 62rem) {
+  .lobby-body {
+    grid-template-columns: minmax(14rem, 20rem) minmax(0, 1fr);
+  }
+  /* Le visuel repasse à la ligne, sous les Réglages, et garde sa colonne de droite. */
+  .lobby-body > .mode-art {
+    grid-column: 2;
+  }
+}
 @media (max-width: 34rem) {
   .lobby-body {
     grid-template-columns: 1fr;
+  }
+  .lobby-body > .mode-art {
+    grid-column: 1;
   }
 }
 .lobby-roster {
@@ -918,16 +940,47 @@ button.secondary.ready:hover {
   font-weight: 600;
   letter-spacing: 0.04em;
 }
-.lobby-config {
-  display: flex;
-  flex-direction: column;
-  gap: 0.7rem;
-  width: min(640px, 100%);
-}
 /* Sur le podium, le bandeau reste modeste : c'est le Gap qui doit dominer (ADR 0010), et
    chaque pixel de hauteur ajouté là fait descendre l'échelle du fit sur TOUT l'écran. */
 .race > .mode-art {
   width: min(360px, 100%);
+}
+/* Le visuel ENCADRÉ de la 3e colonne du lobby. Même cadre que `.lobby-settings` — c'est
+   la colonne d'à côté, deux cadres différents se seraient vus.
+   La taille est STATIQUE, en px dérivés de `--art-w`, sur les deux axes : tous les Modes
+   de jeu occupent exactement la même boîte. Rien ici ne doit dépendre du PNG affiché,
+   sinon la colonne du milieu se réaligne quand on change de mode — et `object-fit: cover`
+   (hérité de `.mode-art img`) fait rentrer n'importe quelle image dans cette boîte-là. */
+.lobby-body > .mode-art {
+  width: var(--art-w);
+  padding: 0.45rem;
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sub) 16%, transparent);
+}
+.lobby-body > .mode-art img {
+  /* Hauteur EXPLICITE et non `aspect-ratio` : c'est ce qui rend la boîte insensible aux
+     dimensions du fichier. 2.2 est le ratio mesuré sur les PNG (voir `.mode-art img`). */
+  width: 100%;
+  height: calc((var(--art-w) - 0.9rem) / 2.2);
+  border-radius: 0.4rem;
+}
+/* Le cadre a un `padding` : la pastille du nom se recale dessus, sinon elle flotte dans
+   la marge au lieu de se poser sur l'image. */
+.lobby-body > .mode-art figcaption {
+  left: 1.05rem;
+  bottom: 1.05rem;
+}
+@media (max-width: 62rem) {
+  /* Repliée sous les Réglages, la colonne fixe n'a plus de raison de l'être : le visuel
+     prend la largeur de la colonne qui l'accueille, et la hauteur repasse au ratio du
+     bandeau (`.mode-art img`) — figée, elle aurait recadré la voiture à mesure que la
+     boîte s'élargit. */
+  .lobby-body > .mode-art {
+    width: min(24rem, 100%);
+  }
+  .lobby-body > .mode-art img {
+    height: auto;
+  }
 }
 .lobby-settings {
   width: min(640px, 100%);
