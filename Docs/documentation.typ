@@ -20,6 +20,17 @@
 //  et les PNG de `design/out/`, qui sont hors du dossier `Docs/`. Sans lui,
 //  Typst refuse de sortir du dossier du fichier d'entrée.
 //
+//  Ce que la compilation lit, en plus de ce fichier :
+//    ../design/composants.typ   la palette et le wordmark
+//    ../design/out/*.png        les 12 assets Discord, embarqués tels quels
+//    ./nuit.tmTheme             la coloration syntaxique des blocs de code
+//    ./captures/*.png           les 18 captures d'écran
+//
+//  Les captures non encore prises portent un GABARIT aux bonnes dimensions,
+//  produit par `Docs/captures/build.sh`. Le document intègre donc de vraies
+//  images partout, et prendre une capture consiste à écraser un PNG — pas une
+//  ligne de Typst ne bouge ce jour-là.
+//
 //  `SOURCE_DATE_EPOCH` ne l'est pas non plus. Sans lui, Typst horodate le PDF à
 //  l'instant de la compilation : le fichier committé change à CHAQUE build,
 //  même quand pas une ligne n'a bougé, et le diff d'un binaire de 700 Ko ne
@@ -34,9 +45,12 @@
 //  paragraphe divergent à la première retouche.
 // =============================================================================
 
-#import "../design/composants.typ": logo, nuit, panel, corail, texte, sourd, rouge
+#import "../design/composants.typ": logo, nuit, panel, corail, texte, sourd, rouge, braise
 #import "@preview/fletcher:0.5.8" as fletcher: diagram, node, edge
 #import "@preview/chronos:0.2.1"
+// Même version que `design/composants.typ` : les deux fichiers dessinent le
+// même univers, un écart de version de cetz les ferait diverger en silence.
+#import "@preview/cetz:0.3.4"
 
 // -----------------------------------------------------------------------------
 //  Thème
@@ -132,22 +146,24 @@
 
 // --- Illustrations -----------------------------------------------------------
 
-/// Capture à prendre, posée en attente avec sa légende déjà rédigée.
+/// Capture d'écran de `Docs/captures/`.
 ///
-/// Le cadre a la proportion d'une capture 16/9 pour que la mise en page ne
-/// bouge pas quand l'image arrivera à sa place.
-#let capture(nom, legende, hauteur: 4.6cm) = figure(
-  block(
-    width: 100%,
-    height: hauteur,
-    fill: papier-doux,
-    radius: 2pt,
-    stroke: (thickness: 0.6pt, paint: filet, dash: "dashed"),
-  )[
-    #align(center + horizon)[
-      #text(font: mono, size: 9pt, fill: gris)[\[PLACEHOLDER-#nom\.png\]]
-    ]
-  ],
+/// L'image est intégrée pour de bon — pas un cadre en attente. Les fichiers qui
+/// n'ont pas encore été capturés portent un gabarit AUX BONNES DIMENSIONS,
+/// produit par `Docs/captures/build.sh` : la mise en page est donc déjà celle de
+/// la version finale, et prendre une capture consiste à écraser un PNG. Aucune
+/// ligne de ce fichier ne bouge ce jour-là.
+///
+/// Le coin arrondi et le filet ne sont pas décoratifs : une capture d'interface
+/// sombre posée à cru sur du papier blanc n'a pas de bord, et se lit comme un
+/// trou dans la page.
+#let capture(nom, legende, largeur: 80%) = figure(
+  box(
+    radius: 3pt,
+    clip: true,
+    stroke: 0.7pt + filet,
+    image("captures/" + nom + ".png", width: largeur),
+  ),
   caption: legende,
 )
 
@@ -195,6 +211,509 @@
 
 /// Nœud mis en avant : le même cadre, teinté de l'accent du jeu.
 #let cle = (fill: corail.lighten(84%), stroke: 0.8pt + accent-encre)
+
+// =============================================================================
+//  Registre sombre
+//
+//  Le document est imprimable, donc clair. Mais trois choses appartiennent à
+//  l'écran et pas au papier : du code, un flux réseau, et l'écran de jeu
+//  lui-même. Elles reprennent la palette `nuit` telle quelle — c'est la seule
+//  chose qui les distingue du texte courant, et ça suffit à ce qu'on les
+//  reconnaisse sans avoir à les lire.
+//
+//  Règle : le fond sombre est RARE. S'il couvrait une page sur deux, il ne
+//  dirait plus « ceci vient de la machine », il dirait « décor ».
+// =============================================================================
+
+/// Encart technique à fond sombre.
+///
+/// Pour un point qui se démontre plutôt qu'il ne se raconte : une invariante,
+/// un contrat, une règle du protocole. Le texte courant reste au-dessus et
+/// n'a pas besoin de lui.
+#let panneau(titre, corps, etiquette: "PROTOCOLE") = block(
+  width: 100%,
+  fill: nuit,
+  inset: (x: 1.1em, y: 0.95em),
+  radius: 3pt,
+  above: 1.6em,
+  below: 1.6em,
+  breakable: true,
+)[
+  #set text(fill: texte, size: 9pt)
+  #set par(justify: true, leading: 0.64em)
+  #text(size: 6.8pt, weight: 700, fill: corail, tracking: 0.16em)[#etiquette]
+  #h(0.7em)
+  #text(size: 10pt, weight: 600, fill: texte)[#titre]
+  #v(0.45em)
+  #line(length: 100%, stroke: 0.5pt + panel.lighten(18%))
+  #v(0.5em)
+  #corps
+]
+
+/// Bloc de code, fond `nuit` et filet `corail`.
+///
+/// La coloration vient de `nuit.tmTheme`, écrit pour ce document : le thème par
+/// défaut de Typst est fait pour du papier blanc, et posé ici il rendait du
+/// bleu sombre sur du bleu sombre. Un bloc de code illisible est pire qu'un
+/// bloc de code absent — il occupe la place de l'explication qu'il remplace.
+#let code-reseau(titre, fichier, corps) = block(
+  width: 100%,
+  fill: nuit,
+  radius: 3pt,
+  stroke: (left: 2.5pt + corail),
+  inset: 0pt,
+  above: 1.5em,
+  below: 1.5em,
+  breakable: false,
+)[
+  #block(
+    width: 100%,
+    fill: panel,
+    inset: (x: 0.95em, y: 0.5em),
+    radius: (top-right: 3pt),
+  )[
+    #grid(
+      columns: (1fr, auto),
+      align(left)[#text(size: 8pt, weight: 600, fill: texte)[#titre]],
+      align(right)[#text(font: mono, size: 7pt, fill: sourd)[#fichier]],
+    )
+  ]
+  #block(width: 100%, inset: (x: 0.95em, y: 0.85em))[
+    // `fill: texte` est INDISPENSABLE, pas cosmétique. Typst ne colore que les
+    // jetons pour lesquels le thème a une règle ; tout le reste — parenthèses,
+    // accolades, identifiants ordinaires — garde la couleur de texte ambiante.
+    // Ici l'ambiante est `encre`, c'est-à-dire `nuit`, c'est-à-dire le fond :
+    // sans cette ligne, la moitié du code est peinte en invisible, et la
+    // compilation reste verte.
+    #set text(
+      font: mono,
+      size: 7.4pt,
+      fill: texte,
+      // Les ligatures de programmation de JetBrainsMono changent `=>` en `⇒` :
+      // joli dans un éditeur, faux dans une documentation, où le lecteur doit
+      // pouvoir recopier ce qu'il lit.
+      features: ("calt": 0, "liga": 0),
+    )
+    #set par(justify: false, leading: 0.62em)
+    // Annule le panneau clair que le document pose sur tout bloc de code. Il a
+    // raison partout ailleurs ; ici le panneau est déjà là, et sombre.
+    #show raw.where(block: true): set block(
+      fill: none,
+      inset: 0pt,
+      above: 0pt,
+      below: 0pt,
+    )
+    #corps
+  ]
+]
+
+// =============================================================================
+//  Trois familles de tableaux
+//
+//  Un document qui présente TOUT dans la même grille apprend à son lecteur à
+//  ne plus regarder les grilles. Trois formes, et chacune dit ce qu'elle
+//  contient avant d'être lue :
+//
+//    chiffres()  une grandeur et sa valeur, rien à comparer ligne à ligne
+//    cartes()    un catalogue d'éléments de même nature, qu'on parcourt
+//    zebre()     un contrat à lire ligne par ligne, sans sauter de colonne
+//
+//  Le choix n'est pas décoratif : il suit ce que le lecteur a à FAIRE de la
+//  donnée.
+// =============================================================================
+
+/// Chiffres d'ouverture. Aucun filet, aucun fond : la valeur porte seule.
+///
+/// Trois colonnes, la valeur en grand corail au-dessus de son libellé. On ne
+/// compare pas ces nombres entre eux — les aligner en tableau suggérerait le
+/// contraire.
+#let chiffres(..entrees) = block(width: 100%, above: 1.5em, below: 1.5em)[
+  #grid(
+    columns: (1fr, 1fr, 1fr),
+    row-gutter: 1.15em,
+    column-gutter: 1.2em,
+    ..entrees
+      .pos()
+      .map(e => block(
+        width: 100%,
+        inset: (left: 0.75em),
+        stroke: (left: 1.5pt + corail.lighten(55%)),
+      )[
+        // Fer à gauche explicite : la barre corail marque un bord gauche, et un
+        // texte centré derrière un bord gauche donne deux alignements
+        // concurrents sur le même bloc.
+        #set align(left)
+        #set par(justify: false, leading: 0.5em)
+        #text(size: 16pt, weight: 700, fill: accent-encre)[#e.at(0)]
+        #linebreak()
+        #text(size: 7.6pt, fill: gris)[#e.at(1)]
+      ])
+  )
+]
+
+/// Catalogue en cartes. Pour une liste d'éléments de même nature, qu'on
+/// parcourt à la recherche d'un seul — les 29 messages du protocole.
+///
+/// En tableau, ces 29 lignes formaient deux pavés qu'on lit de haut en bas
+/// sans jamais s'arrêter. En cartes, chaque message a un bord, donc une
+/// existence propre : l'œil s'arrête sur celui qu'il cherche.
+///
+/// `colonnes` : 2 par défaut. 1 quand les rôles sont longs.
+#let cartes(..entrees, colonnes: 2, teinte: papier-doux) = block(
+  width: 100%,
+  above: 1.4em,
+  below: 1.4em,
+  breakable: true,
+)[
+  #grid(
+    columns: (1fr,) * colonnes,
+    row-gutter: 0.55em,
+    column-gutter: 0.55em,
+    ..entrees
+      .pos()
+      // Pas de `height: 100%` pour égaliser les cartes d'une même rangée : dans
+      // une grille à rangées automatiques, ce 100 % se résout sur la hauteur
+      // restante de la PAGE, et chaque carte devenait une colonne entière.
+      .map(e => block(
+        width: 100%,
+        fill: teinte,
+        inset: (x: 0.7em, y: 0.55em),
+        radius: 2pt,
+        stroke: (left: 1.5pt + corail.lighten(40%)),
+      )[
+        // Le `figure` qui enveloppe centre son corps ; une carte est un bloc de
+        // texte, elle se lit au fer à gauche.
+        #set align(left)
+        #set par(justify: false, leading: 0.5em)
+        #grid(
+          columns: (1fr, auto),
+          column-gutter: 0.5em,
+          align(left)[#text(font: mono, size: 8pt, weight: 700, fill: accent-encre)[#e.at(0)]],
+          align(right + horizon)[#text(size: 6.2pt, fill: gris, tracking: 0.05em)[#e.at(2)]],
+        )
+        #v(0.28em)
+        #text(size: 7.6pt, fill: encre)[#e.at(1)]
+      ])
+  )
+]
+
+/// Tableau zébré. Pour un contrat qu'on lit ligne par ligne — le tableau des
+/// endpoints, celui des migrations.
+///
+/// La rayure n'est pas un ornement : sur une ligne de quatre colonnes dont une
+/// est longue, c'est le fond qui garde l'œil sur la bonne ligne quand il
+/// revient de la colonne de droite. Les filets horizontaux faisaient ce travail
+/// moins bien, en ajoutant du trait.
+#let zebre(entetes, aligns, largeurs, ..lignes) = block(
+  width: 100%,
+  above: 1.3em,
+  below: 1.3em,
+)[
+  #set text(size: 8.6pt)
+  #table(
+    columns: largeurs,
+    align: aligns,
+    inset: (x: 0.6em, y: 0.52em),
+    stroke: none,
+    fill: (x, y) => if y == 0 { none } else if calc.odd(y) { papier-doux } else { none },
+    table.header(..entetes.map(h => text(size: 7.6pt, weight: 700, fill: accent-encre, tracking: 0.06em)[#upper(h)])),
+    table.hline(y: 1, stroke: 0.9pt + accent),
+    ..lignes.pos().flatten()
+  )
+]
+
+// =============================================================================
+//  Arborescence
+// =============================================================================
+
+/// Arbre de fichiers.
+///
+/// `entrees` : des triplets `(niveau, "nom", [rôle])`. Les glyphes de branche
+/// sont CALCULÉS, pas écrits : `└─` plutôt que `├─` dépend de savoir si l'entrée
+/// est la dernière de sa fratrie, et un arbre dessiné à la main se trompe
+/// là-dessus dès la première insertion au milieu. Un nom qui finit par `/` est
+/// un dossier, et se colore comme tel.
+///
+/// Le nom est une CHAÎNE et non du contenu : `rate_limit.rs` en markup devient
+/// « rate<i>limit.rs</i> » à la première paire de tirets bas, et il faudrait
+/// échapper chaque nom de fichier à la main.
+#let arbre(..entrees) = {
+  let e = entrees.pos()
+
+  // Dernière de sa fratrie ? On regarde vers l'avant jusqu'à retomber sous son
+  // propre niveau : si on croise un frère avant, ce n'en est pas la dernière.
+  let dernier = ()
+  for i in range(e.len()) {
+    let n = e.at(i).at(0)
+    let est-dernier = true
+    for j in range(i + 1, e.len()) {
+      let m = e.at(j).at(0)
+      if m < n { break }
+      if m == n {
+        est-dernier = false
+        break
+      }
+    }
+    dernier.push(est-dernier)
+  }
+
+  // `ouvert.at(k)` : un ancêtre de niveau k a-t-il encore des frères plus bas ?
+  // C'est ce qui décide du `│` de continuation contre l'espace.
+  let ouvert = ()
+  let lignes = ()
+  for i in range(e.len()) {
+    let (n, nom, role) = e.at(i)
+    let prefixe = ""
+    for k in range(n) {
+      prefixe += if k < ouvert.len() and ouvert.at(k) { "│  " } else { "   " }
+    }
+    prefixe += if dernier.at(i) { "└─ " } else { "├─ " }
+
+    ouvert = ouvert.slice(0, calc.min(n, ouvert.len()))
+    while ouvert.len() < n { ouvert.push(false) }
+    ouvert.push(not dernier.at(i))
+
+    let dossier = nom.ends-with("/")  // `nom` est une chaîne, d'où `ends-with`
+    lignes.push((
+      text(font: mono, size: 7.6pt)[
+        #text(fill: filet)[#prefixe]
+        #text(
+          fill: if dossier { accent-encre } else { encre },
+          weight: if dossier { 700 } else { 400 },
+        )[#nom]
+      ],
+      text(size: 7.6pt, fill: gris)[#role],
+    ))
+  }
+
+  block(width: 100%, above: 1.1em, below: 1.2em, breakable: true)[
+    #grid(
+      columns: (auto, 1fr),
+      column-gutter: 1em,
+      row-gutter: 0.34em,
+      ..lignes.flatten()
+    )
+  ]
+}
+
+// =============================================================================
+//  Le schéma réseau du multijoueur
+//
+//  Dessiné en cetz et non en fletcher, pour une raison : fletcher pose des
+//  BOÎTES reliées par des flèches, et huit joueurs dans huit boîtes ne
+//  ressemblent pas à huit joueurs — ils ressemblent à huit modules. Ici la
+//  question est « qui est connecté, et qui reçoit quoi », donc les clients sont
+//  des figures et pas des rectangles.
+//
+//  Même bibliothèque que `design/composants.typ`, qui dessine la voiture et le
+//  clavier du jeu : le document reste dessiné avec l'outil du projet.
+// =============================================================================
+
+#let _icone-joueur(x, y, couleur, hote: false) = {
+  import cetz.draw: *
+  // Tête et épaules plutôt qu'un avatar carré : à cette taille, une silhouette
+  // se reconnaît là où un carré reste un carré.
+  circle((x, y + 0.30), radius: 0.15, fill: couleur, stroke: none)
+  rect(
+    (x - 0.23, y - 0.20),
+    (x + 0.23, y + 0.09),
+    fill: couleur,
+    stroke: none,
+    radius: (north: 0.21),
+  )
+  if hote {
+    // La couronne de l'hôte. Le seul joueur qui puisse poser un Réglage de
+    // salon ou lancer la course — sur un schéma de flux, c'est une différence
+    // de DROITS, elle mérite d'être visible.
+    line(
+      (x - 0.19, y + 0.50),
+      (x - 0.19, y + 0.66),
+      (x - 0.09, y + 0.56),
+      (x, y + 0.70),
+      (x + 0.09, y + 0.56),
+      (x + 0.19, y + 0.66),
+      (x + 0.19, y + 0.50),
+      close: true,
+      fill: braise,
+      stroke: none,
+    )
+  }
+}
+
+/// Le flux réseau d'une Room : les clients, le socket, le serveur — et les
+/// trois portées de diffusion, qui sont ce que ce schéma existe pour montrer.
+// `length: 0.95cm` : le schéma est dessiné sur une grille de 15 unités, et la
+// justification en fait 16,2. Les 5 % de marge laissent respirer les légendes
+// centrées, que cetz ne borne pas.
+#let schema-reseau() = cetz.canvas(length: 0.95cm, {
+  import cetz.draw: *
+
+  let ys = (6.45, 5.35, 4.25, 3.15)
+  let teintes = (corail, corail.lighten(30%), sourd, sourd.lighten(25%))
+
+  // --- Les clients ---------------------------------------------------------
+  rect(
+    (-0.15, 2.55),
+    (2.95, 7.25),
+    stroke: (paint: filet, thickness: 0.6pt, dash: "dashed"),
+    radius: 0.12,
+  )
+  content(
+    (1.4, 7.55),
+    text(size: 7.5pt, weight: 600, fill: gris)[une Room — 8 joueurs au plus],
+  )
+  for i in range(4) {
+    _icone-joueur(0.5, ys.at(i), teintes.at(i), hote: i == 0)
+    content(
+      (1.05, ys.at(i) + 0.06),
+      text(size: 7.2pt, fill: encre)[#(("hôte", "joueur", "joueur", "joueur").at(i))],
+      anchor: "west",
+    )
+    // Chaque client tient SA propre connexion : il n'y a pas de socket de Room
+    // partagé, la Room est un état serveur, pas un tuyau.
+    line(
+      (2.95, ys.at(i)),
+      (3.9, 4.8),
+      stroke: (paint: filet, thickness: 0.5pt),
+    )
+  }
+  circle((3.9, 4.8), radius: 0.10, fill: accent-encre, stroke: none)
+  content(
+    (3.9, 4.35),
+    text(size: 6.8pt, fill: gris)[4 sockets],
+  )
+
+  // --- Les deux sens du protocole ------------------------------------------
+  line(
+    (4.15, 5.85),
+    (9.75, 5.85),
+    stroke: (paint: corail, thickness: 1.3pt),
+    mark: (end: ">", fill: corail, scale: 0.6),
+  )
+  content(
+    (6.95, 6.48),
+    text(size: 7.4pt, weight: 600, fill: accent-encre)[20 `ClientEvent`],
+  )
+  // Trois exemples et pas quatre : la ligne de légende est centrée sur un
+  // intervalle de 5,6 unités, et le quatrième la faisait mordre sur le bloc
+  // serveur — cetz ne borne pas un `content`, il le laisse déborder.
+  content(
+    (6.95, 6.12),
+    text(size: 6.4pt, fill: gris)[`Progress` · `Finish` · `StartRace`],
+  )
+
+  line(
+    (9.75, 3.95),
+    (4.15, 3.95),
+    stroke: (paint: encre, thickness: 1.3pt),
+    mark: (end: ">", fill: encre, scale: 0.6),
+  )
+  content(
+    (6.95, 3.58),
+    text(size: 7.4pt, weight: 600, fill: encre)[9 `ServerEvent`],
+  )
+  content(
+    (6.95, 3.24),
+    text(size: 6.4pt, fill: gris)[`RoomState` · `RaceStart` · `RaceOver`],
+  )
+
+  content(
+    (6.95, 4.90),
+    box(
+      fill: white,
+      inset: (x: 0.4em, y: 0.25em),
+      // `raw()` et non un bloc de markup : en markup, `//` ouvre un
+      // COMMENTAIRE Typst, et l'URL avalait la fin de la ligne.
+      text(size: 7pt, fill: gris, raw("wss://…/.proxy/ws?token=")),
+    ),
+  )
+
+  // --- Le serveur ----------------------------------------------------------
+  rect((9.9, 2.95), (14.9, 6.9), fill: nuit, stroke: none, radius: 0.12)
+  content(
+    (12.4, 6.52),
+    text(size: 8.2pt, weight: 700, fill: texte)[Backend Rust],
+  )
+  let modules = (
+    ("ws/mod.rs", "le fil : dispatch"),
+    ("ws/room.rs", "la Room : présence, hôte"),
+    ("ws/race_engine.rs", "la course : métronome, clôture"),
+    ("domain/replay.rs", "le recompute autoritaire"),
+  )
+  for i in range(4) {
+    let y = 5.85 - i * 0.72
+    rect(
+      (10.25, y - 0.28),
+      (14.55, y + 0.28),
+      fill: panel,
+      stroke: if i == 3 { 0.7pt + corail } else { none },
+      radius: 0.06,
+    )
+    content(
+      (10.45, y + 0.10),
+      text(font: mono, size: 6.4pt, fill: if i == 3 { corail } else { texte })[#modules.at(i).at(0)],
+      anchor: "west",
+    )
+    content(
+      (10.45, y - 0.13),
+      text(size: 6.2pt, fill: sourd)[#modules.at(i).at(1)],
+      anchor: "west",
+    )
+  }
+
+  // --- Les trois portées de diffusion --------------------------------------
+  line((-0.15, 2.25), (14.9, 2.25), stroke: (paint: filet, thickness: 0.5pt))
+  content(
+    (-0.15, 1.95),
+    text(size: 7.5pt, weight: 600, fill: encre)[Trois portées, et c'est le message qui décide],
+    anchor: "west",
+  )
+
+  let portees = (
+    (0.0, corail, "diffusion", "RoomState, RaceOver", (0, 1, 2, 3)),
+    (5.0, braise.darken(18%), "un seul joueur", "PlayerBurned", (1,)),
+    (10.0, gris, "le socket demandeur", "RoomNotFound", (3,)),
+  )
+  for (x0, couleur, titre, exemple, cibles) in portees {
+    rect((x0, 0.05), (x0 + 4.6, 1.62), fill: papier-doux, stroke: none, radius: 0.08)
+    content(
+      (x0 + 0.25, 1.36),
+      text(size: 7pt, weight: 700, fill: couleur.darken(20%))[#titre],
+      anchor: "west",
+    )
+    content(
+      (x0 + 0.25, 1.09),
+      text(font: mono, size: 6.2pt, fill: gris)[#exemple],
+      anchor: "west",
+    )
+    rect(
+      (x0 + 0.25, 0.28),
+      (x0 + 0.85, 0.72),
+      fill: nuit,
+      stroke: none,
+      radius: 0.05,
+    )
+    for j in range(4) {
+      let cy = 0.5
+      let cx = x0 + 1.9 + j * 0.62
+      let vise = cibles.contains(j)
+      circle(
+        (cx, cy),
+        radius: 0.145,
+        fill: if vise { couleur } else { filet.lighten(30%) },
+        stroke: none,
+      )
+      if vise {
+        line(
+          (x0 + 0.9, 0.5),
+          (cx - 0.19, cy),
+          stroke: (paint: couleur, thickness: 0.55pt),
+          mark: (end: ">", fill: couleur, scale: 0.35),
+        )
+      }
+    }
+  }
+})
 
 // -----------------------------------------------------------------------------
 //  Page de garde
@@ -268,14 +787,18 @@
 
 #show link: set text(fill: accent-encre)
 #show raw: set text(font: mono, size: 8.8pt)
-#show raw.where(block: true): it => block(
+// `show … : set block(…)` et non `it => block(…)[#it]`. Avec un enveloppeur,
+// la règle s'applique EN PLUS de toute règle interne : le bloc de code sombre
+// de `code-reseau()` recevait ce panneau clair par-dessus, et rien ne pouvait
+// l'annuler. Sous forme de `set`, la règle la plus interne gagne.
+#show raw.where(block: true): set block(
   width: 100%,
   fill: papier-doux,
   inset: (x: 0.9em, y: 0.75em),
   radius: 2pt,
   above: 1.2em,
   below: 1.2em,
-)[#it]
+)
 
 #set table(
   stroke: (x, y) => (bottom: if y == 0 { 0.8pt + accent } else { 0.3pt + filet }),
@@ -290,7 +813,10 @@
 // supplément « Figure » produisait deux « Figure 3 » dans le document — un
 // tableau et une illustration, sans rien pour les distinguer.
 #show figure.where(kind: table): set figure(supplement: [Tableau])
-#show figure: set block(above: 1.7em, below: 1.7em)
+// `breakable` : les grilles de cartes du protocole font une page et demie, et
+// une figure insécable les aurait poussées entières à la page suivante en
+// laissant un blanc de la hauteur d'une page.
+#show figure: set block(above: 1.7em, below: 1.7em, breakable: true)
 // Légende à gauche et non centrée : une légende de trois lignes centrée se lit
 // comme un poème. Le fer à gauche la range sous l'illustration.
 #show figure.caption: it => block(width: 100%)[
@@ -303,20 +829,34 @@
 // sections numérotées, pas des chapitres.
 #set heading(supplement: [section])
 
+// Bandeau de titre à fond `nuit`, et non un titre noir sur filet corail.
+//
+// Le document est imprimable, donc clair : y alterner des PAGES sombres
+// coûterait une cartouche et rendrait les captures illisibles en photocopie.
+// Le bandeau fait le même travail — marquer une rupture, donner un rythme — sur
+// deux centimètres de haut au lieu d'une page entière. C'est aussi le seul
+// endroit, avec la page de garde, où la palette du jeu se montre telle quelle.
 #show heading.where(level: 1): it => {
   pagebreak(weak: true)
-  block(above: 0em, below: 1.3em)[
-    #set text(font: sans, fill: encre)
+  block(
+    width: 100%,
+    fill: nuit,
+    inset: (x: 1.1em, top: 0.85em, bottom: 0.9em),
+    radius: 3pt,
+    above: 0em,
+    below: 1.5em,
+  )[
+    #set text(font: sans)
     #grid(
       columns: (auto, 1fr),
-      column-gutter: 0.55em,
-      align(bottom)[#text(size: 20pt, weight: 700, fill: accent)[
+      column-gutter: 0.6em,
+      align(bottom)[#text(size: 20pt, weight: 700, fill: corail)[
           #context counter(heading).display()
         ]],
-      align(bottom)[#text(size: 19pt, weight: 600)[#it.body]],
+      align(bottom)[#text(size: 19pt, weight: 600, fill: texte)[#it.body]],
     )
-    #v(-0.2em)
-    #line(length: 100%, stroke: 0.9pt + accent)
+    #v(0.35em)
+    #line(length: 100%, stroke: 1pt + corail)
   ]
 }
 
@@ -369,6 +909,61 @@ Ce document décrit l'application telle qu'elle est à la version `0.0.4` : ce
 qu'elle fait pour un joueur, comment chacun de ses blocs a été construit, et
 comment le système tient debout une fois l'ensemble assemblé.
 
+#panneau(
+  etiquette: "LA PILE",
+  [Deux programmes, deux langages, une seule origine],
+)[
+  #grid(
+    columns: (1fr, 1fr),
+    column-gutter: 1.6em,
+    row-gutter: 0.9em,
+    [
+      #text(size: 7pt, weight: 700, fill: corail, tracking: 0.12em)[FRONTEND]
+      #linebreak()
+      #text(size: 8.6pt)[
+        TypeScript, *sans cadriciel* — le DOM est manipulé directement. Build
+        Vite. Un domaine pur (`core/`) qui ne touche ni au DOM ni au réseau, et
+        une couche de rendu (`ui/`) qui ne décide de rien.
+      ]
+    ],
+    [
+      #text(size: 7pt, weight: 700, fill: corail, tracking: 0.12em)[BACKEND]
+      #linebreak()
+      #text(size: 8.6pt)[
+        Rust, Axum, SQLite. Deux rôles dans un seul binaire : il sert le build du
+        frontend *et* expose l'API. C'est ce qui permet de ne déclarer qu'une
+        seule adresse à Discord.
+      ]
+    ],
+    [
+      #text(size: 7pt, weight: 700, fill: corail, tracking: 0.12em)[TEMPS RÉEL]
+      #linebreak()
+      #text(size: 8.6pt)[
+        Un WebSocket par joueur, 29 messages. Le serveur possède la graine, le
+        texte et l'instant de départ ; le client ne possède que ce qu'il a tapé.
+      ]
+    ],
+    [
+      #text(size: 7pt, weight: 700, fill: corail, tracking: 0.12em)[LIVRABLE]
+      #linebreak()
+      #text(size: 8.6pt)[
+        Un binaire `x86_64-unknown-linux-musl` statique, produit par la chaîne
+        d'intégration à chaque version, avec le build du frontend et une notice
+        de déploiement générée.
+      ]
+    ],
+  )
+  #v(0.7em)
+  #line(length: 100%, stroke: 0.5pt + panel.lighten(18%))
+  #v(0.6em)
+  #text(size: 8pt, fill: sourd)[
+    La ligne qui traverse tout le document est celle-ci : *le même algorithme de
+    score existe deux fois*, en TypeScript pour l'affichage en direct et en Rust
+    pour le verdict. Aucun générateur ne relie les deux. C'est un choix, il a un
+    prix, et le prix se paie en @parite.
+  ]
+]
+
 = Le projet en chiffres
 
 Un instantané, mesuré sur le dépôt à la version `0.0.4`. Ces nombres ne sont pas
@@ -377,25 +972,23 @@ les sections suivantes — notamment le rapport entre le code de production et c
 qui l'atteste.
 
 #figure(
-  table(
-    columns: (1fr, auto),
-    align: (left, right),
-    table.header([Grandeur], [Valeur]),
-
-    [Lignes TypeScript (`frontend/src`, tests compris)], [11 368],
-    [Lignes Rust (`backend/src`, tests compris)], [7 960],
-    [Lignes de feuille de style (une seule)], [2 312],
-    [Tests automatisés], [382 + 159],
-    [Langages tenus à parité, prouvée par vecteurs partagés], [2],
-    [Décisions d'architecture consignées (ADR)], [19],
-    [Messages du protocole WebSocket], [29],
-    [Leçons du cursus « Apprendre »], [100],
-    [Migrations de base de données], [6],
-    [Modes de jeu multijoueur], [3],
-    [Issues fermées], [121],
+  chiffres(
+    ([11 368], [lignes TypeScript\ `frontend/src`, tests compris]),
+    ([7 960], [lignes Rust\ `backend/src`, tests compris]),
+    ([2 312], [lignes de feuille de style\ une seule, et c'est voulu]),
+    ([382 + 159], [tests automatisés\ `vitest` · `cargo test`]),
+    ([29], [messages du protocole\ 20 montants, 9 descendants]),
+    ([19], [décisions d'architecture\ consignées, une par fichier]),
+    ([100], [leçons du cursus\ une donnée, pas du code]),
+    ([6], [migrations de base\ dont deux correctives]),
+    ([3], [Modes de jeu multijoueur\ des axes, jamais cumulables]),
+    ([2], [langages tenus à parité\ prouvée par vecteurs partagés]),
+    ([121], [issues fermées\ une seule encore ouverte]),
+    ([1], [binaire à déployer\ statique, il emporte tout]),
   ),
-  caption: [Le projet mesuré, version `0.0.4`. Les 382 tests sont ceux de
-    `vitest` côté TypeScript, les 159 ceux de `cargo test` côté Rust.],
+  caption: [Le projet mesuré, version `0.0.4`. Pas de filets ni de colonnes
+    alignées : ces douze nombres ne se comparent pas entre eux, et les ranger en
+    tableau laisserait croire le contraire.],
 )
 
 Deux chiffres méritent d'être lus ensemble. *Deux langages tenus à parité*
@@ -456,63 +1049,65 @@ reprend pas la lettre. Voici les douze termes sans lesquels les sections
 suivantes ne se lisent pas ; les autres sont introduits là où ils servent.
 
 #figure(
-  table(
-    columns: (auto, 1fr),
-    align: (left + top, left + top),
-    table.header([Terme], [Ce qu'il désigne]),
+  zebre(
+    ([Terme], [Ce qu'il désigne]),
+    (left + top, left + top),
+    (auto, 1fr),
 
-    [*Run*],
+    ([*Run*],
     [Une tentative de frappe, du premier caractère à la fin. L'unité à laquelle
-      tout le reste s'accroche. Deux espèces : Practice et Race.],
+      tout le reste s'accroche. Deux espèces : Practice et Race.]),
 
-    [*Practice*],
+    ([*Practice*],
     [Un Run solo en saisie libre : le retour arrière est permis, une faute peut
-      rester non corrigée, on peut taper au-delà du mot.],
+      rester non corrigée, on peut taper au-delà du mot.]),
 
-    [*Race*],
+    ([*Race*],
     [Un Run compétitif dans une Room, sur la même saisie libre — mais qui ne se
-      termine qu'une fois le texte entier tapé *exactement*.],
+      termine qu'une fois le texte entier tapé *exactement*.]),
 
-    [*Room*],
+    ([*Room*],
     [La session multijoueur qui réunit les joueurs sur un même texte. Identifiée
       par une clé unique prenant deux formes : un salon vocal, ou un Code de
-      partie.],
+      partie.]),
 
-    [*Mode*],
+    ([*Mode*],
     [La règle solo qui décide du texte présenté et de la fin du Run :
       `Time`, `Words`, `Quotes` ou `Zen`. Exactement un par Run — et *aucun* en
-      Race.],
+      Race.]),
 
-    [*Mode de jeu*],
+    ([*Mode de jeu*],
     [La règle qui décide comment une Race se *gagne* : `Normal`,
-      `Floor is lava` ou `Spam`. Un axe à part entière, jamais cumulable.],
+      `Floor is lava` ou `Spam`. Un axe à part entière, jamais cumulable.]),
 
-    [*Source de texte*],
+    ([*Source de texte*],
     [D'où vient le texte d'une Race — une citation, ou des mots générés. Elle
-      décide du texte, jamais de la mesure.],
+      décide du texte, jamais de la mesure.]),
 
-    [*Réglage de salon*],
+    ([*Réglage de salon*],
     [Une option de Room posée par l'hôte hors course et imposée à tout le monde :
-      durée du décompte, taille max, Difficulté, Mode de jeu…],
+      durée du décompte, taille max, Difficulté, Mode de jeu…]),
 
-    [*Preference*],
+    ([*Preference*],
     [Ce qu'un joueur veut voir *sur sa machine à lui* : police, palette, pseudo
-      affiché. Ne quitte jamais l'appareil et n'influence aucun score.],
+      affiché. Ne quitte jamais l'appareil et n'influence aucun score.]),
 
-    [*Keystroke log*],
+    ([*Keystroke log*],
     [La chronologie brute des frappes d'un Run : quoi, et à quel instant. La
-      matière première dont tout le reste est dérivé.],
+      matière première dont tout le reste est dérivé.]),
 
-    [*Scoreboard autoritaire*],
+    ([*Scoreboard autoritaire*],
     [Les chiffres qui font foi, recalculés par le serveur Rust depuis le
-      Keystroke log à la fin d'un Run. En multijoueur, c'est aussi l'anti-triche.],
+      Keystroke log à la fin d'un Run. En multijoueur, c'est aussi l'anti-triche.]),
 
-    [*Gap (écart)*],
+    ([*Gap (écart)*],
     [De combien de secondes un joueur a fini derrière le vainqueur. C'est le
-      chiffre qu'on dit à voix haute à l'arrivée, pas la vitesse absolue.],
+      chiffre qu'on dit à voix haute à l'arrivée, pas la vitesse absolue.]),
   ),
-  caption: [Les douze termes de travail. Le glossaire complet, avec ses
-    interdits de vocabulaire, reste dans `CONTEXT.md`.],
+  caption: [Les douze termes de travail, en tableau zébré : on les lit une fois
+    de haut en bas, et la rayure garde l'œil sur la bonne ligne quand la
+    définition tient sur trois. Le glossaire complet, avec ses interdits de
+    vocabulaire, reste dans `CONTEXT.md`.],
 )
 
 #en-clair([Le « recompute autoritaire »])[
@@ -1082,7 +1677,6 @@ qui a rendu le débogage dans Discord possible.
   "bandeau-erreur",
   [Le bandeau d'erreurs. Il n'existe que parce que la console n'existe pas :
     dans le client Discord, c'est le seul canal de diagnostic disponible.],
-  hauteur: 3cm,
 )
 
 Pour une vraie console, il reste un chemin : ouvrir Discord *au navigateur* et
@@ -1342,7 +1936,6 @@ proxy inverse devant, et c'est un choix à poser explicitement.
   "ci-jobs",
   [Les trois travaux verts sur une poussée. Le troisième n'apparaît que sur la
     branche principale.],
-  hauteur: 3.2cm,
 )
 
 #capture(
@@ -1350,7 +1943,6 @@ proxy inverse devant, et c'est un choix à poser explicitement.
   [Une version publiée avec son archive. Les notes viennent du fichier de
     changements du dépôt, pas des titres de commits : une version parle au
     joueur.],
-  hauteur: 3.2cm,
 )
 
 == Méthode : le modèle de domaine fait autorité sur le nommage
@@ -1436,29 +2028,6 @@ existantes, il ne restait qu'à les rendre visibles dans l'arborescence.
     faveur des deux chantiers de méthode précédents (issue #205).],
 )
 
-// -----------------------------------------------------------------------------
-//  Outils propres aux sections 6 à 8
-// -----------------------------------------------------------------------------
-
-/// Arbre commenté : le chemin en chasse fixe à gauche, sa raison d'être à
-/// droite. Une grille et NON un bloc de code : dans un `raw`, les commentaires
-/// s'alignent à l'espace, et le premier fichier renommé décale toute la colonne.
-/// Ici la colonne se réaligne seule.
-#let arbre(..lignes) = block(width: 100%, breakable: true, above: 1.1em, below: 1.2em)[
-  #grid(
-    columns: (auto, 1fr),
-    column-gutter: 1.1em,
-    row-gutter: 0.45em,
-    ..lignes
-      .pos()
-      .map(l => (
-        text(font: mono, size: 8pt, fill: encre)[#l.at(0)],
-        text(size: 8.5pt, fill: gris)[#l.at(1)],
-      ))
-      .flatten()
-  )
-]
-
 = Documentation technique <technique>
 
 Troisième et dernier point de vue : le système *à l'état final*. Les sections
@@ -1475,21 +2044,27 @@ dans deux langages, et *tout le reste du document* découle de la façon dont il
 se parlent.
 
 #arbre(
-  ([backend/], [le serveur Rust : API HTTP, WebSocket, SQLite — et le service du
-    build frontend, ce qui en fait l'origine unique]),
-  ([frontend/], [le jeu lui-même, en TypeScript sans cadriciel : le DOM est
+  (0, "backend/", [le serveur Rust : API HTTP, WebSocket, SQLite — et le service
+    du build frontend, ce qui en fait l'origine unique]),
+  (1, "src/", [détaillé plus bas]),
+  (1, "migrations/", [six fichiers SQL, appliqués au démarrage]),
+  (0, "frontend/", [le jeu lui-même, en TypeScript sans cadriciel : le DOM est
     manipulé directement]),
-  ([design/], [les assets visuels, écrits en Typst et exportés en PNG par
-    `build.sh` (@assets)]),
-  ([Docs/], [ce document, les 19 ADR, le contrat d'API détaillé, les procédures
-    d'agent]),
-  ([test-vectors/], [les vecteurs de parité, lus par les *deux* suites de tests
-    (@parite)]),
-  ([Contexte/], [les notes de cadrage d'origine, gardées telles quelles — de
+  (1, "src/", [détaillé plus bas]),
+  (1, "index.html", [la coquille servie dans l'iframe]),
+  (0, "design/", [les assets visuels, écrits en Typst et exportés en PNG]),
+  (1, "composants.typ", [la voiture, le clavier, la lave, le wordmark]),
+  (1, "build.sh", [régénère tout `out/` en une commande (@assets)]),
+  (0, "Docs/", [ce document, les ADR, le contrat d'API, les procédures d'agent]),
+  (1, "documentation.typ", [la source de ce PDF]),
+  (1, "adr/", [les 19 décisions, une par fichier]),
+  (0, "test-vectors/", [les vecteurs de parité, lus par les *deux* suites de
+    tests (@parite)]),
+  (0, "Contexte/", [les notes de cadrage d'origine, gardées telles quelles — de
     l'histoire, pas de la référence]),
-  ([`CONTEXT.md`], [le glossaire de domaine. Autorité sur le nommage, pas
+  (0, "CONTEXT.md", [le glossaire de domaine. Autorité sur le nommage, pas
     documentation d'appoint]),
-  ([`PONYTAIL-DEBT.md`], [le registre des raccourcis délibérés, chacun avec son
+  (0, "PONYTAIL-DEBT.md", [le registre des raccourcis délibérés, chacun avec son
     plafond et son chemin de sortie]),
 )
 
@@ -1505,43 +2080,41 @@ entrée-sortie, aucun socket, aucune base : ce sont les fonctions qui *décident
 une frontière nommée — c'est le fichier de 3 371 lignes du récit précédent.
 
 #arbre(
-  ([main.rs], [le routeur Axum, les extracteurs d'authentification, les en-têtes
-    de sécurité, l'écoute sur la boucle locale]),
-  ([discord.rs], [l'identité et OAuth2 : échange du code, résolution du
+  (0, "main.rs", [le routeur Axum, les extracteurs d'authentification, les
+    en-têtes de sécurité, l'écoute sur la boucle locale]),
+  (0, "discord.rs", [l'identité et OAuth2 : échange du code, résolution du
     `player_id`, vérification de l'application émettrice]),
-  ([store.rs], [la persistance SQLite. Le PB n'y a pas de table : il se dérive]),
-  ([quote.rs], [le proxy vers l'API de citations. La clé ne quitte jamais le
+  (0, "store.rs", [la persistance SQLite. Le PB n'y a pas de table : il se
+    dérive]),
+  (0, "quote.rs", [le proxy vers l'API de citations. La clé ne quitte jamais le
     serveur]),
-  ([rate\_limit.rs], [les plafonds de requêtes. Une seule table pour tous les
+  (0, "rate_limit.rs", [les plafonds de requêtes. Une seule table pour tous les
     seaux]),
-  ([domain/mod.rs], [la déclaration du miroir : quel fichier Rust reflète quel
+  (0, "domain/", [*le domaine pur, autoritaire* — miroir Rust de
+    `frontend/src/core/`]),
+  (1, "mod.rs", [la déclaration du miroir : quel fichier Rust reflète quel
     fichier TypeScript]),
-  ([domain/types.rs], [les types de domaine partagés — miroir de
-    `core/types.ts`]),
-  ([domain/replay.rs], [le recompute autoritaire du Scoreboard. Le cœur de la
+  (1, "types.rs", [les types de domaine partagés]),
+  (1, "replay.rs", [le recompute autoritaire du Scoreboard. Le cœur de la
     frontière de confiance]),
-  ([domain/difficulty.rs], [la détection d'échec Expert/Master, rejouée côté
-    serveur avant d'être crue]),
-  ([domain/text\_gen.rs], [la génération de texte seedée. Même graine, même
-    texte que le navigateur]),
-  ([domain/spam.rs], [le comptage des répétitions verrouillées du Mode de jeu
-    Spam]),
-  ([domain/analysis.rs], [le moteur Weak spot : quelles touches coûtent le plus
-    cher au joueur]),
-  ([ws/mod.rs], [le *fil* : l'état partagé des Rooms, la boucle socket, le
-    dispatch des messages]),
-  ([ws/protocol.rs], [les 29 messages du protocole — miroir de
-    `core/net.ts`]),
-  ([ws/room.rs], [la Room comme *lieu* : entrer, sortir, l'hôte, le Code de
+  (1, "difficulty.rs", [l'échec Expert/Master, rejoué serveur avant d'être cru]),
+  (1, "text_gen.rs", [la génération seedée. Même graine, même texte que le
+    navigateur]),
+  (1, "spam.rs", [le comptage des répétitions verrouillées du Mode de jeu Spam]),
+  (1, "analysis.rs", [le moteur Weak spot : quelles touches coûtent le plus
+    cher]),
+  (0, "ws/", [*le multijoueur* — sockets, Rooms, moteur de course]),
+  (1, "mod.rs", [le fil : l'état partagé des Rooms, la boucle socket, le
+    dispatch]),
+  (1, "protocol.rs", [les 29 messages — miroir de `core/net.ts`]),
+  (1, "room.rs", [la Room comme lieu : entrer, sortir, l'hôte, le Code de
     partie]),
-  ([ws/room\_setting.rs], [le Réglage de salon comme module, avec son contrat de
-    retour explicite (ADR 0017)]),
-  ([ws/race\_engine.rs], [le déroulé d'une course, du `StartRace` au `RaceOver`.
-    Machine d'état pure]),
-  ([ws/game\_mode.rs], [le seam du Mode de jeu : une table déclarée plutôt qu'un
-    `match` recopié partout]),
-  ([ws/tests.rs], [les tests du fil, de la Room et du moteur — sortis de
-    `mod.rs` avec le reste]),
+  (1, "room_setting.rs", [le Réglage de salon, avec son contrat de retour
+    explicite (ADR 0017)]),
+  (1, "race_engine.rs", [le déroulé d'une course, du `StartRace` au `RaceOver`]),
+  (1, "game_mode.rs", [le seam du Mode de jeu : une table déclarée, pas un
+    `match` recopié]),
+  (1, "tests.rs", [les tests du fil, de la Room et du moteur]),
 )
 
 === `frontend/src/` — le jeu
@@ -1551,66 +2124,62 @@ ne touche jamais au DOM et c'est ce qui le rend testable sans navigateur. `ui/`
 dessine, et ne décide de rien qui compte.
 
 #arbre(
-  ([main.ts], [l'amorçage : le routage entre écrans, le bandeau d'erreurs
+  (0, "main.ts", [l'amorçage : le routage entre écrans, le bandeau d'erreurs
     in-iframe]),
-  ([api.ts], [la frontière HTTP. *Toutes* les requêtes passent par ici — c'est
+  (0, "api.ts", [la frontière HTTP. *Toutes* les requêtes passent par ici — c'est
     ce qui rend le préfixe `/.proxy` gérable en un point]),
-  ([discord.ts], [le handshake d'identité côté client, et `proxyBase()` : la
-    fonction qui décide du préfixe]),
-  ([live-stats.ts], [le compteur de vitesse en direct. Non autoritaire, et
+  (0, "discord.ts", [le handshake d'identité côté client, et `proxyBase()`]),
+  (0, "live-stats.ts", [le compteur de vitesse en direct. Non autoritaire, et
     assumé comme tel]),
-  ([core/types.ts], [les types de domaine. La *référence* dont Rust est le
-    miroir]),
-  ([core/net.ts], [le transport WebSocket et les 29 messages, côté client]),
-  ([core/race-state.ts], [l'état d'une Race, piloté par le serveur : une
-    transition pure sur chaque `ServerEvent`]),
-  ([core/run-session.ts], [une Run tapée : l'horloge, le contrôleur de saisie,
-    le journal de frappe, la Difficulté]),
-  ([core/clock.ts], [l'origine du temps et l'horloge monotone. `t=0` est la
-    première frappe]),
-  ([core/countdown.ts], [le décompte annulable, de durée réglable]),
-  ([core/difficulty.ts], [la détection d'échec Expert/Master. La *référence* de
-    l'algorithme]),
-  ([core/learn.ts], [le moteur du cursus : le barème par tranches, le
-    déverrouillage]),
-  ([core/preferences.ts], [les Preferences du joueur. Ne quittent jamais
-    l'appareil]),
-  ([core/stats/scoreboard.ts], [le calcul du Scoreboard. La *référence* de
-    l'algorithme, portée en Rust]),
-  ([core/text-gen/], [la génération de texte seedée : le PRNG, la liste de mots,
-    la ponctuation, les nombres, les drills]),
-  ([core/input/], [les contrôleurs de saisie, derrière une interface commune]),
-  ([core/sound.ts], [les effets sonores]),
-  ([core/fps.ts], [la limite d'images par seconde de l'animation]),
-  ([core/speed-unit.ts], [la conversion entre unités de vitesse]),
-  ([ui/chrome.ts], [l'habillage qui ne change jamais d'écran]),
-  ([ui/menu.ts], [le menu principal et le hub de navigation]),
-  ([ui/practice.ts], [l'écran de Practice]),
-  ([ui/race.ts], [l'écran de Race : la piste, les voitures, la vitesse en
-    direct]),
-  ([ui/lobby-rows.ts], [les Réglages de salon du lobby, déclarés puis rendus]),
-  ([ui/podium.ts], [le podium et le Gap]),
-  ([ui/potg.ts], [Play of the Game : le duel au ralenti sur horloge partagée]),
-  ([ui/results.ts], [l'écran de résultats solo]),
-  ([ui/chart.ts], [le graphe seconde par seconde, en SVG écrit à la main
-    (@graphe)]),
-  ([ui/replay.ts], [la relecture d'un Run depuis son Keystroke log]),
-  ([ui/typing-zone.ts], [le rendu partagé de la zone de frappe — la fenêtre de
-    trois lignes]),
-  ([ui/learn.ts], [l'écran « Apprendre » : la liste et l'exercice]),
-  ([ui/settings.ts], [l'écran Paramètres]),
-  ([ui/history.ts], [l'historique des Runs]),
-  ([ui/weak-spots.ts], [le rendu d'une analyse de touches faibles]),
-  ([ui/guide.ts], [le guide « Comment jouer », affiché d'office la 1#super[re]
-    fois]),
-  ([ui/mode-labels.ts], [les libellés français des Modes — la seule couche qui
-    traduise le vocabulaire de domaine]),
-  ([ui/info-bubble.ts], [l'icône « i » et sa bulle d'explication, partagées par
-    tous les écrans]),
-  ([content/lessons.json], [les 100 leçons. Une *donnée*, pas du code]),
-  ([style.css], [la feuille de style, unique. 2 312 lignes, et la palette dont
+  (0, "style.css", [la feuille de style, unique. 2 312 lignes, et la palette dont
     ce PDF hérite]),
+  (0, "content/lessons.json", [les 100 leçons. Une *donnée*, pas du code]),
+  (0, "core/", [*le domaine pur du client* — ni DOM, ni réseau, donc testable
+    sans navigateur]),
+  (1, "types.ts", [les types de domaine. La *référence* dont Rust est le miroir]),
+  (1, "net.ts", [le transport WebSocket et les 29 messages, côté client]),
+  (1, "race-state.ts", [l'état d'une Race : une transition pure sur chaque
+    `ServerEvent`]),
+  (1, "run-session.ts", [une Run tapée : horloge, contrôleur, journal,
+    Difficulté]),
+  (1, "clock.ts", [l'origine du temps. `t=0` est la première frappe]),
+  (1, "countdown.ts", [le décompte annulable, de durée réglable]),
+  (1, "difficulty.ts", [l'échec Expert/Master. La *référence* de l'algorithme]),
+  (1, "learn.ts", [le moteur du cursus : le barème par tranches, le
+    déverrouillage]),
+  (1, "preferences.ts", [les Preferences. Ne quittent jamais l'appareil]),
+  (1, "sound.ts", [les effets sonores]),
+  (1, "fps.ts", [la limite d'images par seconde de l'animation]),
+  (1, "speed-unit.ts", [la conversion entre unités de vitesse]),
+  (1, "stats/scoreboard.ts", [le calcul du Scoreboard. La *référence*, portée en
+    Rust]),
+  (1, "text-gen/", [le PRNG seedé, la liste de mots, la ponctuation, les nombres,
+    les drills]),
+  (1, "input/", [les contrôleurs de saisie, derrière une interface commune]),
+  (0, "ui/", [*le rendu* — dessine, et ne décide de rien qui compte]),
+  (1, "chrome.ts", [l'habillage qui ne change jamais d'écran]),
+  (1, "menu.ts", [le menu principal et le hub de navigation]),
+  (1, "practice.ts", [l'écran de Practice]),
+  (1, "race.ts", [l'écran de Race : la piste, les voitures, la vitesse en
+    direct]),
+  (1, "lobby-rows.ts", [les Réglages de salon du lobby, déclarés puis rendus]),
+  (1, "podium.ts", [le podium et le Gap]),
+  (1, "potg.ts", [Play of the Game : le duel au ralenti sur horloge partagée]),
+  (1, "results.ts", [l'écran de résultats solo]),
+  (1, "chart.ts", [le graphe seconde par seconde, en SVG écrit à la main
+    (@graphe)]),
+  (1, "replay.ts", [la relecture d'un Run depuis son Keystroke log]),
+  (1, "typing-zone.ts", [la zone de frappe — la fenêtre de trois lignes]),
+  (1, "learn.ts", [l'écran « Apprendre » : la liste et l'exercice]),
+  (1, "settings.ts", [l'écran Paramètres]),
+  (1, "history.ts", [l'historique des Runs]),
+  (1, "weak-spots.ts", [le rendu d'une analyse de touches faibles]),
+  (1, "guide.ts", [le guide « Comment jouer », affiché d'office la 1#super[re]
+    fois]),
+  (1, "mode-labels.ts", [les libellés français des Modes]),
+  (1, "info-bubble.ts", [l'icône « i » et sa bulle d'explication]),
 )
+
 
 == Architecture générale et frontière client/serveur
 
@@ -1688,6 +2257,21 @@ texte au serveur.
 
 == Le protocole WebSocket <websocket>
 
+C'est la section la plus dense du document, et celle qui décrit le cœur du
+projet : ce qui se passe entre huit navigateurs et un serveur pendant qu'une
+course se joue. Le schéma ci-dessous en pose la forme d'ensemble — qui est
+connecté à quoi, dans quel sens circule quoi, et surtout à *qui* chaque message
+est adressé.
+
+#schema(
+  schema-reseau(),
+  [Le flux réseau d'une Room. Chaque joueur tient sa propre connexion : une Room
+    est un état *serveur*, pas un tuyau partagé — c'est ce qui permet à un
+    message de ne viser qu'un seul destinataire. En bas, les trois portées : le
+    même socket sert la diffusion générale, le message privé et la réponse au
+    seul demandeur, et c'est le message qui décide, jamais le client.],
+)
+
 === Pourquoi un WebSocket, et pas des requêtes
 
 Le critère n'est pas la vitesse mais la *direction*. Trois messages du serveur
@@ -1714,84 +2298,307 @@ Vingt messages montent du client, neuf descendent du serveur. Ils sont
 sérialisés en JSON avec une étiquette de type, et la même liste existe en
 TypeScript dans `core/net.ts` — c'est encore le miroir manuel.
 
-#figure(
-  table(
-    columns: (auto, 1fr, auto),
-    align: (left + top, left + top, left + top),
-    table.header([Message], [Rôle], [Qui peut]),
+Présentés en cartes plutôt qu'en tableau, et pour une raison de lecture : on ne
+parcourt pas ces vingt-neuf lignes de haut en bas, on en cherche *une*. En
+tableau, l'œil glisse ; encadré, chaque message existe séparément. La mention en
+petit à droite de chaque carte est le droit associé — c'est elle, et pas le
+message, qui décide si le serveur écoute.
 
-    [`JoinChannel`], [Rejoindre la Room du salon vocal, en la *créant* si besoin.
-      La clé vient du SDK Discord : elle ne peut pas être mal tapée.], [tous],
-    [`CreateRoom`], [Ouvrir une Room neuve. Le serveur tire le Code de partie et
-      le renvoie dans le `RoomState` qui suit.], [tous],
-    [`JoinCode`], [Rejoindre par Code. Ne crée *jamais* : un code vient d'un
-      clavier, et créer sur une faute de frappe enfermerait le joueur seul.], [tous],
-    [`SetTextSource`], [Régler d'où vient le texte. Déclenche la
-      regénération.], [hôte, hors course],
-    [`SetMaxPlayers`], [Taille maximale (2–8). Ne porte que sur les arrivées :
-      personne n'est expulsé.], [hôte, hors course],
-    [`SetCountdown`], [Durée du décompte : 3, 5, 7 ou 10 s.], [hôte, hors course],
-    [`SetReadyCheck`], [Activer le ready-check. Réinitialise les prêts déjà
-      marqués.], [hôte, hors course],
-    [`SetReady`], [Se marquer prêt. Le seul réglage que *tout le monde* peut
-      poser — il ne porte que sur soi.], [tous, hors course],
-    [`SetDifficulty`], [Normal ou Master. `Expert` n'est pas un Réglage de
-      salon : sa condition de déclenchement est inatteignable en Race.], [hôte, hors course],
-    [`SetGameMode`], [Normal, Floor is lava ou Spam. Regénère le texte : chaque
-      mode impose le sien.], [hôte, hors course],
-    [`SetLavaInterval`], [Intervalle d'élimination, parmi 5/10/15/20 s. Inerte
-      hors Floor is lava.], [hôte, hors course],
-    [`SetSpamWord`], [Le mot répété. Validé côté serveur : non vide, sans
-      espace, 20 caractères au plus — un espace ferait de « un mot répété »
-      plusieurs mots cibles.], [hôte, hors course],
-    [`SetSpamThreshold`], [Le seuil de répétitions qui gagne, parmi
-      10/20/30/50.], [hôte, hors course],
-    [`SetSpamTimeCap`], [Le plafond de temps de Spam, 60 s au plus.], [hôte, hors course],
-    [`StartRace`], [Lancer la course.], [hôte],
-    [`Progress`], [Position de frappe, et le compte de répétitions sous Spam.
-      *Déclaratif* : sert au rendu des voitures, jamais au classement.], [partants],
-    [`Finish`], [La soumission : le journal de frappe brut et l'instant de fin.
-      Ni le texte ni la durée de référence — le serveur les possède.], [partants],
-    [`Forfeit`], [Abandon volontaire. Le joueur reste au lobby pour la
-      suivante.], [partants],
-    [`Fail`], [Échec Master détecté localement. Le serveur *rejoue* le journal
-      pour le confirmer avant de l'enregistrer.], [partants],
-    [`LeaveRoom`], [Quitter la Room.], [tous],
+#figure(
+  cartes(
+    (
+      `JoinChannel`,
+      [Rejoindre la Room du salon vocal, en la *créant* si besoin. La clé vient
+        du SDK Discord : elle ne peut pas être mal tapée.],
+      [tous],
+    ),
+    (
+      `CreateRoom`,
+      [Ouvrir une Room neuve. Le serveur tire le Code de partie et le renvoie
+        dans le `RoomState` qui suit.],
+      [tous],
+    ),
+    (
+      `JoinCode`,
+      [Rejoindre par Code. Ne crée *jamais* : un code vient d'un clavier, et
+        créer sur une faute de frappe enfermerait le joueur seul.],
+      [tous],
+    ),
+    (
+      `StartRace`,
+      [Lancer la course. Le seul message dont l'effet est irréversible pour
+        toute la Room.],
+      [hôte],
+    ),
+    (
+      `SetTextSource`,
+      [Régler d'où vient le texte. Déclenche la regénération.],
+      [hôte · hors course],
+    ),
+    (
+      `SetGameMode`,
+      [Normal, Floor is lava ou Spam. Regénère le texte : chaque mode impose le
+        sien.],
+      [hôte · hors course],
+    ),
+    (
+      `SetMaxPlayers`,
+      [Taille maximale (2–8). Ne porte que sur les arrivées : personne n'est
+        expulsé.],
+      [hôte · hors course],
+    ),
+    (
+      `SetCountdown`,
+      [Durée du décompte : 3, 5, 7 ou 10 s.],
+      [hôte · hors course],
+    ),
+    (
+      `SetDifficulty`,
+      [Normal ou Master. `Expert` n'est pas un Réglage de salon : sa condition
+        de déclenchement est inatteignable en Race.],
+      [hôte · hors course],
+    ),
+    (
+      `SetReadyCheck`,
+      [Activer le ready-check. Réinitialise les prêts déjà marqués.],
+      [hôte · hors course],
+    ),
+    (
+      `SetLavaInterval`,
+      [Intervalle d'élimination, parmi 5/10/15/20 s. Inerte hors Floor is lava.],
+      [hôte · hors course],
+    ),
+    (
+      `SetSpamWord`,
+      [Le mot répété. Validé serveur : non vide, sans espace, 20 caractères au
+        plus — un espace ferait de « un mot répété » plusieurs mots cibles.],
+      [hôte · hors course],
+    ),
+    (
+      `SetSpamThreshold`,
+      [Le seuil de répétitions qui gagne, parmi 10/20/30/50.],
+      [hôte · hors course],
+    ),
+    (
+      `SetSpamTimeCap`,
+      [Le plafond de temps de Spam, 60 s au plus.],
+      [hôte · hors course],
+    ),
+    (
+      `SetReady`,
+      [Se marquer prêt. Le seul réglage que *tout le monde* peut poser — il ne
+        porte que sur soi.],
+      [tous · hors course],
+    ),
+    (
+      `Progress`,
+      [Position de frappe, et le compte de répétitions sous Spam. *Déclaratif* :
+        sert au rendu des voitures, jamais au classement.],
+      [partants],
+    ),
+    (
+      `Finish`,
+      [La soumission : le journal de frappe brut et l'instant de fin. Ni le texte
+        ni la durée de référence — le serveur les possède.],
+      [partants],
+    ),
+    (
+      `Forfeit`,
+      [Abandon volontaire. Le joueur reste au lobby pour la suivante.],
+      [partants],
+    ),
+    (
+      `Fail`,
+      [Échec Master détecté localement. Le serveur *rejoue* le journal pour le
+        confirmer avant de l'enregistrer.],
+      [partants],
+    ),
+    (
+      `LeaveRoom`,
+      [Quitter la Room. Produit exactement le même enregistrement qu'une
+        déconnexion — un seul chemin de code.],
+      [tous],
+    ),
   ),
-  caption: [Les vingt messages `ClientEvent`. La colonne de droite n'est pas une
+  caption: [Les vingt messages `ClientEvent`. La mention de droite n'est pas une
     convention d'interface : un message hors droits est ignoré côté serveur, en
     silence. Un client modifié ne gagne rien à l'envoyer quand même.],
 )
 
-#figure(
-  table(
-    columns: (auto, 1fr, auto),
-    align: (left + top, left + top, left + top),
-    table.header([Message], [Rôle], [À qui]),
+Côté descendant, les neuf messages se distinguent moins par leur contenu que par
+leur *portée* — à qui ils sont adressés. Les cartes le portent en tête, parce
+que c'est le premier fait à connaître sur un message qui arrive.
 
-    [`RoomState`], [L'état complet du salon : les présents avec leur identité
-      d'affichage, l'hôte, la graine, le texte, le Code, et les dix réglages.
-      Rediffusé à chaque changement.], [toute la Room],
-    [`RaceStart`], [Le top de départ : un instant absolu partagé, qui cale les
-      horloges locales de tout le monde sur le même `t=0`.], [toute la Room],
-    [`PlayerProgress`], [La position d'un joueur, pour le rendu de sa voiture.],
-    [toute la Room],
-    [`PlayerFinished`], [Le scoreboard recalculé d'un arrivant. Distingue une
-      vraie arrivée, un abandon et un échec Master.], [toute la Room],
-    [`PlayerBurned`], [Ce joueur vient de brûler. C'est ce message qui lui
-      demande son journal et lui dit d'arrêter de taper.], [*un seul joueur*],
-    [`SpamStop`], [La course Spam s'arrête. Un seul message pour les deux
-      causes, et il ne désigne *aucun* vainqueur.], [toute la Room],
-    [`RaceOver`], [Le classement complet, avec les courbes de chacun et le duel
-      de Play of the Game. L'ordre du tableau *est* le classement.], [toute la Room],
-    [`RoomNotFound`], [Code inconnu. Le socket reste ouvert : le joueur corrige
-      sans se reconnecter.], [*le socket demandeur*],
-    [`RoomFull`], [Room déjà pleine. Même traitement.], [*le socket demandeur*],
+#figure(
+  cartes(
+    (
+      `RoomState`,
+      [L'état complet du salon : les présents avec leur identité d'affichage,
+        l'hôte, la graine, le texte, le Code, et les dix réglages. Rediffusé à
+        chaque changement.],
+      [toute la Room],
+    ),
+    (
+      `RaceStart`,
+      [Le top de départ : un instant absolu partagé, qui cale les horloges
+        locales de tout le monde sur le même `t=0`.],
+      [toute la Room],
+    ),
+    (
+      `PlayerProgress`,
+      [La position d'un joueur, pour le rendu de sa voiture. Non autoritaire, et
+        c'est assumé.],
+      [toute la Room],
+    ),
+    (
+      `PlayerFinished`,
+      [Le scoreboard recalculé d'un arrivant. Distingue une vraie arrivée, un
+        abandon et un échec Master.],
+      [toute la Room],
+    ),
+    (
+      `RaceOver`,
+      [Le classement complet, avec les courbes de chacun et le duel de Play of
+        the Game. L'ordre du tableau *est* le classement.],
+      [toute la Room],
+    ),
+    (
+      `SpamStop`,
+      [La course Spam s'arrête. Un seul message pour les deux causes, et il ne
+        désigne *aucun* vainqueur.],
+      [toute la Room],
+    ),
+    (
+      `PlayerBurned`,
+      [Ce joueur vient de brûler. C'est ce message qui lui demande son journal et
+        lui dit d'arrêter de taper.],
+      [un seul joueur],
+    ),
+    (
+      `RoomNotFound`,
+      [Code inconnu. Le socket reste ouvert : le joueur corrige sans se
+        reconnecter.],
+      [le socket demandeur],
+    ),
+    (
+      `RoomFull`,
+      [Room déjà pleine. Même traitement : réponse directe, socket gardé.],
+      [le socket demandeur],
+    ),
   ),
-  caption: [Les neuf messages `ServerEvent`. La colonne de droite est le
-    fan-out, et il a trois valeurs distinctes — c'est ce qui distingue une
-    diffusion d'un message privé et d'une réponse.],
+  caption: [Les neuf messages `ServerEvent`, rangés par portée décroissante. Ces
+    trois portées sont ce que le schéma d'ouverture de cette section dessine, et
+    la seule chose qu'un client ne peut pas deviner du message lui-même.],
 )
+
+=== Les deux bouts du fil
+
+Le même message traverse deux langages. Voici les deux endroits où il est
+reçu — condensés, mais fidèles au dépôt.
+
+Côté serveur, la boucle de lecture désérialise et aiguille. Ce qu'il faut y
+voir : les onze réglages ne sont pas onze branches de logique, mais onze
+constructions d'une même variante `RoomSetting` passée à une seule fonction.
+C'est le seam de l'ADR 0017 — le jour où un douzième réglage arrive, le dispatch
+n'apprend rien de nouveau.
+
+#code-reseau(
+  [Le dispatch : une boucle, un `match`, une seule porte pour les réglages],
+  [backend/src/ws/mod.rs],
+  raw(
+    lang: "rust",
+    block: true,
+    theme: "nuit.tmTheme",
+    "while let Some(Ok(msg)) = receiver.next().await {
+    let text = match msg {
+        Message::Text(t) => t,
+        Message::Close(_) => break,
+        _ => continue,
+    };
+    match serde_json::from_str::<ClientEvent>(&text) {
+        // Un Réglage de salon = une variante `RoomSetting` (#204).
+        // Le dispatch ne sait plus lesquels demandent un texte neuf.
+        Ok(ClientEvent::SetGameMode { mode }) => {
+            let s = RoomSetting::GameMode(mode);
+            apply_room_setting(&rooms, &key, &player_id, s, &quotes)
+        }
+        // PAS un Réglage de salon (ADR 0017) : chacun se marque prêt.
+        Ok(ClientEvent::SetReady { ready }) => {
+            set_ready(&rooms, &key, &player_id, ready)
+        }
+        Ok(ClientEvent::Progress { chars_done, reps }) => {
+            let now = now_epoch_ms();
+            relay_progress(&rooms, &key, &player_id, chars_done, reps, now)
+        }
+        Ok(ClientEvent::Finish { keystrokes, ended_at_ms }) => {
+            // `finish_race` REJOUE le log contre le texte du serveur.
+            if finish_race(&rooms, &key, &player_id, keystrokes,
+                           ended_at_ms, &pool) {
+                spawn_refresh_text(rooms.clone(), key.clone(), quotes.clone());
+            }
+        }
+        Ok(ClientEvent::LeaveRoom) => break,
+        Ok(_) => {}                  // jointure en double : ignorée
+        Err(e) => eprintln!(\"WS {player_id} : illisible ({e})\"),
+    }
+}",
+  ),
+)
+
+Côté client, la réception ne fait rien d'autre que désérialiser et confier
+l'événement à une fonction *pure*. C'est cette pureté qui rend l'état d'une Race
+testable sans navigateur et sans serveur : `applyServerEvent` prend un état et
+un message, et rend un état.
+
+#code-reseau(
+  [La réception : un transport de trois lignes, et une transition pure],
+  [frontend/src/core/net.ts · core/race-state.ts],
+  raw(
+    lang: "typescript",
+    block: true,
+    theme: "nuit.tmTheme",
+    "// net.ts — le transport ne décide de rien, il ne fait que porter.
+const proto = location.protocol === \"https:\" ? \"wss\" : \"ws\";
+const url = `${proto}://${location.host}${basePath}/ws`;
+this.ws = new WebSocket(`${url}?token=${encodeURIComponent(token)}`);
+this.ws.onmessage = (m) => onEvent(JSON.parse(m.data) as ServerEvent);
+
+// race-state.ts — état + message => état.
+// Aucun DOM, aucun `fetch`, aucune horloge : une fonction pure.
+export function applyServerEvent(
+  state: RaceState,
+  event: ServerEvent,
+): RaceState {
+  switch (event.type) {
+    case \"RaceStart\":
+      // Un seul décompte vivant : un second RaceStart est ignoré.
+      if (state.phase === \"countdown\" || state.phase === \"running\") {
+        return state;
+      }
+      return { ...state, phase: \"countdown\", racers: state.players.slice() };
+
+    case \"PlayerBurned\":
+      // Le seul message qui ne vise qu'un joueur : il demande son log.
+      return advance(state, event.playerId, {
+        kind: \"burned\",
+        atMs: event.atMs,
+      });
+
+    case \"RoomFull\":
+      return { ...state, phase: \"failed\", failure: ROOM_FULL };
+  }
+}",
+  ),
+)
+
+#en-clair([Pourquoi « une fonction pure » change quelque chose])[
+  Une fonction pure ne regarde rien d'autre que ce qu'on lui donne, et ne touche
+  à rien d'autre que ce qu'elle rend. Celle-ci reçoit l'état de la course et un
+  message, et rend le nouvel état — elle ne lit pas l'heure, n'écrit pas à
+  l'écran, n'ouvre aucune connexion. Conséquence pratique : pour la tester, il
+  suffit de lui passer une suite de messages et de comparer le résultat. Pas de
+  navigateur, pas de serveur, pas de course à jouer pour de vrai.
+]
 
 === La frontière de confiance
 
@@ -1799,24 +2606,36 @@ Le partage est le même à chaque fois : le serveur possède la graine, le texte
 `t=0` ; le client possède ce qu'il a tapé. Un client peut donc *décrire* sa
 frappe, jamais son résultat.
 
-#figure(
-  table(
-    columns: (auto, 1fr),
-    align: (left + top, left + top),
-    table.header([Le client peut…], [Détail]),
+#panneau(
+  etiquette: "INVARIANT",
+  [Une déclaration du client peut arrêter une course, jamais la gagner],
+)[
+  C'est la phrase sortie de l'issue #160, et la seule à retenir de toute cette
+  section. Elle se décline en trois rangs, et tout message du protocole tombe
+  dans l'un des trois.
 
-    [affirmer], [son journal de frappe, son identité d'affichage, ses réglages
-      s'il est l'hôte. Tout est assaini ou rejoué avant d'être utilisé.],
-    [*arrêter*, jamais gagner], [`Progress.reps` peut déclencher l'arrêt d'une
-      course Spam, et une fin annoncée peut débloquer les autres. Ni l'un ni
-      l'autre n'attribue une place.],
-    [ne jamais toucher], [la graine, le texte cible, l'instant de départ, la
-      durée de référence, le classement, le verdict de record.],
-  ),
-  caption: [La règle tient en une phrase, et c'est celle qui est sortie de
-    l'issue #160 : une déclaration du client peut arrêter une course, jamais la
-    gagner.],
-)
+  #v(0.7em)
+  #grid(
+    columns: (auto, 1fr),
+    column-gutter: 1.1em,
+    row-gutter: 0.75em,
+    text(weight: 600, fill: corail)[affirmer],
+    [son journal de frappe, son identité d'affichage, ses réglages s'il est
+      l'hôte. Tout est assaini ou rejoué avant d'être utilisé — « affirmer »
+      n'a jamais voulu dire « être cru ».],
+
+    text(weight: 600, fill: braise)[arrêter],
+    [`Progress.reps` peut déclencher l'arrêt d'une course Spam, et une fin
+      annoncée peut débloquer les autres. Ni l'un ni l'autre n'attribue une
+      place. Un tricheur peut donc gâcher une partie ; il ne peut pas la
+      remporter.],
+
+    text(weight: 600, fill: sourd)[ne jamais toucher],
+    [la graine, le texte cible, l'instant de départ, la durée de référence, le
+      classement, le verdict de record. Rien de tout cela ne circule dans le
+      sens client → serveur, à aucun moment.],
+  )
+]
 
 === Les trois portes d'entrée
 
@@ -1946,10 +2765,11 @@ deux. Les corps de requête et de réponse ne sont pas ici — ils vivent dans
 versions divergent.
 
 #figure(
-  table(
-    columns: (auto, auto, 1fr, auto),
-    align: (left + top, left + top, left + top, left + top),
-    table.header([Méthode], [Chemin], [Rôle], [Authentification]),
+  zebre(
+    ([Méthode], [Chemin], [Rôle], [Authentification]),
+    (left + top, left + top, left + top, left + top),
+    (auto, auto, 1fr, auto),
+
 
     [`GET`], [`/api/health`], [Sonde de vie.], [aucune],
     [`POST`], [`/token`], [Échange le code OAuth2 contre un jeton d'accès. Le
@@ -2036,10 +2856,11 @@ qu'aucune règle ait à être écrite ailleurs.
 Les six migrations racontent, dans l'ordre, ce que le projet a appris :
 
 #figure(
-  table(
-    columns: (auto, 1fr),
-    align: (left + top, left + top),
-    table.header([Migration], [Ce qu'elle a changé, et pourquoi]),
+  zebre(
+    ([Migration], [Ce qu'elle a changé, et pourquoi]),
+    (left + top, left + top),
+    (auto, 1fr),
+
 
     [0001], [Le schéma initial : la table `runs` et ses deux index. Le PB est
       dérivé dès le premier jour.],
@@ -2196,10 +3017,11 @@ Chacune répond à une question qui ne se lit pas depuis le code seul. Le texte
 complet, avec son contexte et ses conséquences, vit dans `Docs/adr/`.
 
 #figure(
-  table(
-    columns: (auto, 1fr),
-    align: (left + top, left + top),
-    table.header([ADR], [Décision]),
+  zebre(
+    ([ADR], [Décision]),
+    (left + top, left + top),
+    (auto, 1fr),
+
 
     [0001], [Le texte cible est persisté verbatim, pas régénéré depuis sa graine.],
     [0002], [L'identité d'affichage n'est jamais persistée.],
@@ -2236,10 +3058,11 @@ Activity puisse être publiée. Ils ne sont pas décoratifs : sans eux, la fiche
 d'application reste incomplète.
 
 #figure(
-  table(
-    columns: (auto, 1fr),
-    align: (left + top, left + top),
-    table.header([Fichier], [Rôle]),
+  zebre(
+    ([Fichier], [Rôle]),
+    (left + top, left + top),
+    (auto, 1fr),
+
 
     [`LICENSE`], [La licence sous laquelle le code est publié.],
     [`TERMS.md`], [Les conditions d'utilisation, liées depuis la fiche
@@ -2254,10 +3077,11 @@ d'application reste incomplète.
 == Où aller ensuite
 
 #figure(
-  table(
-    columns: (auto, 1fr),
-    align: (left + top, left + top),
-    table.header([Document], [Ce qu'il contient, et que ce PDF n'a pas]),
+  zebre(
+    ([Document], [Ce qu'il contient, et que ce PDF n'a pas]),
+    (left + top, left + top),
+    (auto, 1fr),
+
 
     [`CONTEXT.md`], [Le glossaire de domaine complet — une quarantaine de
       termes, chacun avec les mots interdits à sa place. Ce document en a
