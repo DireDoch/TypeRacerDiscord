@@ -5,11 +5,18 @@ A embedded game for playing with your friend in discord
 
 **[`Docs/documentation.pdf`](Docs/documentation.pdf)** — la documentation technique du
 projet : ce que le jeu fait, comment chaque bloc a été construit, et comment le système
-tient debout. Source Typst dans [`Docs/documentation.typ`](Docs/documentation.typ),
-recompilable avec :
+tient debout. Deux versions, même source :
+
+| Fichier | Thème | Pour |
+| --- | --- | --- |
+| [`Docs/documentation.pdf`](Docs/documentation.pdf) | sombre | la lecture à l'écran |
+| [`Docs/documentation-clair.pdf`](Docs/documentation-clair.pdf) | clair | l'impression |
+
+Source Typst unique dans [`Docs/documentation.typ`](Docs/documentation.typ) : une
+variable décide du thème, tout le reste en dérive. Recompiler les deux :
 
 ```sh
-typst compile --root . Docs/documentation.typ Docs/documentation.pdf
+./Docs/build.sh
 ```
 
 Ce README garde ce que le PDF ne couvre pas volontairement : la mise en place locale et le

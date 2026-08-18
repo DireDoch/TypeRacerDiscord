@@ -10,11 +10,17 @@
 //  silence sur sa sérif par défaut, et tout le document change de visage sans
 //  que rien ne le signale. Vérifier avec `typst fonts` avant d'en changer.
 //
-//  Compilation — À LA MAIN, le PDF est committé. Aucun job CI ne le refait :
-//  les paquets @preview exigent le réseau au premier build.
+//  Compilation — À LA MAIN, les PDF sont committés. Aucun job CI ne les
+//  refait : les paquets @preview exigent le réseau au premier build.
 //
-//    env SOURCE_DATE_EPOCH=0 \
-//      typst compile --root . Docs/documentation.typ Docs/documentation.pdf
+//    ./Docs/build.sh
+//
+//  Ce script produit les DEUX versions depuis cette source unique :
+//    Docs/documentation.pdf         thème sombre  (--input theme=sombre)
+//    Docs/documentation-clair.pdf   thème clair   (--input theme=clair)
+//
+//  Une seule variable décide — voir « La bascule » plus bas. Tenir deux .typ en
+//  parallèle les ferait diverger au premier paragraphe corrigé d'un seul côté.
 //
 //  `--root .` n'est PAS décoratif : le document importe `design/composants.typ`
 //  et les PNG de `design/out/`, qui sont hors du dossier `Docs/`. Sans lui,
@@ -67,12 +73,40 @@
 //  texte à lire.
 // -----------------------------------------------------------------------------
 
-#let encre = nuit
-#let gris = sourd.darken(38%) // texte secondaire, lisible sur blanc
-#let filet = sourd.lighten(45%) // règles, bordures
-#let accent = corail // filets et aplats seulement
-#let accent-encre = corail.darken(30%) // dès que l'accent porte du texte
-#let papier-doux = nuit.lighten(96%) // fonds de bloc, teintés du bleu du jeu
+// --- La bascule ---------------------------------------------------------------
+//
+//  Un seul interrupteur, et toute la palette en dérive. C'est le même patron
+//  qu'une poignée de variables CSS : rien dans le corps du document ne connaît
+//  sa propre couleur, tout passe par les six noms ci-dessous.
+//
+//    typst compile --root . Docs/documentation.typ            → clair
+//    typst compile --root . --input theme=sombre …            → sombre
+//
+//  Les deux PDF sont produits par `Docs/build.sh`, et sortent de CETTE source :
+//  une documentation en deux versions qui divergent est une documentation
+//  fausse à moitié.
+#let sombre = sys.inputs.at("theme", default: "clair") == "sombre"
+
+#let papier = if sombre { nuit } else { white } // le fond de page
+#let encre = if sombre { texte } else { nuit } // le texte courant
+#let gris = if sombre { sourd } else { sourd.darken(38%) } // texte secondaire
+#let filet = if sombre { panel.lighten(26%) } else { sourd.lighten(45%) } // règles
+#let accent = corail // filets et aplats — identique dans les deux thèmes
+// `corail` pur ne passe pas 3:1 sur blanc, mais il passe largement sur `nuit` :
+// en thème sombre il n'y a rien à assombrir, c'est la version pure qu'on veut.
+#let accent-encre = if sombre { corail } else { corail.darken(30%) }
+#let papier-doux = if sombre { panel } else { nuit.lighten(96%) } // fonds de bloc
+
+//  Les blocs « écran » — encarts techniques, code, bandeaux de titre. En thème
+//  clair leur fond est `nuit`, la couleur du jeu. En thème sombre `nuit` EST le
+//  fond de page : ils remonteraient invisibles, d'où le cran au-dessus.
+#let surface = if sombre { panel } else { nuit }
+#let surface-haut = if sombre { panel.lighten(16%) } else { panel } // barres de titre
+#let surface-filet = if sombre { panel.lighten(30%) } else { panel.lighten(18%) }
+
+//  L'aplat d'accent des schémas : un corail délavé sur blanc, un corail sourd
+//  sur nuit. Éclaircir un accent sur fond sombre le ferait vibrer.
+#let accent-doux = if sombre { corail.darken(58%) } else { corail.lighten(84%) }
 
 // Les polices du jeu (`Inter`, `JetBrains Mono`) sont auto-hébergées en .woff2,
 // un format que Typst ne sait pas charger. Le critère de remplacement n'est donc
@@ -201,7 +235,7 @@
 #let diag = (
   node-shape: rect,
   node-stroke: 0.7pt + encre,
-  node-fill: white,
+  node-fill: papier,
   node-inset: 7pt,
   node-corner-radius: 2pt,
   edge-stroke: 0.7pt + gris,
@@ -210,7 +244,7 @@
 )
 
 /// Nœud mis en avant : le même cadre, teinté de l'accent du jeu.
-#let cle = (fill: corail.lighten(84%), stroke: 0.8pt + accent-encre)
+#let cle = (fill: accent-doux, stroke: 0.8pt + accent-encre)
 
 // =============================================================================
 //  Registre sombre
@@ -232,7 +266,7 @@
 /// n'a pas besoin de lui.
 #let panneau(titre, corps, etiquette: "PROTOCOLE") = block(
   width: 100%,
-  fill: nuit,
+  fill: surface,
   inset: (x: 1.1em, y: 0.95em),
   radius: 3pt,
   above: 1.6em,
@@ -245,7 +279,7 @@
   #h(0.7em)
   #text(size: 10pt, weight: 600, fill: texte)[#titre]
   #v(0.45em)
-  #line(length: 100%, stroke: 0.5pt + panel.lighten(18%))
+  #line(length: 100%, stroke: 0.5pt + surface-filet)
   #v(0.5em)
   #corps
 ]
@@ -258,7 +292,7 @@
 /// bloc de code absent — il occupe la place de l'explication qu'il remplace.
 #let code-reseau(titre, fichier, corps) = block(
   width: 100%,
-  fill: nuit,
+  fill: surface,
   radius: 3pt,
   stroke: (left: 2.5pt + corail),
   inset: 0pt,
@@ -268,7 +302,7 @@
 )[
   #block(
     width: 100%,
-    fill: panel,
+    fill: surface-haut,
     inset: (x: 0.95em, y: 0.5em),
     radius: (top-right: 3pt),
   )[
@@ -620,7 +654,7 @@
   content(
     (6.95, 4.90),
     box(
-      fill: white,
+      fill: papier,
       inset: (x: 0.4em, y: 0.25em),
       // `raw()` et non un bloc de markup : en markup, `//` ouvre un
       // COMMENTAIRE Typst, et l'URL avalait la fin de la ligne.
@@ -629,7 +663,7 @@
   )
 
   // --- Le serveur ----------------------------------------------------------
-  rect((9.9, 2.95), (14.9, 6.9), fill: nuit, stroke: none, radius: 0.12)
+  rect((9.9, 2.95), (14.9, 6.9), fill: surface, stroke: none, radius: 0.12)
   content(
     (12.4, 6.52),
     text(size: 8.2pt, weight: 700, fill: texte)[Backend Rust],
@@ -645,7 +679,7 @@
     rect(
       (10.25, y - 0.28),
       (14.55, y + 0.28),
-      fill: panel,
+      fill: surface-haut,
       stroke: if i == 3 { 0.7pt + corail } else { none },
       radius: 0.06,
     )
@@ -689,7 +723,7 @@
     rect(
       (x0 + 0.25, 0.28),
       (x0 + 0.85, 0.72),
-      fill: nuit,
+      fill: surface,
       stroke: none,
       radius: 0.05,
     )
@@ -752,6 +786,7 @@
 
 #set page(
   paper: "a4",
+  fill: papier,
   margin: (top: 2.6cm, bottom: 2.2cm, x: 2.4cm),
   numbering: "1",
   header: context {
@@ -840,7 +875,7 @@
   pagebreak(weak: true)
   block(
     width: 100%,
-    fill: nuit,
+    fill: surface,
     inset: (x: 1.1em, top: 0.85em, bottom: 0.9em),
     radius: 3pt,
     above: 0em,
@@ -954,7 +989,7 @@ comment le système tient debout une fois l'ensemble assemblé.
     ],
   )
   #v(0.7em)
-  #line(length: 100%, stroke: 0.5pt + panel.lighten(18%))
+  #line(length: 100%, stroke: 0.5pt + surface-filet)
   #v(0.6em)
   #text(size: 8pt, fill: sourd)[
     La ligne qui traverse tout le document est celle-ci : *le même algorithme de
@@ -1589,9 +1624,9 @@ client Discord et le serveur.
     import chronos: *
     // Les couleurs par défaut de chronos (lavande, jaune pâle) ne sont pas
     // celles du document : on les ramène sur la palette du jeu.
-    _par("app", display-name: "Activity (iframe)", color: corail.lighten(70%))
-    _par("dc", display-name: "Client Discord", color: corail.lighten(70%))
-    _par("srv", display-name: "Backend Rust", color: corail.lighten(70%))
+    _par("app", display-name: "Activity (iframe)", color: accent-doux)
+    _par("dc", display-name: "Client Discord", color: accent-doux)
+    _par("srv", display-name: "Backend Rust", color: accent-doux)
     _par("api", display-name: "API Discord", color: papier-doux)
 
     _seq("app", "dc", comment: "ready")
@@ -2686,9 +2721,9 @@ quatre points d'accès réseau du projet.
 #sequence(
   chronos.diagram({
     import chronos: *
-    _par("c1", display-name: "Joueur (hôte)", color: corail.lighten(70%))
-    _par("c2", display-name: "Joueur", color: corail.lighten(70%))
-    _par("srv", display-name: "Backend Rust", color: corail.lighten(70%))
+    _par("c1", display-name: "Joueur (hôte)", color: accent-doux)
+    _par("c2", display-name: "Joueur", color: accent-doux)
+    _par("srv", display-name: "Backend Rust", color: accent-doux)
 
     _seq("c1", "srv", comment: "JoinChannel / CreateRoom")
     _seq("srv", "c1", comment: "RoomState", dashed: true)
@@ -2724,8 +2759,8 @@ quatre points d'accès réseau du projet.
 #sequence(
   chronos.diagram({
     import chronos: *
-    _par("j", display-name: "Joueurs", color: corail.lighten(70%))
-    _par("srv", display-name: "Backend Rust", color: corail.lighten(70%))
+    _par("j", display-name: "Joueurs", color: accent-doux)
+    _par("srv", display-name: "Backend Rust", color: accent-doux)
     _par("wd", display-name: "Watchdog", color: papier-doux)
 
     _seq("srv", "j", comment: "RaceStart (t=0)", dashed: true)
@@ -2887,8 +2922,8 @@ Les six migrations racontent, dans l'ordre, ce que le projet a appris :
 #sequence(
   chronos.diagram({
     import chronos: *
-    _par("ui", display-name: "Écran de Practice", color: corail.lighten(70%))
-    _par("srv", display-name: "Backend Rust", color: corail.lighten(70%))
+    _par("ui", display-name: "Écran de Practice", color: accent-doux)
+    _par("srv", display-name: "Backend Rust", color: accent-doux)
     _par("db", display-name: "SQLite", shape: "database", color: papier-doux)
 
     _seq("ui", "ui", comment: "keystroke log (touche + instant)")
