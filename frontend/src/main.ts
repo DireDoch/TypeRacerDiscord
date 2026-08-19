@@ -15,9 +15,10 @@ import { Race, type RaceIntent } from "./ui/race";
 import { History } from "./ui/history";
 import { Learn } from "./ui/learn";
 import { Settings } from "./ui/settings";
+import { hasSeenGuide, openGuide } from "./ui/guide";
 import { applyPreferences } from "./core/preferences";
-import { fitToViewport, mountIdentityBadge } from "./ui/chrome";
-import { getAuthToken } from "./discord";
+import { fitToViewport, mountIdentityBadge, mountWordField } from "./ui/chrome";
+import { getAuthToken, updateActivity } from "./discord";
 
 // --- Bandeau d'erreurs (debug in-iframe) -------------------------------------
 // Dans Discord la console est invisible : toute erreur JS ou promesse rejetée
@@ -71,7 +72,13 @@ const root: HTMLElement = rootEl;
 const app: HTMLElement = appEl;
 
 fitToViewport(app, root);
-void mountIdentityBadge().catch((e) => showError(`Badge d'identité : ${describeError(e)}`));
+mountWordField(); // décor du Menu (#175) : posé une fois, sur <body>, hors de #screen
+// Le badge se pose VIDE tout de suite et se remplit quand Discord répond (#181) : sa
+// place est réservée dès la première frame, donc plus rien ne saute. Le clic mène à
+// l'Historique (#183) — il n'existe pas d'écran Profil, et le glossaire bannit le terme.
+void mountIdentityBadge(() => showHistory()).catch((e) =>
+  showError(`Badge d'identité : ${describeError(e)}`),
+);
 
 let screen: { destroy(): void } | null = null;
 
@@ -91,6 +98,7 @@ function swap<T extends { destroy(): void; mount(): unknown }>(make: () => T): v
 }
 
 function showMenu(): void {
+  updateActivity("menu");
   swap(
     () =>
       new Menu(root, {
@@ -99,8 +107,13 @@ function showMenu(): void {
         history: showHistory,
         learn: showLearn,
         settings: showSettings,
+        guide: openGuide,
       }),
   );
+  // Première arrivée (#173) : le Guide s'ouvre PAR-DESSUS le menu, jamais à sa place.
+  // Le joueur voit ainsi ce qu'on lui décrit, et « Continuer » le laisse là où il est
+  // déjà — pas de navigation à refaire pour commencer à jouer.
+  if (!hasSeenGuide()) openGuide();
 }
 
 function showSettings(): void {
@@ -116,6 +129,7 @@ function showHistory(): void {
 }
 
 function showPractice(): void {
+  updateActivity("practice");
   swap(() => new Practice(root, showMenu));
 }
 

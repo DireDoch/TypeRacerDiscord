@@ -16,6 +16,7 @@
 //  renvoie un token de test que le backend en mode dev accepte tel quel comme player_id.
 // =============================================================================
 
+import type { DiscordSDK } from "@discord/embedded-app-sdk";
 import type { TokenResponse } from "./core/types";
 
 const DEV_TOKEN = "dev-player-1";
@@ -93,6 +94,143 @@ export function closeActivity(): void {
   closeSdk?.();
 }
 
+/**
+ * SDK courant, pour `updateActivity` — `null` hors Discord ou avant le handshake (issue #111).
+ * Posé seulement après `authenticate()` : `setActivity` exige le scope `rpc.activities.write`,
+ * que la session RPC n'a pas tant qu'elle n'est pas authentifiée. L'avoir posé dès `ready()`
+ * faisait partir la commande trop tôt, pour un rejet côté Discord.
+ */
+let activitySdk: DiscordSDK | null = null;
+
+/**
+ * Dernier état demandé AVANT que le SDK soit prêt, rejoué à la fin du handshake.
+ * `main.ts` monte le Menu sans attendre l'identité (le handshake est volontairement
+ * non bloquant) : sans ce report, `updateActivity("menu")` tombait toujours dans le
+ * `return` ci-dessous. C'est-à-dire que la présence du Menu — la seule que voie un
+ * joueur qui lance l'Activity et ne clique nulle part — n'était JAMAIS envoyée.
+ */
+let pendingActivity: [ActivityState, ActivityExtra] | null = null;
+
+/**
+ * Écran/état affiché au Player, pour la Rich Presence (issue #111). `lobby`/`race`/
+ * `floorIsLava`/`spam` viennent de `Race` (le Mode de jeu et la phase de la Room) ;
+ * `menu`/`practice` viennent de `main.ts` au changement d'écran.
+ */
+export type ActivityState =
+  | "menu"
+  | "practice"
+  | "lobbyNormal"
+  | "lobbyFloorIsLava"
+  | "lobbySpam"
+  | "race"
+  | "floorIsLava"
+  | "spam";
+
+/**
+ * Un triplet (details, clé d'asset, tooltip) par état — POUR AJOUTER UN ÉTAT : une entrée
+ * ici, rien ailleurs. `largeImageKey` doit correspondre à une clé uploadée sur le portail
+ * développeur Discord (issues d'art) ; une clé absente n'y fait pas planter l'appel,
+ * Discord retombe silencieusement sur l'image par défaut.
+ *
+ * `largeText` est le tooltip du grand visuel. Il recopiait `details` — un tooltip qui
+ * redit la ligne juste en dessous ne sert à rien : il porte désormais la RÈGLE du mode,
+ * la seule chose qu'aucune autre ligne de la présence n'a la place de dire.
+ *
+ * Aucune donnée de jeu ici : ce qui varie d'une partie à l'autre (effectif, mot spammé,
+ * plafond de temps) arrive par `ActivityExtra`, rempli par l'appelant.
+ */
+const ACTIVITY_PRESETS: Record<ActivityState, { details: string; largeImageKey: string; largeText: string }> = {
+  menu: { details: "Dans le menu", largeImageKey: "menu", largeText: "TypeRacer" },
+  practice: { details: "S'entraîne", largeImageKey: "practice", largeText: "Entraînement solo" },
+  // Le salon montre le visuel du MODE DE JEU choisi, pas une image d'attente générique :
+  // c'est ce qu'on est sur le point de jouer qui intéresse celui qui lit la présence, et
+  // le mode est réglable jusqu'au dernier instant. `lobby.png` n'est donc plus envoyé —
+  // il reste dans `design/out/` sans emploi (voir le tableau de `design/README.md`).
+  lobbyNormal: {
+    details: "Dans un salon",
+    largeImageKey: "race",
+    largeText: "Course classique — le premier à taper tout le texte gagne",
+  },
+  lobbyFloorIsLava: {
+    details: "Dans un salon",
+    largeImageKey: "floor-is-lava",
+    largeText: "Floor is lava — le moins avancé brûle, à intervalle régulier",
+  },
+  lobbySpam: {
+    details: "Dans un salon",
+    largeImageKey: "spam",
+    largeText: "Spam — un seul mot, répété le plus vite possible",
+  },
+  race: { details: "En course", largeImageKey: "race", largeText: "Le premier à taper tout le texte gagne" },
+  floorIsLava: {
+    details: "Floor is lava",
+    largeImageKey: "floor-is-lava",
+    largeText: "Le moins avancé brûle, à intervalle régulier",
+  },
+  spam: { details: "Mode Spam", largeImageKey: "spam", largeText: "Un seul mot, répété le plus vite possible" },
+};
+
+/**
+ * Ce que l'écran courant sait de lui-même et que la table ne peut pas savoir. Volontairement
+ * ÉTROIT : `discord.ts` n'importe rien de `core/` et ne doit jamais apprendre ce qu'est un
+ * Mode de jeu. C'est l'appelant — `ui/race.ts`, qui tient déjà `RaceState` — qui traduit son
+ * état en ces trois champs.
+ */
+export interface ActivityExtra {
+  /**
+   * `[présents, max]` → Discord colle le badge « (3 sur 8) » à la fin de la ligne `state`.
+   * On n'envoie JAMAIS de `party.id` : il ferait apparaître un « Demander à rejoindre »
+   * qu'on ne sait pas honorer (une Activity se rejoint par son salon vocal), et la clé
+   * d'une Room peut être un Code de partie (ADR 0008) — le secret qui laisse entrer
+   * quelqu'un d'un autre serveur n'a rien à faire dans une présence publique.
+   */
+  party?: [number, number];
+  /** Fin prévue (ms epoch) → compte à rebours au lieu du chrono. Seul Spam en a un. */
+  endsAt?: number;
+  /** Ligne libre sous `details`, celle qui porte le badge party. Courte : elle se coupe. */
+  state?: string;
+}
+
+/**
+ * Pousse l'état courant en Rich Presence. No-op hors Discord / avant le handshake, comme
+ * `closeActivity`. Le petit visuel reste le logo de l'app (badge constant) ; seul le grand
+ * visuel change avec l'état.
+ *
+ * Sans `endsAt`, on envoie `start` : un chrono qui monte est ce qui distingue un joueur
+ * actif d'un onglet oublié depuis deux heures.
+ */
+export function updateActivity(activityState: ActivityState, extra: ActivityExtra = {}): void {
+  if (!activitySdk) {
+    // Hors Discord ce report ne sera jamais rejoué (le SDK n'arrive pas) : c'est le no-op.
+    pendingActivity = [activityState, extra];
+    return;
+  }
+  const preset = ACTIVITY_PRESETS[activityState];
+  void activitySdk.commands
+    .setActivity({
+      activity: {
+        type: 0,
+        details: preset.details,
+        ...(extra.state ? { state: extra.state } : {}),
+        assets: {
+          large_image: preset.largeImageKey,
+          large_text: preset.largeText,
+          small_image: "app-icon",
+        },
+        ...(extra.party ? { party: { size: extra.party } } : {}),
+        // ponytail: en millisecondes, comme l'objet Activity de la passerelle. La doc RPC
+        // historique montre des SECONDES et les deux unités circulent (discord-api-docs#3132) ;
+        // le client normalise en pratique. Si le chrono affiche une valeur absurde au premier
+        // lancement, diviser par 1000 — c'est le seul réglage possible ici.
+        timestamps: extra.endsAt ? { end: extra.endsAt } : { start: Date.now() },
+      },
+    })
+    // Décoratif : une Rich Presence en échec ne doit pas se voir dans le jeu. Mais elle
+    // échouait SILENCIEUSEMENT tant que `rpc.activities.write` manquait au scope, et rien
+    // ne le disait — la console est le seul endroit où ce diagnostic a sa place.
+    .catch((e) => console.warn("setActivity a échoué (Rich Presence non affichée) :", e));
+}
+
 async function resolveIdentity(): Promise<Identity> {
   const clientId = import.meta.env.VITE_DISCORD_CLIENT_ID;
   const params = new URLSearchParams(window.location.search);
@@ -122,7 +260,12 @@ async function resolveIdentity(): Promise<Identity> {
     response_type: "code",
     state: "",
     prompt: "none",
-    scope: ["identify"],
+    // `rpc.activities.write` est EXIGÉ par `setActivity` : sans lui la Rich Presence est
+    // rejetée sans rien afficher (le `.catch` d'`updateActivity` le journalise désormais).
+    // Il n'ajoute aucun accès aux données du joueur — il autorise seulement à écrire SA
+    // présence, celle que cette Activity produit déjà. Le backend n'a rien à en savoir :
+    // `exchange_code` ne déclare pas de scope, il hérite de celui-ci.
+    scope: ["identify", "rpc.activities.write"],
   });
 
   const res = await fetch(`${proxyBase()}/token`, {
@@ -134,6 +277,16 @@ async function resolveIdentity(): Promise<Identity> {
   const { access_token }: TokenResponse = await res.json();
 
   const auth = await sdk.commands.authenticate({ access_token });
+
+  // La session RPC porte enfin `rpc.activities.write` : on ouvre la Rich Presence et on
+  // rejoue l'écran déjà affiché (le Menu, dans tous les cas de figure).
+  activitySdk = sdk;
+  if (pendingActivity) {
+    const [state, extra] = pendingActivity;
+    pendingActivity = null;
+    updateActivity(state, extra);
+  }
+
   // `global_name` est le nom d'affichage moderne ; `username` reste le repli des vieux
   // comptes. Le SDK ne le type pas toujours, d'où la vue étroite.
   const user = auth.user as { id: string; username: string; global_name?: string | null; avatar?: string | null };

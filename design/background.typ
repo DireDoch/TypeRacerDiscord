@@ -1,22 +1,36 @@
-// Issue #114 — overlay d'arrière-plan pour l'affichage en grille Discord.
-// L'art reste groupé sur les bords ; le centre (où l'UI Discord se pose)
-// reste dégagé. Clavier volontairement absent — implémentation à venir,
-// voir components.typ : clavier()/compose().
-#import "@preview/cetz:0.3.4": canvas, draw
-#import "components.typ": palette, voiture, trainee-fumee
+// Issue #114 — overlay d'arrière-plan de l'affichage en grille Discord,
+// 1024 × 576 (16∶9).
+//
+//   typst compile --format png --ppi 72 background.typ out/background.png
+//
+// LE CENTRE DOIT RESTER VIDE : c'est là que Discord pose sa propre UI. Tout
+// l'art est donc poussé sur les bords — bande de clavier collée au bas du
+// cadre, voiture posée dessus à gauche, wordmark dans le coin haut gauche. Un
+// visuel centré comme `cover.typ` passerait sous les libellés de Discord.
+//
+// Deux `canvas()` placés plutôt qu'un seul : la bande de touches court sur
+// toute la largeur (unité 3.61 cm) quand la voiture reste petite (1.2 cm), et
+// une seule échelle ne peut pas faire les deux. Leurs positions sont calées
+// pour que les roues touchent le haut des touches — la même ligne de sol que
+// partout ailleurs, à la main ici faute d'échelle commune.
 
-#set page(width: 18cm, height: 10.125cm, margin: 0cm, fill: palette.bg)
+#import "composants.typ": cetz, clavier, logo, nuit, vitesse, voiture
 
-#align(center + horizon)[
-  #canvas(length: 1cm, {
-    import draw: *
+#set page(width: 1024pt, height: 576pt, margin: 0pt, fill: nuit)
 
-    // Ligne de piste : cadre bas, discret, en accent.
-    rect((-9, -5.05), (9, -4.85), fill: palette.main, stroke: none)
+// 10 unités × 3.61 cm = 36.1 cm = 1024 pt : la bande fait exactement la largeur
+// de la page. Sa hauteur vaut 1.4 × 3.61 cm ≈ 143 pt — d'où le `dy` de la
+// voiture juste en dessous.
+#place(bottom + left, cetz.canvas(length: 3.61cm, { clavier() }))
 
-    // Voiture, coin bas-gauche, posée sur la piste, traînée de fumée
-    // derrière elle.
-    trainee-fumee((-8.7, -4.6), n: 4, taille: 0.4, espacement: 0.35)
-    voiture((-8.4, -4.85), taille: 2.4, couleur: palette.main)
-  })
-]
+#place(
+  bottom + left,
+  dx: 96pt,
+  dy: -143pt,
+  cetz.canvas(length: 1.2cm, {
+    vitesse()
+    voiture()
+  }),
+)
+
+#place(top + left, dx: 56pt, dy: 44pt, logo(taille-texte: 1.4cm))

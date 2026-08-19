@@ -48,6 +48,20 @@ export function isIdentityError(e: unknown): boolean {
 /** Message générique pour un échec d'identité, partagé par tous les écrans. */
 export const IDENTITY_ERROR_MESSAGE = "Identité Discord perdue — reviens depuis Discord pour te reconnecter.";
 
+/** 429 : plafond de requêtes atteint (#151). Rien à corriger côté joueur, juste à attendre. */
+export const RATE_LIMIT_MESSAGE = "Trop de requêtes d'un coup — réessaie dans une minute.";
+
+/**
+ * Message d'échec quand la CAUSE ne dépend pas de l'écran (identité perdue, plafond
+ * atteint) — `null` sinon, à l'appelant de dire ce qui n'a pas pu être chargé.
+ * Un nouveau cas partagé s'ajoute ici, pas dans les six écrans.
+ */
+export function sharedErrorMessage(e: unknown): string | null {
+  if (isIdentityError(e)) return IDENTITY_ERROR_MESSAGE;
+  if (e instanceof HttpError && e.status === 429) return RATE_LIMIT_MESSAGE;
+  return null;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let token: string;
   try {

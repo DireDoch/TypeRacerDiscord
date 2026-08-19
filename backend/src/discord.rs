@@ -4,8 +4,11 @@
 //  Deux responsabilités (Docs/API.md « Identité & sécurité ») :
 //   1. POST /token : échanger le `code` (Embedded App SDK) contre un access_token.
 //      Le secret client reste SERVEUR.
-//   2. Résoudre le player_id (snowflake) depuis l'access_token via GET /users/@me.
+//   2. Résoudre le player_id (snowflake) depuis l'access_token via GET /oauth2/@me.
 //      Jamais fourni par le corps de requête → non forgeable.
+//      `/oauth2/@me` plutôt que `/users/@me` : il renvoie AUSSI l'application émettrice
+//      du token, ce qui permet de refuser un token obtenu pour une autre app Discord
+//      (issue #150). Même nombre d'allers-retours, une comparaison en plus.
 //
 //  MODE DEV : si DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET sont absents de l'env,
 //  on n'appelle pas Discord — le Bearer token sert directement de player_id (test
@@ -113,9 +116,9 @@ impl Identity {
     /// Résout le player_id (snowflake string) depuis un access_token.
     /// Mode dev (pas de config) : le token EST l'identité.
     pub async fn resolve_player_id(&self, access_token: &str) -> Result<String, AuthError> {
-        if self.config.is_none() {
+        let Some(cfg) = self.config.as_ref() else {
             return Ok(access_token.to_string()); // MODE DEV
-        }
+        };
 
         if let Some(id) = self.cache_get(access_token) {
             return Ok(id);
@@ -123,7 +126,7 @@ impl Identity {
 
         let resp = self
             .http
-            .get(format!("{DISCORD_API}/users/@me"))
+            .get(format!("{DISCORD_API}/oauth2/@me"))
             .bearer_auth(access_token)
             .send()
             .await
@@ -135,11 +138,7 @@ impl Identity {
             return Err(AuthError::Upstream);
         }
         let body: serde_json::Value = resp.json().await.map_err(|_| AuthError::Upstream)?;
-        let id = body
-            .get("id")
-            .and_then(|v| v.as_str())
-            .ok_or(AuthError::Upstream)?
-            .to_string();
+        let id = player_id_from_oauth_me(&body, &cfg.client_id)?;
 
         self.cache_put(access_token, &id);
         Ok(id)
@@ -162,5 +161,62 @@ impl Identity {
             .lock()
             .unwrap()
             .insert(token.to_string(), (id.to_string(), Instant::now()));
+    }
+}
+
+/// Lit le player_id dans une réponse `GET /oauth2/@me`, en refusant un token émis pour
+/// une AUTRE application Discord (issue #150).
+///
+/// Un access_token Discord est valable sur `/users/@me` quelle que soit l'app qui l'a
+/// obtenu : sans cette comparaison, la frontière n'est pas « un joueur de cette Activity »
+/// mais « un utilisateur Discord quelconque ». Combiné à `JoinChannel`, dont la clé de
+/// salon est déclarée par le client, ça suffit à squatter le lobby d'autrui.
+///
+/// Application inattendue → `Unauthorized` (le token est valide, il n'est pas pour nous).
+/// Corps illisible → `Upstream` (Discord a répondu 200 avec autre chose que le contrat).
+fn player_id_from_oauth_me(
+    body: &serde_json::Value,
+    client_id: &str,
+) -> Result<String, AuthError> {
+    let issuer = body.pointer("/application/id").and_then(|v| v.as_str());
+    if issuer != Some(client_id) {
+        eprintln!("/oauth2/@me → token émis pour l'application {issuer:?}, pas la nôtre");
+        return Err(AuthError::Unauthorized);
+    }
+    body.pointer("/user/id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or(AuthError::Upstream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn oauth_me(app_id: &str, user_id: Option<&str>) -> serde_json::Value {
+        let mut v = serde_json::json!({ "application": { "id": app_id }, "scopes": ["identify"] });
+        if let Some(u) = user_id {
+            v["user"] = serde_json::json!({ "id": u });
+        }
+        v
+    }
+
+    #[test]
+    fn seul_un_token_emis_pour_notre_application_resout_un_joueur() {
+        let cas: [(&str, serde_json::Value, Result<&str, AuthError>); 4] = [
+            ("notre app", oauth_me("42", Some("111")), Ok("111")),
+            ("autre app", oauth_me("999", Some("111")), Err(AuthError::Unauthorized)),
+            ("pas d'application", serde_json::json!({ "user": { "id": "111" } }), Err(AuthError::Unauthorized)),
+            ("notre app, pas d'utilisateur", oauth_me("42", None), Err(AuthError::Upstream)),
+        ];
+        for (nom, body, attendu) in cas {
+            let obtenu = player_id_from_oauth_me(&body, "42");
+            match (obtenu, attendu) {
+                (Ok(id), Ok(a)) => assert_eq!(id, a, "{nom}"),
+                (Err(AuthError::Unauthorized), Err(AuthError::Unauthorized)) => {}
+                (Err(AuthError::Upstream), Err(AuthError::Upstream)) => {}
+                (o, a) => panic!("{nom} : obtenu {o:?}, attendu {a:?}"),
+            }
+        }
     }
 }

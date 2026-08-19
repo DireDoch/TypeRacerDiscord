@@ -1,23 +1,26 @@
-// Issue #113 — image de couverture Discord (Étagère des Activités), 16:9.
-// Signature : le wordmark logo() — "Typpe|Racer", la faute de frappe (2e
-// "p" en erreur) et le curseur (accent) portent la marque, à côté de la
-// voiture seule (clavier volontairement absent — implémentation à venir,
-// voir components.typ : clavier()/compose()).
-#import "@preview/cetz:0.3.4": canvas, draw
-#import "components.typ": palette, voiture, logo
+// Issue #113 — image de couverture Discord (Étagère des Activités), 1024 × 576
+// (16∶9).
+//
+// Wordmark logo() à gauche, voiture() seule à droite (via `scene(clavier:
+// false)`, recentrée sur la boîte de scène standard) — pas de clavier ici,
+// laissé pour un travail ultérieur.
+//
+// 1024 × 576 pt exportés à 72 PPI donnent exactement 1024 × 576 px.
+//
+//   typst compile --format png --ppi 72 cover.typ out/cover.png
 
-#set page(width: 18cm, height: 10.125cm, margin: 0cm, fill: palette.bg)
+#import "@preview/cetz:0.3.4"
+#import "composants.typ": logo, nuit, scene
+
+#set page(width: 1024pt, height: 576pt, margin: 0pt, fill: nuit)
 
 #grid(
   columns: (1.05fr, 1fr),
+  rows: 576pt,
   align(center + horizon)[
-    #pad(left: 0.4cm)[#logo(size: 1.05cm)]
+    #pad(left: 36pt)[#logo(taille-texte: 2.7cm)]
   ],
-  box(height: 10.125cm)[
-    #align(center + horizon)[
-      #canvas(length: 1cm, {
-        voiture((-3.6, -1), taille: 3)
-      })
-    ]
+  align(center + horizon)[
+    #cetz.canvas(length: 1.4cm, { scene(clavier: false) })
   ],
 )

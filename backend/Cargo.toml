@@ -1,6 +1,6 @@
 [package]
 name = "typeracer-discord-backend"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "Backend autoritaire TypeRacerDiscord (recompute Rust + API HTTP)."
 
@@ -11,7 +11,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-tower-http = { version = "0.6", features = ["fs"] }
+tower-http = { version = "0.6", features = ["fs", "set-header"] }
 dotenvy = "0.15"
 futures-util = { version = "0.3", default-features = false }
 

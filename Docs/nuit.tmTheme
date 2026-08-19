@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Thème de coloration syntaxique de Docs/documentation.typ.
+
+  Typst ne colore un bloc `raw` que d'après un thème TextMate, et le sien est
+  fait pour du papier blanc : posé sur le fond `nuit`, il rend un bleu sombre
+  sur un bleu sombre. Ce fichier reprend la palette de design/composants.typ,
+  qui la tient elle-même de frontend/src/style.css — mêmes couleurs que l'écran
+  de jeu, donc, et pas un thème d'éditeur importé d'ailleurs.
+
+  Les rôles :
+    corail  #ff7a59  mots-clés — l'accent de l'identité, réservé à ce qui décide
+    braise  #ffc21a  types et noms de variantes
+    texte   #e8ecf4  identifiants, ponctuation, le corps du code
+    sourd   #96a0b5  commentaires — présents, jamais au premier plan
+    rouge   #ff4d6d  littéraux de chaîne
+-->
+<plist version="1.0">
+<dict>
+  <key>name</key>
+  <string>TypeRacer Nuit</string>
+  <key>settings</key>
+  <array>
+    <dict>
+      <key>settings</key>
+      <dict>
+        <key>background</key>
+        <string>#12161F</string>
+        <key>foreground</key>
+        <string>#E8ECF4</string>
+        <key>caret</key>
+        <string>#FF7A59</string>
+      </dict>
+    </dict>
+    <dict>
+      <key>name</key>
+      <string>Commentaire</string>
+      <key>scope</key>
+      <string>comment, punctuation.definition.comment</string>
+      <key>settings</key>
+      <dict>
+        <key>foreground</key>
+        <string>#96A0B5</string>
+        <key>fontStyle</key>
+        <string>italic</string>
+      </dict>
+    </dict>
+    <dict>
+      <key>name</key>
+      <string>Mot-clé</string>
+      <key>scope</key>
+      <string>keyword, storage, storage.type, keyword.control, keyword.operator</string>
+      <key>settings</key>
+      <dict>
+        <key>foreground</key>
+        <string>#FF7A59</string>
+      </dict>
+    </dict>
+    <dict>
+      <key>name</key>
+      <string>Type, variante, constante</string>
+      <key>scope</key>
+      <string>entity.name.type, support.type, support.class, constant.language, constant.numeric, entity.other.inherited-class</string>
+      <key>settings</key>
+      <dict>
+        <key>foreground</key>
+        <string>#FFC21A</string>
+      </dict>
+    </dict>
+    <dict>
+      <key>name</key>
+      <string>Fonction</string>
+      <key>scope</key>
+      <string>entity.name.function, support.function, meta.function-call</string>
+      <key>settings</key>
+      <dict>
+        <key>foreground</key>
+        <string>#7FD1C1</string>
+      </dict>
+    </dict>
+    <dict>
+      <key>name</key>
+      <string>Chaîne</string>
+      <key>scope</key>
+      <string>string, string.quoted, punctuation.definition.string</string>
+      <key>settings</key>
+      <dict>
+        <key>foreground</key>
+        <string>#FF4D6D</string>
+      </dict>
+    </dict>
+    <dict>
+      <key>name</key>
+      <string>Variable, paramètre, ponctuation</string>
+      <key>scope</key>
+      <string>variable, variable.parameter, meta.definition.variable, punctuation</string>
+      <key>settings</key>
+      <dict>
+        <key>foreground</key>
+        <string>#E8ECF4</string>
+      </dict>
+    </dict>
+    <dict>
+      <key>name</key>
+      <string>Attribut, annotation</string>
+      <key>scope</key>
+      <string>meta.attribute, meta.annotation, entity.name.tag</string>
+      <key>settings</key>
+      <dict>
+        <key>foreground</key>
+        <string>#96A0B5</string>
+      </dict>
+    </dict>
+  </array>
+  <key>uuid</key>
+  <string>6f0c1c2e-9a13-4b6f-9f2f-2a5f1d3c8b11</string>
+</dict>
+</plist>

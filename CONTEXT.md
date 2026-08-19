@@ -17,7 +17,7 @@ A competitive Run inside a Room, on the **same free input** as Practice: an erro
 _Avoid_: Match, Duel, Course, Blocking input.
 
 **Abandon (forfeit)**:
-Giving up the current Race **without leaving the Room** — the Player's car stops, they are ranked last and labelled « abandon » (never « 0 wpm »), and they stay in the lobby to play the next Race. Recorded as an arrival at 0 WPM carrying an explicit `forfeit` flag, so it unblocks the finish for everyone else instead of making them wait out the watchdog. No Run is ever persisted for an Abandon: nothing to exclude from PBs, nothing to pollute the history. A Player who simply **disconnects** produces the exact same record — one code path for both.
+Giving up the current Race **without leaving the Room** — the Player's car stops, they are ranked last and labelled « abandon » (never « 0 wpm »), and they stay in the lobby to play the next Race. Recorded as an arrival at 0 WPM carrying an explicit `forfeit` flag, so it unblocks the finish for everyone else instead of making them wait out the watchdog. No Run is ever persisted for an Abandon: nothing to exclude from PBs, nothing to pollute the history. A Player who simply **disconnects** produces the exact same record — one code path for both. It is also where every *unconfirmed* end-of-race claim lands: a `Finish` the server's replay doesn't see reaching the end of the text, a `Finish` sent under a Mode de jeu that never asked for one, a `Failed` the replay doesn't confirm. The Player has already stopped typing when any of those arrive, so the server answers with the one record that is both true and unblocking rather than dropping the message in silence.
 _Avoid_: Quit, Leave, Give up, DNF.
 
 **Difficulté (Difficulty)**:
@@ -28,16 +28,36 @@ _Avoid_: Hard mode, Strict mode, Challenge mode.
 The terminal state of a Race Run ended by a Difficulty fail condition (Master) — distinct from an Abandon (the Player's own choice to give up) even though it behaves like one in every other respect: the car stops at the exact point of the mistake, the Race unblocks immediately for everyone else, the Player stays in the lobby for the next Race, and no Run is ever persisted. Ranks in the same tail tier as Abandoned (ADR 0013). Displays a completion percentage (« failed (42%) ») that is never used to rank — it is not "almost finished," it is disqualified.
 _Avoid_: DNF, Disqualified, Eliminated.
 
+**Brûlé (burned)**:
+The terminal state of a Player eliminated by the Floor is lava Mode de jeu — the third one after Abandon and Failed, and the only one that comes neither from a choice nor from a mistake: it comes from being **compared to the others** and being last at the wrong moment. Unlike those two, a Brûlé carries a **real partial score** (WPM, accuracy, per-second series) recomputed over the portion they had time to type. That score never ranks them — only the instant of death ranks — it exists to be displayed and to pick the Play of the Game.
+_Avoid_: Éliminé, Mort, Failed, Abandon, DNF.
+
 **Gap (écart)**:
-How far a Player finished behind the winner of a Race, in seconds. It is the headline of the finish — the number that gets said out loud — while absolute WPM is secondary. Derived on the client from the durations carried by `RaceOver` (ADR 0010); the winner's own Gap is zero. Ranking by Gap and ranking by WPM are always the same order in a Race — everyone types the same text and only finishes at 100 % exact, so correct characters are identical across finishers.
+How far a Player finished behind the winner of a Race, in seconds. It is the headline of the finish — the number that gets said out loud — while absolute WPM is secondary. Derived on the client from the durations carried by `RaceOver` (ADR 0010); the winner's own Gap is zero. Ranking by Gap and ranking by WPM are always the same order in a Race — everyone types the same text and only finishes at 100 % exact, so correct characters are identical across finishers. **Neither Mode de jeu has a Gap** — nobody crosses the line in either — and each substitutes the quantity that actually decides its ranking: survival time under Floor is lava, the raw count of correct repetitions under Spam.
 _Avoid_: Delta, Difference, Lag.
 
 **Mode**:
 The rule that decides what text is presented and when a Run ends — one of `Time`, `Words`, `Quotes`, `Zen`. Exactly one Mode per Run. **Solo only**: a Race has no Mode (its end rule is always "the whole text, exactly"), it has a Source de texte instead — ADR 0009.
 
 **Source de texte (Race)**:
-Where a Race's text comes from — `Quote` (default, via the existing quote proxy) or `Mots` (generated, length `Court 15` / `Normal 30` / `Long 50`). Chosen by the party leader in the lobby, out of race only. It decides the text, never the measure: the Authoritative scoreboard recomputes every Race as `Words` over the server's text regardless. Length is a `Mots`-only control — a Quote's length belongs to the quote.
+Where a Race's text comes from — `Quote` (default, via the existing quote proxy) or `Mots` (generated, length `Court 15` / `Normal 30` / `Long 50`). Chosen by the party leader in the lobby, out of race only. It decides the text, never the measure: the Authoritative scoreboard recomputes every Race as `Words` over the server's text regardless. Length is a `Mots`-only control — a Quote's length belongs to the quote. Inert under either Mode de jeu (Floor is lava, Spam), each of which imposes its own text.
 _Avoid_: Mode, Race mode, Game mode.
+
+**Mode de jeu (Race)**:
+The rule that decides **how a Race is won** — `Normal` (first to type the whole text exactly), `Floor is lava`, or `Spam`. Its own axis, distinct from the Source de texte (which decides the text, never the victory) and from the Difficulté (an individual fail condition, evaluated on that Player's Keystroke log alone, never against the others). A Réglage de salon: chosen by the party leader, out of race only, imposed on everyone. **Exactly one at a time** — Modes de jeu never combine. Not to be confused with the Mode (`Time`/`Words`/`Quotes`/`Zen`), which is solo and decides the text and the end of a Run.
+_Avoid_: Mode, Variante, Ruleset, Game mode.
+
+**Floor is lava**:
+The first Mode de jeu: at a fixed interval, the least advanced Player is Brûlé. The Race stops the instant a single Player is left alive — the survivor wins **without having typed the whole text**, making it the only Race that ends with nobody crossing the line. Ranking is the order of deaths, reversed: surviving longer places better, typing faster does not. **It has no finish line at all**: the mode imposes its own generated text, long enough that no Player can reach its end within a Race, so the Source de texte is inert while Floor is lava is active. A mode won by surviving must not hand out a way to win by arriving.
+_Avoid_: Élimination, Battle royale, Survie, Lava, Last man standing.
+
+**Spam**:
+The second Mode de jeu: one word — the party leader's pick from the existing word list, or a custom string (non-empty, no spaces, ≤20 characters, punctuation and numbers allowed) — streamed indefinitely, the same "always enough words ahead to fill the visible rows" mechanism solo's Time infini already uses, so the target text never runs out. Two Réglages de salon control the finish: a repetition threshold and a time cap (both fixed tiers, the cap capped at 60 s). The Race stops the instant either fires — a Player locking the threshold's-worth of correct repetitions wins outright, or, if nobody has by the time cap, whoever has the most correct repetitions wins. Whoever hasn't reached the threshold when it stops is Devancé. The podium headline is the raw count of correct repetitions, not Gap. Source de texte is inert while Spam is active, same reason as Floor is lava: the mode imposes its own text. Unlike Floor is lava, a single Player can start it — there is no elimination to make solo play meaningless.
+_Avoid_: Répétition, Boucle, Repeat mode, Loop mode.
+
+**Devancé**:
+The terminal state for a Player still typing when the Spam Mode de jeu stops — beaten by a Player reaching the repetition threshold first, or caught by the time cap running out, one term for both, the way Spam itself doesn't distinguish them. Like Brûlé, it comes from comparison or a clock, never from the Player's own choice (Abandon) or their own mistake (Failed). The server partially recomputes their Keystroke log against its own copy of the word to know their final repetition count, which ranks them — never persisted. Client-side, the type is English like the rest of the wire vocabulary (`Keystroke`, `RaceResult`): `RacerState`'s variant is named `outpaced` (`frontend/src/ui/race.ts`), not `Devancé` — same term, anglicized, decided in the issue #130 grilling session. Derived at `SpamStop`, not deduced at render time: whoever hasn't reached the threshold known at that instant is Outpaced; the winner of a time-cap stop (nobody reached it, highest count wins) is `finished`, never `outpaced`.
+_Avoid_: Perdant, Éliminé, Timeout, DNF, Failed, Abandon.
 
 **Setting**:
 An independent, cumulable text modifier applied on top of a Mode — currently `Punctuation` and `Numbers`. Zero or more per Run.
@@ -48,31 +68,23 @@ A lobby-only Room configuration set by the party leader and applied uniformly to
 _Avoid_: Room option, Lobby setting, Game setting.
 
 **Preference**:
-How a Player wants the game to look on **their own machine** — typing font, colour palette, and the Display identity override. A Preference belongs to the device, never leaves it, and is deliberately **not** a Setting: it never alters the generated text, never enters the Config bucket, and never affects a score. Two Players in the same Race may see different fonts and colours and still be racing the same text. Changing a Preference never invalidates a PB. Being device-scoped and cosmetic, a Preference applies **everywhere the Player types** — Practice and Race alike — the same way font family already does; a Preference that only takes effect on one screen is an unfinished wire-up, not a deliberate boundary.
+How a Player wants the game to look on **their own machine** — typing font, colour palette, and the Display identity override. A Preference belongs to the device, never leaves it, and is deliberately **not** a Setting: it never alters the generated text, never enters the Config bucket, and never affects a score. Two Players in the same Race may see different fonts and colours and still be racing the same text. Changing a Preference never invalidates a PB. A Preference is always **chosen** by the Player: device-local state the app merely *records* about them (whether they have seen the Guide, for instance) is not a Preference and lives in its own storage key, outside the Preference schema.
 _Avoid_: Setting, Option, Config, Theme.
-
-**Zone à risque (danger zone)**:
-The Settings section grouping account-level actions on Preferences themselves: export, import, reset. Confirmation gates only the **destructive** actions here — Import and Reset, which overwrite the Preferences already on the device — never Export (read-only) or a plain reversible Preference that happens to live in this section (e.g. the FPS limit). "Every action needs confirmation" means every action that can lose data, not literally every click in the section. No custom modal exists in this codebase for this — the platform's native `confirm()` does the job.
-_Avoid_: Advanced settings, Account settings.
 
 **Keystroke log**:
 The recorded timeline of a Player's keystrokes during a Run (what was typed and when). The raw input from which all stats are derived; sent once to the backend for the Authoritative scoreboard and **persisted with the Run** (migration `0002`) as the raw material for the upcoming replay/analysis features.
 _Avoid_: Input history, Replay.
 
 **Replay**:
-The playback of a finished Run, re-rendered from its Keystroke log against the persisted target text — the Player watches their own typing happen again in real time (errors included). Launched from the results screen or from any Run in the history. Simple playback: start to finish at real speed, no pause or seeking.
-_Avoid_: Review, Playback, Ghost.
+The playback of a finished Run, re-rendered from its Keystroke log against the persisted target text — the Player watches their own typing happen again in real time (errors included). Launched from the results screen or from any Run in the history. Simple playback: start to finish at real speed, no pause or seeking. Distinct from **restarting** (UI: « Recommencer »), which begins a brand-new Run on fresh text — French « Rejouer » is banned precisely because it reads as either one.
+_Avoid_: Review, Revoir, Rejouer, Playback, Ghost.
 
 **Play of the Game**:
-The post-Race highlight: the two Players whose finishes were **closest together** — wherever they landed in the ranking — replayed side by side in slow motion over their last seconds. Chosen by the server (ADR 0011), and **omitted entirely** when no pair finished within 2 s: a race with no photo finish has no Play of the Game. It reuses the Replay machinery but is not a Replay: two Keystroke logs instead of one, a window instead of the whole Run, and a **single shared clock** for both — that shared clock is what makes it a duel rather than two unrelated playbacks.
+The post-Race highlight: the two Players whose finishes were **closest together** — wherever they landed in the ranking — replayed side by side in slow motion over their last seconds. Chosen by the server (ADR 0011), and **omitted entirely** when no pair finished within 2 s: a race with no photo finish has no Play of the Game. It reuses the Replay machinery but is not a Replay: two Keystroke logs instead of one, a window instead of the whole Run, and a **single shared clock** for both — that shared clock is what makes it a duel rather than two unrelated playbacks. **Under either Mode de jeu the closeness is measured in WPM, not in seconds**, and the window runs over the 3 s before the *earlier* of the two exits — it ends on the flames, or on the clap, rather than on a second arrival. In Floor is lava because deaths land on a metronome, so the instant of death carries ranking but no closeness; in Spam because the Race stops for everyone at the same instant, which would make every pair a photo finish.
 _Avoid_: Highlight, PotG, Replay, Duel.
 
 **Live stats**:
 Stats computed on the client during a Run for immediate UI feedback (the moving WPM counter, the graph filling in). Not authoritative.
-
-**Live stat style**:
-Whether a Live stat (speed, accuracy, burst) is shown or hidden during a Run — currently binary (`text` | `off`), one Preference per indicator. **Known gap**: richer visual variants (a gauge, a graph, color-coding) were named when this was requested but never specified anywhere — no mockup, nothing else in the codebase to match. Treat anything beyond `text`/`off` as unbuilt, not merely undocumented, until an actual design exists to build against.
-_Avoid_: Style, Theme, Display mode.
 
 **Authoritative scoreboard**:
 The final stats (WPM, Raw, Accuracy, character breakdown, per-second series) recomputed by the Rust backend from the Keystroke log at the end of a Run. The numbers of record. In multiplayer this is also the anti-cheat check.
@@ -118,6 +130,10 @@ _Avoid_: Citation, Passage.
 One step of the Learn curriculum (UI: « Apprendre »), one of 100 (ADR 0006): instructional content on touch-typing — illustrated with a static hand/keyboard diagram on the earliest Lessons only — plus a typed exercise on a fixed key set. Passing the exercise at the accuracy required by the current curriculum stage (a static, editable table of thresholds — early Lessons are lenient, later ones stricter) unlocks the next Lesson. Accuracy is the only gating criterion, at every stage — speed is never required to unlock a Lesson. Progress is persisted per Player. Lesson exercises are not Runs: no PB, no history entry.
 _Avoid_: Level, Tutorial, Course.
 
+**Guide (UI: « Comment jouer »)**:
+The explanation of the **application** — which screen does what, how to launch a Run, where the Réglages de salon live, where the Preferences live. Never teaches typing: that is a Lesson's job, and the two are deliberately separate screens. Shown once as an overlay on a Player's first arrival, and reachable from the Menu forever after.
+_Avoid_: Tutorial, Onboarding, How To Play, Apprendre, Lesson.
+
 **Room**:
 A multiplayer session holding the set of Players racing the same text together. Identified by a **key** that is either a Discord voice channel (`channelId`) or a Code de partie — one map, two forms (ADR 0008). A Room keyed by `channelId` is created on the fly (the key comes from the SDK, it cannot be mistyped); a Room keyed by a code is only ever created explicitly. An empty Room is discarded and its code dies with it.
 _Avoid_: Lobby, Session, Channel, Game.
@@ -162,15 +178,18 @@ uniquement (pas de navigation au curseur). Voir `frontend/src/core/types.ts`.
 
 **Origine du temps (t=0).**
 Horloge **monotone** (`performance.now()`, jamais `Date.now()`), seul `RunClock.start()`
-(`core/clock.ts`) bascule — mais l'événement qui déclenche t=0 dépend du contexte, et donc
-ce que mesure le temps de réaction aussi :
+(`core/clock.ts`) bascule — appelé par `RunSession` (`core/run-session.ts`, #199), qui
+possède l'horloge, le contrôleur, le log et la Difficulté d'une Run et que les trois écrans
+tapables partagent. Mais l'événement qui déclenche t=0 dépend du contexte, et donc ce que
+mesure le temps de réaction aussi :
 - **Solo** (Practice, Apprendre) : t=0 = la **1re frappe** du Player. Pas de décompte, pas
   de délai imposé ; le temps de réaction n'est **pas** mesuré (il n'y a personne d'autre à
   attendre). Décision explicite — voir `Docs/adr/0004-solo-sans-decompte.md`.
 - **Multijoueur** (Race) : t=0 = la **fin du décompte** (« GO »), déclenché par `RaceStart`,
-  l'événement serveur qui synchronise tous les Players. Le décompte local dure **7 s**
-  (texte visible en entier pendant l'attente, jamais masqué — 7 s = le temps de voir la
-  grille de départ et de lire le premier mot) ; le temps de réaction (GO → 1re frappe)
+  l'événement serveur qui synchronise tous les Players. Le décompte local dure ce que le
+  Réglage de salon dit — **5 s par défaut** (#185), texte visible en entier pendant
+  l'attente, jamais masqué : le temps de voir la grille de départ et de lire le premier
+  mot ; le temps de réaction (GO → 1re frappe)
   **est** compté — il reflète la réactivité du Player face à un signal partagé, pas un
   artefact de mesure. La **durée** du décompte est un réglage produit ajustable sans ADR
   ni invalidation (ADR 0007) : elle ne change pas ce qui est mesuré, et la Race n'est
@@ -212,7 +231,7 @@ spectateur arrivé en cours de course occupe une place comme un autre.
 
 **Display identity en Race (piste, podium).**
 La Display identity est **annoncée par le client** dans l'événement de jointure et
-re-diffusée par `RoomState` — le serveur ne la résout pas via `/users/@me`, sinon
+re-diffusée par `RoomState` — le serveur ne la résout pas auprès de Discord, sinon
 l'override de pseudo (qui appartient au device) serait écrasé. Elle n'est jamais vérifiée
 ni persistée, et elle est **oubliée au départ** du joueur, comme le veut le glossaire. On
 transporte `{ playerId, displayName, avatarHash }` : **jamais une URL d'avatar**, chaque
@@ -277,7 +296,13 @@ Numbers = ~17 % de jetons-nombres autonomes de 1–4 chiffres.
 **Identité.**
 `player_id` jamais envoyé dans le corps : résolu côté serveur depuis le header
 `Authorization: Bearer <discord_access_token>` (scope `identify`). Toujours en string.
-Le serveur résout via `GET /users/@me` (cache court en mémoire) et expose l'échange du
+Le serveur résout via `GET /oauth2/@me` (cache court en mémoire) — cet endpoint-là plutôt
+que `/users/@me` parce qu'il renvoie **aussi l'application émettrice** du token : un
+access_token Discord est valable sur `/users/@me` quelle que soit l'app qui l'a obtenu, et
+sans comparer `application.id` à notre `DISCORD_CLIENT_ID`, la frontière ne serait pas « un
+joueur de cette Activity » mais « un utilisateur Discord quelconque » (issue #150, doc
+Discord : *« Do not trust data coming from the Discord client as truth »*). Il expose
+l'échange du
 code OAuth en **`POST /token`** (nommé « GET » par convention Discord, mais porte un corps
 JSON). **Mode dev** : si `DISCORD_CLIENT_ID/SECRET` sont absents de l'env, le Bearer token
 sert directement de `player_id` (test local au curl) et `/token` renvoie `503`. L'identité
@@ -321,23 +346,15 @@ La console est invisible dans Discord : `main.ts` affiche un bandeau d'erreurs f
 (`window.error` + `unhandledrejection`, clic pour fermer). Pour une vraie console :
 ouvrir Discord AU NAVIGATEUR (discord.com/app) et lancer l'activité → F12.
 
-**Identité visuelle — wordmark "Typpe|Racer".**
-Le logo du jeu (`design/components.typ` → `logo()`) encode une faute de frappe corrigée :
-"Typ" + un 2e "p" fautif en `--error` + "e" + curseur `|` en `--main` + "Racer", tous en
-police monospace. Remplace l'ancien traitement "Type|Racer" (qui encodait une
-*progression* de frappe — "Type" déjà tapé en `--sub` terne, "Racer" à venir en `--text`
-clair, sans faute) : les deux métaphores étaient concurrentes, une seule reste. Le
-wordmark n'apparaît que dans `cover.typ` et `app-icon.typ` (seules surfaces où un texte de
-marque est exigé) ; les icônes Rich Presence par mode restent icon-only (voiture/clavier
-seuls), pour rester lisibles à la taille d'affichage réduite de Discord.
-
 ## État d'implémentation (avancement)
 
 Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
 
 **Frontend (`frontend/`).**
 - `core/` domaine pur, testé (clock, types, input `free`/`blocking`-stub, text-gen seedé,
-  `stats/scoreboard`) — la **référence** de l'algo.
+  `stats/scoreboard`) — la **référence** de l'algo. `run-session.ts` (#199) en fait
+  l'ASSEMBLAGE : une Run tapée = horloge + contrôleur + log + Difficulté, derrière un seul
+  `press()`. Practice, Race et Apprendre la partagent au lieu de recâbler les briques.
 - UI Practice (`src/ui/`, `main.ts`, Vite) : machine d'état idle→running→finished (pas de
   décompte en solo, t=0 = 1re frappe — ADR 0004), graphe chart.js. Lancement `npm run dev`.
 - `src/api.ts` branché sur le backend autoritaire : `submitRun` → `POST /api/runs` avec header
@@ -353,7 +370,7 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
 
 - Écran **Race** (`ui/race.ts`) : lobby (cartes de présence avec avatar + nom, owner 👑,
   Code de partie, réglage de la Source de texte pour l'hôte), décompte de
-  `RACE_COUNTDOWN_S` = **7 s** (ADR 0007) avec texte entier, **piste** (une ligne par
+  `countdownS` (**5 s** par défaut, ADR 0007) avec texte entier, **piste** (une ligne par
   joueur : avatar en tête de progression, nom, WPM live à la ligne d'arrivée — les
   anciennes barres recostumées en CSS, aucun canvas), revanche.
 - Écran **Podium** (`ui/podium.ts`, ADR 0010) : trois marches + les autres visibles à
@@ -377,7 +394,8 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
   réglages voisins. `applyPreferences()` est appelé par `main.ts` avant le premier écran
   (la police doit être en place au premier rendu, pas après un clignotement).
 - Écran **Apprendre** (`ui/learn.ts`, entrée au menu) : cursus complet (issues #4, #8) —
-  liste des Lessons (verrouillée/disponible/complétée), 13 leçons réelles dans
+  liste des Lessons (verrouillée/disponible/complétée), les 100 Lessons du cursus, contenu en DONNÉE
+  (`src/content/lessons.json`, #201) et moteur dans
   `core/learn.ts` (posture + F/J, rangées de base/haut/bas, majuscules, ponctuation,
   chiffres, mots complets, fluidité) avec le **barème statique par tranches** (70/80/90 %
   d'accuracy sur 0/5/10, modifiable en un seul endroit) et le générateur de séquences
@@ -396,14 +414,23 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
   colonne `kind` (`practice`/`race`) — les Races entrent dans l'historique via le
   `Finish` WS (`pb_eligible = 0` : leur fin stricte les rend incomparables aux
   buckets Practice ; un bucket « race » dédié viendra avec un éventuel leaderboard).
-- `discord.rs` : OAuth (`POST /token`) + identité via `/users/@me` (cache court), mode dev.
+- `discord.rs` : OAuth (`POST /token`) + identité via `/oauth2/@me` (cache court, et refus
+  d'un token émis pour une autre application — #150), mode dev.
 - `quote.rs` : `GET /api/quote`, proxy API-Ninjas (clé `X-Api-Key` côté serveur, `id` opaque
   dérivé du texte, `wikipediaUrl` construit depuis l'auteur). Clé absente → `502`.
+- `rate_limit.rs` : plafonds de requêtes par minute (#151) — une map, la clé porte le seau,
+  le plafond vient de l'appelant. Le plafond général est posé **dans l'extracteur
+  d'identité**, donc un endpoint authentifié ajouté demain est couvert sans rien écrire ;
+  `GET /api/quote` en a un second, plus serré, parce qu'il consomme un quota mensuel
+  partagé. Dépassement → `429`, jamais une déconnexion silencieuse.
 - Endpoints : `GET /api/health`, `GET /api/quote`, `POST /token`, `POST /api/runs` (recompute +
   persistance + verdict PB), `GET /api/history`.
 - Origine unique : le build Vite (`STATIC_DIR`, défaut `../frontend/dist`) est servi en
-  `fallback_service` (ServeDir → `index.html` pour le routage SPA). `dotenvy` charge
-  `backend/.env` (sans écraser l'env du shell). Port configurable via `PORT` (défaut 8080).
+  `fallback_service` (ServeDir → `index.html` pour le routage SPA). Toutes les réponses
+  portent une CSP, `nosniff` et `no-referrer` (#152) — la CSP **autorise explicitement
+  l'encadrement par Discord** (`frame-ancestors`), l'Activity n'étant qu'une iframe : la
+  durcir sur ce point rendrait le jeu invisible. `dotenvy` charge
+  `.env` de la racine — `dotenvy` remonte les dossiers parents (sans écraser l'env du shell). Port configurable via `PORT` (défaut 8080).
 - `ws/` : Phase 2 **livrée** — Rooms indexées par **clé** (salon vocal *ou* Code de partie,
   ADR 0008 : `JoinChannel` crée à la volée, `CreateRoom` tire un code de 5 caractères,
   `JoinCode` ne crée jamais et répond `RoomNotFound`), plafond de 8 présents (`RoomFull`),

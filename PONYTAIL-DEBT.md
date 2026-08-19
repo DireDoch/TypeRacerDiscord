@@ -38,12 +38,6 @@ permanent. Régénérer avec `/ponytail:ponytail-debt` (scan `(#|//|*) ?ponytail
   seulement. upgrade: utiliser `RaceStart.startAtEpochMs` comme origine commune si le chiffre
   doit être exact. _(même dette que potg.ts:45)_
 
-## frontend/src/ui/results.ts
-
-- **results.ts:132** — la couleur de la série du graphe est un hex en dur au lieu de lire les
-  variables CSS. ceiling: chart.js ne lit pas les variables CSS. upgrade: la décision 13
-  remplace chart.js par un SVG maison à l'étape 5.
-
 ## frontend/src/ui/typing-zone.ts
 
 - **typing-zone.ts:113** `no-trigger` — `placeCaret` garde les dernières mesures du curseur

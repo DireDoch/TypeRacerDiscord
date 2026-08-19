@@ -2,18 +2,16 @@
 //  ui/practice.ts — écran de Practice (saisie libre, solo, MVP).
 //
 //  Machine d'état : idle → running → finished.
-//  Câble le core/ pur : generateWithRng (texte seedé), RunClock (t=0 monotone),
-//  FreeInput (curseur libre, log brut). À la fin : api.submitRun → résultats.
+//  Câble le core/ pur : generateWithRng (texte seedé) et RunSession (#199 : horloge
+//  t=0, curseur libre, log brut, Difficulté). À la fin : api.submitRun → résultats.
 //
 //  t=0 = la 1re frappe (PAS de décompte en solo — ADR 0004, CONTEXT.md « Origine du
 //  temps »). Le temps de réaction n'est pas mesuré : personne d'autre n'attend.
 // =============================================================================
 
-import type { RunConfig, RunPhase, KeystrokeLog, Keystroke } from "../core/types";
-import { RunClock } from "../core/clock";
-import { FreeInput } from "../core/input/free-input";
-import type { InputController } from "../core/input/controller";
-import { detectDifficultyFailure, type Difficulty, type DifficultyFailure } from "../core/difficulty";
+import type { RunConfig, RunPhase } from "../core/types";
+import { RunSession } from "../core/run-session";
+import { type Difficulty, type DifficultyFailure } from "../core/difficulty";
 import {
   QUICK_RESTART_DOM_KEY,
   QUICK_RESTART_LABELS,
@@ -27,22 +25,36 @@ import { generateWithRng, initialWordCount } from "../core/text-gen";
 import { generateDrillText } from "../core/text-gen/drill";
 import { Rng } from "../core/text-gen/rng";
 import { liveAccuracy, liveBurst, liveWpm, liveWpmZen } from "../live-stats";
-import { submitRun, fetchQuote, fetchProfileAnalysis, isIdentityError, IDENTITY_ERROR_MESSAGE } from "../api";
+import { submitRun, fetchQuote, fetchProfileAnalysis, isIdentityError, sharedErrorMessage } from "../api";
 import { renderResults } from "./results";
 import { runReplay } from "./replay";
-import { MODE_LABELS } from "./mode-labels";
+import { configSummary, DIFFICULTY_LABELS, MODE_LABELS } from "./mode-labels";
 import { wordsHtml, zenHtml, slideWindow, placeCaret } from "./typing-zone";
+import { infoHtml } from "./info-bubble";
 
 // 0 = Time infini (horloge désactivée, mots en flux continu, fin sur Shift+Enter).
 const TIME_VALUES = [15, 30, 60, 120, 0];
 const WORD_VALUES = [10, 25, 50];
+
+/**
+ * Explications des trois AXES de la barre de config (#180), servies par l'icône « i ».
+ * Une par axe, jamais une par bouton — exactement la granularité de `LOBBY_TIPS` en
+ * multijoueur : le joueur veut savoir ce que ce RÉGLAGE change, pas relire l'étiquette
+ * qu'il a déjà sous les yeux.
+ */
+const AXIS_TIPS = {
+  mode: "Ce qui décide du texte à taper et de la fin de la Run. Temps : le chrono s'arrête à la durée choisie (∞ = jusqu'à Shift+Entrée). Mots : un nombre de mots fixé. Citations : un texte imposé, de longueur variable. Zen : aucun texte cible, tout ce que tu tapes compte comme correct. Drill et Triplets : un texte fabriqué à partir de tes propres points faibles.",
+  settings:
+    "Modificateurs de texte, cumulables : « ponctuation » ajoute majuscules et signes, « chiffres » insère des nombres. Ils changent le texte généré, donc deux Runs qui ne portent pas les mêmes ne sont jamais comparées entre elles pour un record.",
+  difficulty:
+    "Une condition d'échec posée par-dessus la frappe — elle ne bloque jamais la saisie, elle arrête la Run. Normal ne change rien. Expert échoue dès qu'un mot est validé avec une faute non corrigée. Master échoue à la toute première frappe incorrecte, avant même de pouvoir corriger. La Difficulté n'entre jamais dans la comparaison d'un record.",
+} as const;
 
 
 /** Difficulté (issue #64, ADR 0013) : hors `RunConfig` — ne définit PAS le Config
  *  bucket (aucun PB n'y est comparé), c'est un mode de jeu qui échoue le Run avant
  *  la ligne d'arrivée plutôt qu'une variante de calcul de score. */
 const DIFFICULTIES: Difficulty[] = ["normal", "expert", "master"];
-const DIFFICULTY_LABELS: Record<Difficulty, string> = { normal: "Normal", expert: "Expert", master: "Master" };
 
 /** Marge de mots gardée en avance du curseur en Time infini (retop du flux). */
 const ENDLESS_LOOKAHEAD = 30;
@@ -67,6 +79,8 @@ export class Practice {
 
   /** Difficulté (issue #64) — persiste entre les reset(), comme punctuation/numbers. */
   private difficulty: Difficulty = "normal";
+  /** Barre de config dépliée ? État d'écran (#197) : jamais persisté, personne ne le règle. */
+  private configOpen = false;
   /** Point d'échec Expert/Master du Run courant, `null` sinon. */
   private failure: DifficultyFailure | null = null;
   /** Avertissement de fin (issue #66) : au plus une fois par Run. */
@@ -87,9 +101,9 @@ export class Practice {
   private targetWords: string[] = [];
   /** Rng du Run courant, conservé pour re-générer des lots en Time infini (déterminisme). */
   private rng: Rng | null = null;
-  private controller: InputController = new FreeInput([]);
-  private clock = new RunClock();
-  private log: KeystrokeLog = [];
+  /** La Run tapée : horloge, buffer, log, Difficulté (#199). Reconstruite à chaque
+   *  `reset()` — c'est aussi ce qui remet t=0 et vide le log. */
+  private session = new RunSession([]);
   private rafId = 0;
   /** Arrêt du Replay en cours (rAF) si on quitte l'écran par reset()/destroy(). */
   private stopReplay: (() => void) | null = null;
@@ -101,8 +115,9 @@ export class Practice {
   /** Texte en chargement asynchrone (Quote ou profil Drill) / échec du chargement. */
   private loadingText = false;
   private loadError = false;
-  /** true si le chargement raté est un problème d'identité (pas un service indisponible). */
-  private loadErrorIsIdentity = false;
+  /** Cause partagée du chargement raté (identité perdue, plafond atteint), sinon null :
+   *  l'écran fournit alors son propre message. */
+  private loadErrorShared: string | null = null;
   /** Drill sans profil : pas assez de données analysées pour cibler des Weak spots. */
   private drillNoProfile = false;
   /** Jeton anti-course : un reset() asynchrone obsolète (mode rechangé) s'auto-annule. */
@@ -140,8 +155,6 @@ export class Practice {
     this.stopReplay = null;
     this.phase = "idle";
     this.seed = (Math.random() * 0x7fffffff) | 0;
-    this.clock.reset();
-    this.log = [];
     this.rng = null;
     this.quoteId = undefined;
     this.quoteAuthor = undefined;
@@ -152,13 +165,13 @@ export class Practice {
     this.totalKeystrokes = 0;
     this.wordStartMs = null;
     this.loadError = false;
-    this.loadErrorIsIdentity = false;
+    this.loadErrorShared = null;
     this.drillNoProfile = false;
 
     if (this.config.mode === "quotes") {
       // La Quote est récupérée côté serveur (proxy API-Ninjas) — pas de génération locale.
       this.targetWords = [];
-      this.controller = new FreeInput([]);
+      this.session = new RunSession([]);
       this.loadingText = true;
       this.render();
       try {
@@ -172,7 +185,7 @@ export class Practice {
         if (seq !== this.resetSeq) return;
         this.loadingText = false;
         this.loadError = true;
-        this.loadErrorIsIdentity = isIdentityError(e);
+        this.loadErrorShared = sharedErrorMessage(e);
         this.render();
         return;
       }
@@ -185,7 +198,7 @@ export class Practice {
       // tous les kinds confondus par sévérité).
       const wantTrigram = this.config.mode === "trigram-drill";
       this.targetWords = [];
-      this.controller = new FreeInput([]);
+      this.session = new RunSession([]);
       this.loadingText = true;
       this.render();
       try {
@@ -204,7 +217,7 @@ export class Practice {
         if (seq !== this.resetSeq) return;
         this.loadingText = false;
         this.loadError = true;
-        this.loadErrorIsIdentity = isIdentityError(e);
+        this.loadErrorShared = sharedErrorMessage(e);
         this.render();
         return;
       }
@@ -218,7 +231,9 @@ export class Practice {
       this.targetWords = [];
     }
 
-    this.controller = new FreeInput(this.targetWords, loadPreferences().stopOnError);
+    // Session neuve : t=0 remis à zéro, log vidé, Difficulté et stop-on-error figés pour
+    // CE Run (les deux ne changent que par un `reset()`, jamais en cours de frappe).
+    this.session = new RunSession(this.targetWords, this.difficulty, loadPreferences().stopOnError);
     this.render();
   }
 
@@ -239,7 +254,7 @@ export class Practice {
   /** Time infini : garde toujours des mots en avance du curseur (flux continu). */
   private retopIfNeeded(): void {
     if (this.config.mode !== "time" || this.config.modeValue !== 0 || !this.rng) return;
-    if (this.targetWords.length - this.controller.view().wordIndex > ENDLESS_LOOKAHEAD) return;
+    if (this.targetWords.length - this.session.view().wordIndex > ENDLESS_LOOKAHEAD) return;
     for (const w of generateWithRng(this.config, ENDLESS_BATCH, this.rng)) {
       this.targetWords.push(w); // même tableau que FreeInput.target (référence partagée).
     }
@@ -255,7 +270,7 @@ export class Practice {
   /** 1re frappe : t=0 ici (pas de décompte en solo — ADR 0004), et elle compte déjà. */
   private beginRun(e: KeyboardEvent): void {
     this.phase = "running";
-    this.clock.start(); // t=0
+    this.session.start(); // t=0 = cette frappe-ci (ADR 0004), calé avant tout rendu
     this.render();
     this.loop();
     this.handleTypingKey(e);
@@ -268,42 +283,35 @@ export class Practice {
     const wrong = this.isWrongKeystroke(e.key);
     if (prefs.soundOnError && wrong) playErrorSound(prefs.soundVolume);
 
-    const viewBefore = this.controller.view();
-    const now = this.clock.elapsed();
-    const k: Keystroke | null = this.controller.handleKey(e.key, e.ctrlKey, now);
-    if (k) {
-      this.log.push(k);
-      // Précision live (issue #67) : seulement ce qui entre RÉELLEMENT au log (une
-      // frappe bloquée par stop-on-error n'a jamais eu lieu de ce point de vue).
-      if (k.k.length > 0) {
-        this.totalKeystrokes++;
-        if (!wrong) this.correctKeystrokes++;
-      }
+    const step = this.session.press(e.key, e.ctrlKey);
+    if (!step) return;
+    // Précision live (issue #67) : seulement ce qui entre RÉELLEMENT au log (une
+    // frappe bloquée par stop-on-error n'a jamais eu lieu de ce point de vue).
+    if (step.keystroke && step.keystroke.k.length > 0) {
+      this.totalKeystrokes++;
+      if (!wrong) this.correctKeystrokes++;
     }
     // Burst live (issue #67) : 1re frappe d'un mot neuf → départ du chrono du mot ;
     // mot verrouillé ou vidé (backspace-word) → plus de mot en cours à mesurer.
-    const viewAfter = this.controller.view();
-    if (viewAfter.wordIndex !== viewBefore.wordIndex || viewAfter.typed.length === 0) {
+    if (step.after.wordIndex !== step.before.wordIndex || step.after.typed.length === 0) {
       this.wordStartMs = null;
-    } else if (viewBefore.typed.length === 0 && viewAfter.typed.length > 0) {
-      this.wordStartMs = now;
+    } else if (step.before.typed.length === 0 && step.after.typed.length > 0) {
+      this.wordStartMs = step.at;
     }
     // Difficulté (issue #64, ADR 0013) : évaluée sur le log free-input, indépendamment
-    // du contrôleur — Zen n'a pas de texte cible, la Difficulté n'y a pas de sens.
-    if (this.difficulty !== "normal" && this.config.mode !== "zen") {
-      const fail = detectDifficultyFailure(this.difficulty, this.targetWords, this.log);
-      if (fail) {
-        this.failRun(fail);
-        return;
-      }
+    // du contrôleur — Zen n'a pas de texte cible, la Difficulté n'y a pas de sens (la
+    // session le sait : sans texte cible, elle n'échoue jamais).
+    if (step.failure) {
+      this.failRun(step.failure);
+      return;
     }
-    if (!this.isEndless() && this.controller.isComplete()) {
+    if (!this.isEndless() && step.complete) {
       void this.finish();
       return;
     }
     this.retopIfNeeded(); // Time infini : réalimente si le curseur approche du bout.
     this.renderWords();
-    this.updateLiveBar(this.clock.elapsed());
+    this.updateLiveBar(this.session.elapsed);
   }
 
   /**
@@ -314,7 +322,7 @@ export class Practice {
    */
   private isWrongKeystroke(key: string): boolean {
     if (this.config.mode === "zen") return false;
-    const view = this.controller.view();
+    const view = this.session.view();
     const tgt = this.targetWords[view.wordIndex] ?? "";
     if (key === " ") return view.typed.length > 0 && view.typed !== tgt;
     if (key.length === 1) {
@@ -338,7 +346,7 @@ export class Practice {
   /** Boucle d'affichage : compteur live + fin de Run en mode Time. */
   private loop(): void {
     if (this.phase !== "running") return;
-    const elapsed = this.clock.elapsed();
+    const elapsed = this.session.elapsed;
 
     if (this.config.mode === "time" && this.config.modeValue > 0 && elapsed >= this.config.modeValue * 1000) {
       void this.finish();
@@ -373,7 +381,7 @@ export class Practice {
   private async finish(): Promise<void> {
     cancelAnimationFrame(this.rafId);
     this.phase = "finished";
-    const endedAtMs = this.clock.started ? this.clock.elapsed() : 0;
+    const endedAtMs = this.session.elapsed;
 
     let res: Awaited<ReturnType<typeof submitRun>>;
     try {
@@ -382,11 +390,11 @@ export class Practice {
         seed: this.seed,
         targetText: this.targetWords.join(" "),
         quoteId: this.config.mode === "quotes" ? this.quoteId : undefined,
-        keystrokes: this.log,
+        keystrokes: this.session.log,
         endedAtMs,
       });
     } catch (e) {
-      // Le log (this.log) n'est pas touché : "réessayer" relance finish() avec les mêmes frappes.
+      // Le log (`session.log`) n'est pas touché : "réessayer" relance finish() avec les mêmes frappes.
       this.renderSubmitError(isIdentityError(e) ? "auth" : "network");
       return;
     }
@@ -399,10 +407,10 @@ export class Practice {
     // et son bouton « ← résultats » re-rend cet écran-ci.
     const showResults = (): void => {
       this.stopReplay = null;
-      renderResults(this.root, res, () => void this.reset(), attribution, () => {
+      renderResults(this.endScreenSlot(), res, () => void this.reset(), attribution, () => {
         this.stopReplay = runReplay(this.root, {
           targetWords: this.targetWords,
-          log: this.log,
+          log: this.session.log,
           zen: this.config.mode === "zen",
           onBack: showResults,
         });
@@ -425,6 +433,22 @@ export class Practice {
     }
 
     if (this.phase === "finished") return;
+
+    // Espace et Entrée ACTIVENT le contrôle qui a le focus. `keydown` est écouté sur
+    // `document` : sans ce garde, Espace sur un bouton de la barre de config démarrait
+    // un Run au lieu d'activer le bouton (`preventDefault` mangeait l'activation), et
+    // le résumé dépliable de #197 aurait hérité du même sort.
+    //
+    // Ces deux touches-là seulement : le focus RESTE sur le contrôle après le clic
+    // (replier la barre ne re-rend rien), donc écarter toute frappe dont la cible est
+    // un contrôle rendrait le Run indémarrable après un simple coup d'œil à la config.
+    if (
+      (e.key === " " || e.key === "Enter") &&
+      e.target instanceof HTMLElement &&
+      e.target.closest("button, summary, input, select, a")
+    ) {
+      return;
+    }
 
     const isTypingKey = e.key === "Backspace" || e.key === " " || e.key.length === 1;
 
@@ -479,7 +503,7 @@ export class Practice {
   private renderWords(): void {
     const el = this.root.querySelector<HTMLElement>("#words");
     if (!el) return;
-    const view = this.controller.view();
+    const view = this.session.view();
     el.innerHTML =
       this.config.mode === "zen"
         ? zenHtml(view, this.phase === "running")
@@ -503,21 +527,51 @@ export class Practice {
     );
   }
 
-  /** POST /api/runs raté : le Run (this.log) reste en mémoire, "réessayer" relance finish(). */
+  /** POST /api/runs raté : le Run (`session.log`) reste en mémoire, "réessayer" relance finish(). */
   private renderSubmitError(kind: "auth" | "network"): void {
     const msg =
       kind === "auth"
         ? "Session Discord expirée — reviens depuis le menu Discord puis réessaie."
         : "Envoi impossible (backend injoignable). Tes frappes sont gardées : réessaie.";
-    this.root.innerHTML = `
+    // Barre de config au-dessus (#176) : c'est ici qu'être coincé coûtait le plus cher.
+    // Backend injoignable, « Réessayer » échoue en boucle, et il n'y avait aucune autre
+    // sortie. Changer de Mode ou revenir au Menu perd le log non envoyé — mais c'est un
+    // choix que le joueur peut enfin faire, au lieu d'un écran sans issue.
+    this.endScreenSlot().innerHTML = `
       <section class="results">
         <p class="hint">${msg}</p>
-        <button id="retrySubmit" class="primary">Réessayer</button>
+        <div class="results-actions">
+          <button id="retrySubmit" class="primary">Réessayer</button>
+        </div>
       </section>
     `;
     this.root
       .querySelector<HTMLButtonElement>("#retrySubmit")!
       .addEventListener("click", () => void this.finish());
+  }
+
+  /**
+   * Écrans de FIN de Run (résultats, échec) : la barre de config au-dessus, puis un
+   * emplacement vide pour le contenu. Renvoie cet emplacement.
+   *
+   * Sans ça (issue #176), `renderResults` écrasait tout `#screen` — et c'est la barre
+   * de config qui porte À LA FOIS le `← menu` et les boutons de Mode. L'écran de fin
+   * solo n'offrait donc aucune sortie : ni retour au Menu, ni changement de Mode. La
+   * seule échappatoire était `quickRestartKey`, qui vaut `off` par défaut.
+   *
+   * Cliquer un Mode ici relance immédiatement (via `reset()`, déjà câblé par
+   * `wireConfigBar`) sans confirmation — le comportement Monkeytype, la référence que
+   * l'écran suit déjà pour sa fenêtre de 3 lignes.
+   */
+  private endScreenSlot(): HTMLElement {
+    this.root.innerHTML = `
+      <section class="practice">
+        ${this.configBarHtml()}
+        <div class="end-screen"></div>
+      </section>
+    `;
+    this.wireConfigBar();
+    return this.root.querySelector<HTMLElement>(".end-screen")!;
   }
 
   /** Échec Expert/Master (issue #64) : jamais soumis, Tab/Entrée relancent (onKeyDown,
@@ -526,10 +580,14 @@ export class Practice {
     const fail = this.failure;
     if (!fail) return;
     const label = this.difficulty === "master" ? "Master" : "Expert";
-    this.root.innerHTML = `
+    // Même traitement que les résultats (#176) : un échec laissait le joueur tout
+    // aussi coincé, avec « Recommencer » pour unique issue.
+    this.endScreenSlot().innerHTML = `
       <section class="results">
         <p class="hint">Échec (${label}) — ${fail.percent}% du texte</p>
-        <button id="retryFail" class="primary">Recommencer</button>
+        <div class="results-actions">
+          <button id="retryFail" class="primary">Recommencer</button>
+        </div>
       </section>
     `;
     this.root
@@ -549,9 +607,9 @@ export class Practice {
     if (this.phase === "running") {
       wpm =
         this.config.mode === "zen"
-          ? liveWpmZen(this.controller.view(), elapsed)
-          : liveWpm(this.targetWords, this.controller.view(), elapsed);
-      burst = liveBurst(this.controller.view(), this.targetWords, this.wordStartMs, elapsed);
+          ? liveWpmZen(this.session.view(), elapsed)
+          : liveWpm(this.targetWords, this.session.view(), elapsed);
+      burst = liveBurst(this.session.view(), this.targetWords, this.wordStartMs, elapsed);
     }
     const accuracy = liveAccuracy(this.correctKeystrokes, this.totalKeystrokes);
     const elapsedS = Math.floor(elapsed / 1000);
@@ -563,10 +621,10 @@ export class Practice {
       const remaining = Math.max(0, Math.ceil(this.config.modeValue - elapsed / 1000));
       progress = `<span class="timer">${remaining}s</span>`;
     } else if (this.config.mode === "words") {
-      const done = this.controller.view().wordIndex;
+      const done = this.session.view().wordIndex;
       progress = `<span class="timer">${done}/${this.config.modeValue}</span>`;
     } else if (this.config.mode === "quotes" || this.isDrillLike()) {
-      const done = this.controller.view().wordIndex;
+      const done = this.session.view().wordIndex;
       progress = `<span class="timer">${done}/${this.targetWords.length}</span>`;
     }
     // Styles live (issue #67) : "off" masque l'indicateur, rien d'autre — pas de
@@ -596,17 +654,15 @@ export class Practice {
       return `<div class="loading">${msg}</div>`;
     }
     if (this.loadError) {
-      const base = this.loadErrorIsIdentity
-        ? IDENTITY_ERROR_MESSAGE
-        : drillLike
-          ? "Impossible de charger ton profil."
-          : "Impossible de charger la citation.";
+      const base =
+        this.loadErrorShared ??
+        (drillLike ? "Impossible de charger ton profil." : "Impossible de charger la citation.");
       // Redémarrage rapide (issue #65) peut être désactivé : la retentative reste
       // toujours possible en re-cliquant un mode dans la barre de config.
       const retry = this.quickRestartHint();
       return `<div class="loading">${base} ${retry ? `${retry} pour réessayer.` : "Change de mode pour réessayer."}</div>`;
     }
-    const view = this.controller.view();
+    const view = this.session.view();
     if (this.config.mode === "zen") {
       // Idle : rien encore tapé, le placeholder invite à démarrer plutôt que le rendu Zen vide.
       if (this.phase === "idle") return `<div class="loading">Zen · tape librement — Shift+Enter pour terminer.</div>`;
@@ -675,25 +731,56 @@ export class Practice {
         : `<div class="group">${DIFFICULTIES.map(
             (d) => `<button data-difficulty="${d}" class="${this.difficulty === d ? "on" : ""}">${DIFFICULTY_LABELS[d]}</button>`,
           ).join("")}</div>`;
+    // Trois AXES, pas quatre (#180). « temps 30 » n'est pas un axe : c'est la VALEUR
+    // du Mode (`modeValue`), et le glossaire le range avec lui — Config bucket =
+    // « Mode + its value + language + active Settings ». Le code dit la même chose :
+    // `noText` fait disparaître le groupe des valeurs sous quotes/zen/drill, parce
+    // qu'une valeur sans son Mode n'existe pas. Elle reste donc COLLÉE à son Mode,
+    // dans le même axe, sans séparateur entre les deux.
+    //
+    // La Difficulté est le troisième axe et n'entre jamais dans le Config bucket :
+    // deux Difficultés ne sont jamais comparées pour un PB.
+    //
+    // Repliée par défaut (#197, décision 9). #180 a fait passer la barre à DEUX lignes
+    // sur une fenêtre de 1280 px — trois icônes « i », deux séparateurs, et une
+    // Difficulté reléguée à sa propre rangée. Un `<details>` natif porte le pli : pas
+    // d'état à inventer, le clavier et les lecteurs d'écran l'ont déjà.
+    //
+    // Le `← menu` reste HORS du pli, et de toute façon `position: fixed` (#93) : la
+    // sortie que #176 a ouverte sur l'écran de fin ne dépend pas de l'état du pli.
     return `
       <div class="config">
-        <div class="group">
-          ${modeBtn("time")}
-          ${modeBtn("words")}
-          ${modeBtn("quotes")}
-          ${modeBtn("zen")}
-          ${modeBtn("drill")}
-          ${modeBtn("trigram-drill")}
-        </div>
-        ${valueGroup}
-        ${settingsGroup}
-        ${difficultyGroup}
+        <details class="config-fold"${this.configOpen ? " open" : ""}>
+          <summary class="config-summary">${configSummary(this.config, this.difficulty)}</summary>
+          <div class="config-axes">
+            <div class="axis">
+              ${infoHtml("Mode", AXIS_TIPS.mode)}
+              <div class="group">
+                ${modeBtn("time")}
+                ${modeBtn("words")}
+                ${modeBtn("quotes")}
+                ${modeBtn("zen")}
+                ${modeBtn("drill")}
+                ${modeBtn("trigram-drill")}
+              </div>
+              ${valueGroup}
+            </div>
+            ${settingsGroup ? `<div class="axis">${infoHtml("Options de texte", AXIS_TIPS.settings)}${settingsGroup}</div>` : ""}
+            ${difficultyGroup ? `<div class="axis axis-own-row">${infoHtml("Difficulté", AXIS_TIPS.difficulty)}${difficultyGroup}</div>` : ""}
+          </div>
+        </details>
         ${this.onExit ? `<button class="back-btn" data-nav="menu">← menu</button>` : ""}
       </div>
     `;
   }
 
   private wireConfigBar(): void {
+    // Le pli est un état d'ÉCRAN, pas une Preference (#197) : il survit aux re-rendus
+    // de la session (changer de Mode relance `reset()` → `render()`), et rien de plus.
+    const fold = this.root.querySelector<HTMLDetailsElement>(".config-fold");
+    fold?.addEventListener("toggle", () => {
+      this.configOpen = fold.open;
+    });
     this.root.querySelectorAll<HTMLButtonElement>("[data-mode]").forEach((b) =>
       b.addEventListener("click", () => {
         const mode = b.dataset.mode as RunConfig["mode"];

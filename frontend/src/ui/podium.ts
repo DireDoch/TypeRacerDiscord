@@ -13,9 +13,9 @@
 //  d'une course meurt avec sa Room).
 // =============================================================================
 
-import type { PlayerEntry, RaceResult } from "../core/net";
+import type { GameMode, PlayerEntry, RaceResult } from "../core/net";
 import { avatarUrl } from "../discord";
-import { drawChart } from "./results";
+import { drawChart } from "./chart";
 import { escapeText } from "./typing-zone";
 
 /** Places dessinées sur des marches ; au-delà, la liste latérale. */
@@ -41,9 +41,78 @@ export function gapSeconds(results: RaceResult[], i: number): number | null {
   return (r.durationMs - winner.durationMs) / 1000;
 }
 
-/** `+1.4 s` ; le vainqueur n'a pas d'écart à afficher, il EST la référence. */
-export function gapLabel(results: RaceResult[], i: number): string {
+/**
+ * Floor is lava se reconnaît à ses brûlés (ADR 0015), sans qu'aucun champ de mode n'ait à
+ * voyager jusqu'ici : dans ce mode il y a toujours au moins un Brûlé (la course s'arrête
+ * quand il ne reste qu'un vivant), et dans une Race normale il n'y en a jamais.
+ */
+export function isLava(results: RaceResult[]): boolean {
+  return results.some((r) => r.burnedAtMs !== null);
+}
+
+/**
+ * Le chiffre en tête d'affiche de floor is lava : le temps de SURVIE, pas le Gap — qui
+ * n'existe pas dans ce mode, personne ne franchissant la ligne (ADR 0015). Même règle
+ * qu'ailleurs : la grandeur qui décide du classement est celle qu'on affiche en grand.
+ *
+ * Le survivant a survécu jusqu'à la dernière élimination — c'est l'instant où il s'est
+ * retrouvé seul, donc où la course s'est arrêtée.
+ */
+export function survivalLabel(results: RaceResult[], i: number): string {
   const r = results[i];
+  if (!r) return "abandon";
+  if (r.burnedAtMs !== null) return `brûlé à ${Math.round(r.burnedAtMs / 1000)} s`;
+  if (r.failedPercent !== null) return "échec";
+  if (r.forfeit) return "abandon";
+  const last = Math.max(0, ...results.map((x) => x.burnedAtMs ?? 0));
+  return `survécu ${Math.round(last / 1000)} s`;
+}
+
+/**
+ * Spam se reconnaît à ses comptes de répétitions (ADR 0016), sans qu'aucun champ de mode
+ * n'ait à voyager jusqu'ici — même astuce que `isLava` : sous ce mode chaque arrivée en
+ * porte un, et il n'y en a jamais ailleurs.
+ */
+export function isSpam(results: RaceResult[]): boolean {
+  return results.some((r) => r.reps !== null);
+}
+
+/**
+ * Le chiffre en tête d'affiche de Spam : le compte BRUT de répétitions correctes, pas le
+ * Gap (ADR 0016). Contrairement à floor is lava, aucune conversion n'est nécessaire — la
+ * grandeur qui décide du classement est directement affichable.
+ *
+ * Le vainqueur est le 1er du tableau, l'ordre ÉTANT le classement (ADR 0010) : soit il a
+ * atteint le seuil, soit le plafond de temps est tombé et il en avait le plus. Tous les
+ * autres sont Devancé — un état terminal qui ne vient ni d'un choix ni d'une faute.
+ */
+export function repsLabel(results: RaceResult[], i: number): string {
+  const r = results[i];
+  if (!r) return "abandon";
+  if (r.failedPercent !== null) return "échec";
+  if (r.forfeit) return "abandon";
+  const n = r.reps ?? 0;
+  const reps = `${n} répétition${n === 1 ? "" : "s"}`;
+  return i === 0 ? `${reps} · vainqueur` : `${reps} · devancé`;
+}
+
+/**
+ * `+1.4 s` ; le vainqueur n'a pas d'écart à afficher, il EST la référence.
+ *
+ * `gameMode`, quand fourni, TRANCHE — `isSpam`/`isLava` ne servent alors plus que de
+ * repli. `results` seul est ambigu dans un cas rare mais réel (#148) : une Race Floor is
+ * lava close par le watchdog de durée sans qu'AUCUNE élimination n'ait eu lieu (le second
+ * partant part avant le premier tic, puis son propre client ne détecte jamais qu'il est
+ * seul) a un `burnedAtMs` nul partout, identique en tous points à une Race normale
+ * abandonnée. Aucune combinaison de champs de `RaceResult` ne lève cette ambiguïté —
+ * seul un signal extérieur au contenu le peut.
+ */
+export function gapLabel(results: RaceResult[], i: number, gameMode?: GameMode): string {
+  const r = results[i];
+  const spam = gameMode ? gameMode === "spam" : isSpam(results);
+  const lava = gameMode ? gameMode === "floorIsLava" : isLava(results);
+  if (spam) return repsLabel(results, i);
+  if (lava) return survivalLabel(results, i);
   if (r?.failedPercent !== null && r?.failedPercent !== undefined) return "échec";
   const g = gapSeconds(results, i);
   if (g === null) return "abandon";
@@ -55,6 +124,8 @@ export interface PodiumOptions {
   /** Présents, pour retrouver nom et avatar. Un partant déjà reparti n'y est plus. */
   players: PlayerEntry[];
   me: string;
+  /** Tranche `gapLabel` quand `results` seul est ambigu — voir sa doc (#148). */
+  gameMode: GameMode;
 }
 
 export function podiumHtml(o: PodiumOptions): string {
@@ -76,7 +147,7 @@ function stepHtml(o: PodiumOptions, i: number): string {
     <span class="podium-medal">${MEDALS[i]}</span>
     ${avatarHtml(o, r.playerId)}
     <span class="podium-name">${escapeText(nameOf(o, r.playerId))}</span>
-    <span class="podium-gap">${gapLabel(o.results, i)}</span>
+    <span class="podium-gap">${gapLabel(o.results, i, o.gameMode)}</span>
     <span class="podium-stats">${statsLabel(r)}</span>
   </button>`;
 }
@@ -88,7 +159,7 @@ function rowHtml(o: PodiumOptions, i: number): string {
     <span class="podium-rank">${isTail(r) ? "—" : `${i + 1}.`}</span>
     ${avatarHtml(o, r.playerId)}
     <span class="podium-name">${escapeText(nameOf(o, r.playerId))}</span>
-    <span class="podium-gap">${gapLabel(o.results, i)}</span>
+    <span class="podium-gap">${gapLabel(o.results, i, o.gameMode)}</span>
     <span class="podium-stats">${statsLabel(r)}</span>
   </button>`;
 }
@@ -139,8 +210,8 @@ export function wirePodium(root: HTMLElement, o: PodiumOptions): void {
         return;
       }
       detail.innerHTML = `<p class="hint">${escapeText(nameOf(o, id))}</p>
-        <div class="chart-wrap"><canvas id="podiumChart"></canvas></div>`;
-      drawChart(detail.querySelector<HTMLCanvasElement>("#podiumChart")!, r.perSecond);
+        <div class="chart-wrap" id="podiumChart"></div>`;
+      drawChart(detail.querySelector<HTMLElement>("#podiumChart")!, r.perSecond);
     });
   });
 }

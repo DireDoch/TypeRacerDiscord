@@ -22,6 +22,12 @@ pub struct ScoreInput {
     pub mode_value: i64,
     pub target_text: String,
     pub keystrokes: Vec<Keystroke>,
+    /// Durée IMPOSÉE par le serveur (issue #164, ADR 0018), quand il sait lui-même à quel
+    /// instant il a arrêté ce joueur — les deux Modes de jeu, où c'est le serveur qui met
+    /// fin à la course de chacun (brûlé, `SpamStop`), pas le joueur en franchissant une ligne.
+    /// Le log perd alors le droit de choisir son propre dénominateur. `None` partout
+    /// ailleurs : la durée se dérive du log comme avant.
+    pub duration_override_ms: Option<f64>,
 }
 
 struct Snapshot {
@@ -42,6 +48,11 @@ struct ReplayResult {
     snapshots: Vec<Snapshot>,
     error_events: Vec<f64>,
     completions: Vec<Completion>,
+    /// Le log couvre-t-il le texte cible ENTIER, exactement ? C'est la définition même de
+    /// l'arrivée en Race (« la course ne se termine qu'une fois tout le texte tapé
+    /// exactement »), et le seul champ que le solo n'utilise pas : un Run Practice se
+    /// termine au temps ou au nombre de mots, pas à la complétion.
+    reached_end: bool,
 }
 
 // Éligibilité PB par défaut du Mode : Zen (durée variable), Drill (texte personnalisé)
@@ -104,6 +115,12 @@ pub fn compute_scoreboard(input: &ScoreInput) -> Scoreboard {
 const MAX_DURATION_MS: f64 = 30.0 * 60.0 * 1000.0; // 30 min, généreux pour Zen/Drill légitimes
 
 fn resolve_duration(input: &ScoreInput) -> f64 {
+    // Le serveur sait quand il a arrêté ce joueur : c'est LUI le dénominateur, pas la
+    // dernière frappe déclarée (issue #164, ADR 0018). Sans ça, 200 caractères parfaits horodatés
+    // sur 2 s sortaient à 800 wpm d'un mode où leur auteur est mort à 10 s.
+    if let Some(ms) = input.duration_override_ms {
+        return ms.clamp(0.0, MAX_DURATION_MS);
+    }
     if input.mode == Mode::Time && input.mode_value > 0 {
         return input.mode_value as f64 * 1000.0;
     }
@@ -224,6 +241,14 @@ fn replay_target(target_text: &str, keys: &[Keystroke]) -> ReplayResult {
         complete_word(&mut completions, word_start_t, last_key_t(keys), clen(last_tgt));
     }
 
+    // Arrivée = tous les mots verrouillés valent leur cible, ET le dernier mot est fini
+    // (verrouillé par un espace final, ou tapé exactement dans le buffer courant).
+    let locked_exacts = locked.iter().zip(target.iter()).all(|(w, t)| w == t);
+    let reached_end = !target.is_empty()
+        && locked_exacts
+        && (locked.len() >= target.len()
+            || (locked.len() == target.len() - 1 && typed == last_tgt));
+
     ReplayResult {
         correct_chars,
         raw_chars,
@@ -236,7 +261,21 @@ fn replay_target(target_text: &str, keys: &[Keystroke]) -> ReplayResult {
         snapshots,
         error_events,
         completions,
+        reached_end,
     }
+}
+
+/// Le log couvre-t-il TOUT le texte cible, exactement ?
+///
+/// C'est la question qu'une Race doit poser avant de croire un `Finish` : sans elle, un
+/// client qui annonce trois caractères justes en 50 ms est enregistré comme arrivé, avec
+/// le WPM que ça implique — premier du podium sans avoir tapé la course (constaté en
+/// test à 8 joueurs). Le recompute était déjà honnête sur CE QUI a été tapé ; il ne
+/// disait simplement pas si ça allait jusqu'au bout.
+///
+/// Rejoue le log une seconde fois : au `Finish` uniquement, sur un log déjà en mémoire.
+pub fn covers_whole_target(target_text: &str, keys: &[Keystroke]) -> bool {
+    replay_target(target_text, keys).reached_end
 }
 
 // ----------------------------------------------------------------------------
@@ -328,6 +367,7 @@ fn replay_zen(keys: &[Keystroke]) -> ReplayResult {
         snapshots,
         error_events: Vec::new(),
         completions,
+        reached_end: false, // Zen n'a pas de texte cible : rien à atteindre.
     }
 }
 
@@ -483,7 +523,46 @@ mod tests {
     fn input(mode: Mode, mode_value: i64, target: &str, keys: Vec<Keystroke>, _ended: f64) -> ScoreInput {
         // _ended : conservé pour que chaque appel montre l'endedAtMs "client" à côté du
         // log — il n'a plus d'effet, c'est tout le point de l'issue #11.
-        ScoreInput { mode, mode_value, target_text: target.to_string(), keystrokes: keys }
+        ScoreInput {
+            mode,
+            mode_value,
+            target_text: target.to_string(),
+            keystrokes: keys,
+            duration_override_ms: None,
+        }
+    }
+
+    /// Log d'une frappe par caractère, une frappe par ms — suffit pour la complétion,
+    /// qui ne regarde que le CONTENU.
+    fn tape(texte: &str) -> Vec<Keystroke> {
+        texte
+            .chars()
+            .enumerate()
+            .map(|(i, c)| Keystroke { t: (i + 1) as f64, k: c.to_string(), ctrl: None })
+            .collect()
+    }
+
+    /// L'arrivée en Race se prouve sur le log : sans ça, trois caractères annoncés en
+    /// 50 ms valaient une victoire à 800 wpm (constaté en test à 8 joueurs).
+    #[test]
+    fn une_arrivee_exige_le_texte_entier() {
+        let cible = "the quick brown fox";
+
+        assert!(covers_whole_target(cible, &tape(cible)), "texte entier, dernier mot non verrouillé");
+        assert!(covers_whole_target(cible, &tape("the quick brown fox ")), "avec l'espace final");
+
+        assert!(!covers_whole_target(cible, &tape("the")), "un seul mot");
+        assert!(!covers_whole_target(cible, &tape("the quick brown fo")), "dernier mot incomplet");
+        assert!(!covers_whole_target(cible, &tape("the quick brown fux")), "dernier mot faux");
+        assert!(!covers_whole_target(cible, &tape("the quikc brown fox")), "faute laissée en cours de route");
+        assert!(!covers_whole_target(cible, &[]), "log vide");
+
+        // Une faute CORRIGÉE reste une arrivée : la Race se finit sur le texte exact, pas
+        // sur un parcours sans faute (ADR 0013 — c'est la Difficulté qui punit l'erreur).
+        let mut avec_correction = tape("the quik");
+        avec_correction.push(Keystroke { t: 100.0, k: String::new(), ctrl: Some(ControlKey::Backspace) });
+        avec_correction.extend(tape("ck brown fox").into_iter().map(|k| Keystroke { t: k.t + 200.0, ..k }));
+        assert!(covers_whole_target(cible, &avec_correction), "faute corrigée puis texte fini");
     }
 
     #[test]
@@ -535,6 +614,36 @@ mod tests {
             999_999.0,
         ));
         assert_eq!(s.duration_ms, 300.0);
+    }
+
+    #[test]
+    fn duree_imposee_par_le_serveur_prime_sur_la_derniere_frappe() {
+        // Issue #164, le log gonflé d'un brûlé : « the » tapé en 300 ms alors que le
+        // serveur l'a arrêté à 10 s. Sur la durée DÉCLARÉE ça vaut 120 wpm ; sur la durée
+        // réellement vécue, 3,6. La troncature seule n'y aurait rien vu — tout le log tient
+        // sous la borne — c'est le dénominateur qui redit la vérité.
+        let keys = log(&[(100.0, "t", None), (200.0, "h", None), (300.0, "e", None)]);
+        let libre = compute_scoreboard(&input(Mode::Words, 1, "the", keys.clone(), 300.0));
+        assert_eq!(libre.duration_ms, 300.0);
+        assert_eq!(libre.wpm, 120.0);
+
+        let borne = compute_scoreboard(&ScoreInput {
+            duration_override_ms: Some(10_000.0),
+            ..input(Mode::Words, 1, "the", keys, 300.0)
+        });
+        assert_eq!(borne.duration_ms, 10_000.0);
+        assert_eq!(borne.wpm, 3.6);
+    }
+
+    #[test]
+    fn duree_imposee_bornee_comme_les_autres() {
+        // L'instant vient du serveur, pas du client — mais le plafond anti-DoS de
+        // `build_per_second` (O(durée)) reste le même pour tout le monde.
+        let s = compute_scoreboard(&ScoreInput {
+            duration_override_ms: Some(100_000_000.0),
+            ..input(Mode::Words, 1, "the", log(&[(100.0, "t", None)]), 100.0)
+        });
+        assert_eq!(s.duration_ms, MAX_DURATION_MS);
     }
 
     #[test]
@@ -611,6 +720,7 @@ mod tests {
                 mode_value: case.mode_value,
                 target_text: case.target_text,
                 keystrokes: case.keystrokes,
+                duration_override_ms: None,
             });
             let e = case.expected;
             if let Some(v) = e.wpm {

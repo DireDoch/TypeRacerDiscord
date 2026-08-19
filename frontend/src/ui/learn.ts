@@ -9,11 +9,9 @@
 //  chaque leçon réussie (le serveur garde le MAX).
 // =============================================================================
 
-import type { Keystroke, KeystrokeLog } from "../core/types";
 import { LESSONS, generateLessonExercise, requiredAccuracy } from "../core/learn";
 import { Rng, randomSeed } from "../core/text-gen/rng";
-import { FreeInput } from "../core/input/free-input";
-import type { InputController } from "../core/input/controller";
+import { RunSession, isTypingKey } from "../core/run-session";
 import { computeScoreboard } from "../core/stats/scoreboard";
 import { fetchLearnProgress, submitLearnProgress } from "../api";
 import { wordsHtml, placeCaret } from "./typing-zone";
@@ -68,10 +66,10 @@ export class Learn {
   private completed = 0;
   private lessonIndex = 0;
   private targetWords: string[] = [];
-  private controller: InputController = new FreeInput([]);
-  private log: KeystrokeLog = [];
-  /** performance.now() à la 1re frappe de l'exercice (null avant). */
-  private startedAt: number | null = null;
+  /** L'exercice en cours : horloge, buffer et log (#199). Comme en Practice, t=0 est la
+   *  1re frappe — un exercice n'a pas de décompte (ADR 0004). Avant #199, cet écran lisait
+   *  `performance.now()` en direct, seul endroit du client à court-circuiter `RunClock`. */
+  private session = new RunSession([]);
   private result: { accuracy: number; passed: boolean } | null = null;
   /** Jeton anti-course : un fetch obsolète (écran quitté) s'auto-annule. */
   private seq = 0;
@@ -121,9 +119,7 @@ export class Learn {
   private startExercise(): void {
     const lesson = LESSONS[this.lessonIndex];
     this.targetWords = generateLessonExercise(lesson, new Rng(randomSeed()));
-    this.controller = new FreeInput(this.targetWords);
-    this.log = [];
-    this.startedAt = null;
+    this.session = new RunSession(this.targetWords);
     this.result = null;
     this.view = "lesson";
     this.render();
@@ -137,13 +133,9 @@ export class Learn {
       return;
     }
     if (this.result) return; // écran de verdict : navigation par boutons
-    if (e.key === "Backspace" || e.key === " " || e.key.length === 1) {
+    if (isTypingKey(e.key)) {
       e.preventDefault();
-      if (this.startedAt === null) this.startedAt = performance.now();
-      const t = performance.now() - this.startedAt;
-      const k: Keystroke | null = this.controller.handleKey(e.key, e.ctrlKey, t);
-      if (k) this.log.push(k);
-      if (this.controller.isComplete()) {
+      if (this.session.press(e.key, e.ctrlKey)?.complete) {
         this.finishExercise();
         return;
       }
@@ -157,7 +149,7 @@ export class Learn {
       mode: "words",
       modeValue: this.targetWords.length,
       targetText: this.targetWords.join(" "),
-      keystrokes: this.log,
+      keystrokes: this.session.log,
     });
     const passed = sb.accuracy >= requiredAccuracy(this.lessonIndex);
     this.result = { accuracy: sb.accuracy, passed };
@@ -233,7 +225,7 @@ export class Learn {
 
   private wordsAreaHtml(): string {
     // Le curseur reste visible dès l'idle (avant la 1re frappe) : ça invite à démarrer.
-    return wordsHtml(this.targetWords, this.controller.view(), true);
+    return wordsHtml(this.targetWords, this.session.view(), true);
   }
 
   private renderWords(): void {

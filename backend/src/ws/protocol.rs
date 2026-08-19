@@ -49,6 +49,35 @@ impl Default for TextSource {
     }
 }
 
+/// Comment une Race se GAGNE (ADR 0015) — un axe à part entière.
+///
+/// Ni un Mode (solo, décide du texte), ni une Source de texte (décide d'où vient le
+/// texte), ni une Difficulté (condition d'échec INDIVIDUELLE, évaluée sur le seul log du
+/// joueur — l'élimination, elle, est COMPARATIVE). Un seul à la fois : ce sont des règles
+/// de victoire, elles ne se cumulent pas.
+///
+/// Wire : `"normal"` | `"floorIsLava"` | `"spam"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GameMode {
+    /// Le premier à taper tout le texte, exactement. Le comportement historique.
+    #[default]
+    Normal,
+    /// Élimination du moins avancé à intervalle régulier ; le dernier vivant gagne.
+    /// Pas de ligne d'arrivée : le mode impose un texte que personne ne peut finir.
+    FloorIsLava,
+    /// Un seul mot, répété indéfiniment (ADR 0016). Gagne qui verrouille le premier le
+    /// seuil de répétitions correctes — ou, si le plafond de temps tombe avant, qui en a
+    /// le plus. Pas de ligne d'arrivée non plus : le texte ne s'épuise jamais.
+    ///
+    /// Variante NUE, alors que l'ADR l'écrivait `Spam { word_source, threshold,
+    /// time_cap_s }` : ses trois réglages vivent à plat sur `Room`, comme
+    /// `lava_interval_s`. Écart assumé — les porter dans la variante rendrait `GameMode`
+    /// non-`Copy` et ferait perdre au lobby les réglages préparés avant la bascule, que
+    /// le patron existant conserve précisément pour qu'y revenir les retrouve.
+    Spam,
+}
+
 /// Longueur max d'un nom affiché. Ce n'est pas une règle Discord, c'est une protection
 /// de mise en page : un nom de 4 000 caractères casserait la piste des SEPT autres.
 const MAX_DISPLAY_NAME: usize = 32;
@@ -131,6 +160,29 @@ pub struct RaceResult {
     /// mêmes mécaniques par ailleurs. Pourcentage d'avancement au moment de la faute,
     /// affiché (« failed (X%) ») mais JAMAIS utilisé pour classer. `None` sinon.
     pub failed_percent: Option<i64>,
+    /// Brûlé en floor is lava (ADR 0015) : instant du décès, en ms depuis t=0. C'est ce
+    /// qui CLASSE dans ce mode (ordre des décès inversé) et ce que le podium affiche en
+    /// gros à la place du Gap, qui n'existe pas ici. `None` = pas brûlé — donc le
+    /// survivant, ou n'importe quelle arrivée d'une Race normale.
+    ///
+    /// Un Brûlé porte un VRAI score partiel (wpm/accuracy/per_second recomputés sur ce
+    /// qu'il a eu le temps de taper), contrairement à un Abandon ou à un Échec Master qui
+    /// sont construits en dur à zéro. Ce score ne le classe jamais : il l'affiche, et il
+    /// choisit le duel.
+    pub burned_at_ms: Option<f64>,
+    /// Répétitions correctes sous le Mode de jeu Spam (ADR 0016), recomptées par le
+    /// SERVEUR sur le log (`domain::spam::count_reps`) contre sa propre copie du mot —
+    /// jamais le compte déclaré en cours de course. C'est ce qui CLASSE dans ce mode et
+    /// ce que le podium affiche en gros à la place du Gap, qui n'existe pas ici.
+    ///
+    /// `None` hors Spam — et c'est aussi à ça que le podium reconnaît le mode, sans
+    /// qu'aucun champ de mode n'ait à voyager jusqu'à lui (même astuce que `burned_at_ms`).
+    pub reps: Option<u32>,
+    /// Caractères corrects de la répétition EN COURS au moment du clap. Départage deux
+    /// Players à égalité de répétitions (ADR 0016) et ne sert QU'À ÇA : il ne voyage pas,
+    /// le classement étant déjà l'ordre du tableau.
+    #[serde(skip)]
+    pub spam_partial: u32,
     pub per_second: Vec<PerSecondPoint>,
 }
 
@@ -145,6 +197,9 @@ impl RaceResult {
             duration_ms: 0.0,
             forfeit: true,
             failed_percent: None,
+            burned_at_ms: None,
+            reps: None,
+            spam_partial: 0,
             per_second: Vec::new(),
         }
     }
@@ -159,6 +214,9 @@ impl RaceResult {
             duration_ms: 0.0,
             forfeit: false,
             failed_percent: Some(percent),
+            burned_at_ms: None,
+            reps: None,
+            spam_partial: 0,
             per_second: Vec::new(),
         }
     }
@@ -214,10 +272,38 @@ pub enum ClientEvent {
     /// Régler la Difficulté de la Room (Normal | Master — Expert n'est pas un Réglage
     /// de salon, ADR 0013) — accepté du seul owner, et seulement hors course.
     SetDifficulty { difficulty: Difficulty },
+    /// Régler le Mode de jeu (ADR 0015) — accepté du seul owner, hors course. Basculer
+    /// vers/depuis floor is lava REGÉNÈRE le texte : le mode impose le sien.
+    SetGameMode { mode: GameMode },
+    /// Régler l'intervalle d'élimination de floor is lava, en secondes — accepté du seul
+    /// owner, hors course, parmi `LAVA_INTERVAL_VALUES`. Inerte sous `Normal`.
+    SetLavaInterval { seconds: u32 },
+    /// Régler le mot de Spam (ADR 0016) — accepté du seul owner, hors course. `None` =
+    /// mot par défaut, tiré de la liste de la Source `Mots`. `Some(w)` = mot personnalisé,
+    /// VALIDÉ côté serveur (non vide, sans espace, ≤ 20 caractères) : un espace
+    /// transformerait « un mot répété » en plusieurs mots cibles et casserait le comptage.
+    /// Regénère le texte, qui est ce mot répété.
+    SetSpamWord { word: Option<String> },
+    /// Régler le seuil de répétitions qui gagne la Race — accepté du seul owner, hors
+    /// course, parmi `SPAM_THRESHOLD_VALUES`. Inerte hors `Spam`.
+    SetSpamThreshold { count: u32 },
+    /// Régler le plafond de temps de Spam, en secondes — accepté du seul owner, hors
+    /// course, parmi `SPAM_TIME_CAP_VALUES`. Inerte hors `Spam`.
+    SetSpamTimeCap { seconds: u32 },
     /// Lancer la course — accepté du seul owner de la Room (ignoré sinon).
     StartRace,
     /// Progression de frappe (diffusée pour le rendu des "voitures"). Pas autoritaire.
-    Progress { chars_done: u32 },
+    ///
+    /// `reps` = répétitions correctes DÉCLARÉES sous le Mode de jeu Spam (ADR 0016), 0
+    /// partout ailleurs. `chars_done` ne pourrait pas les porter : un mot faux avance les
+    /// caractères sans être une répétition. Déclaratif comme `chars_done` — mais il ne
+    /// fait qu'ARRÊTER la course, il ne la gagne pas : le classement vient du recompute
+    /// serveur au `Finish`. `default` : un client qui ne connaît pas le champ reste lisible.
+    Progress {
+        chars_done: u32,
+        #[serde(default)]
+        reps: u32,
+    },
     /// Soumission finale : log brut + durée. Le serveur recompute contre SON texte
     /// (seed/texte/config lui appartiennent — jamais renvoyés par le client).
     Finish { keystrokes: Vec<Keystroke>, ended_at_ms: f64 },
@@ -265,16 +351,52 @@ pub enum ServerEvent {
         ready_check: bool,
         /// Difficulté de la Room (Normal | Master, issue #71, ADR 0013).
         difficulty: Difficulty,
+        /// Mode de jeu de la Room (ADR 0015). Lu par TOUT le lobby : il décide comment on
+        /// gagne, les non-hôtes le subissent autant que le décompte.
+        game_mode: GameMode,
+        /// Intervalle d'élimination de floor is lava, en secondes. Toujours transporté
+        /// (le lobby l'affiche dès que le mode est choisi), inerte sous `Normal`.
+        lava_interval_s: u32,
+        /// Mot personnalisé de Spam, ou `None` quand la Room utilise le mot par défaut.
+        /// Le mot RÉELLEMENT en jeu se lit toujours dans `target_text` (il en est la
+        /// répétition) ; ce champ ne dit que ce que l'owner a choisi, pour redessiner
+        /// son champ de saisie tel qu'il l'a laissé.
+        spam_word: Option<String>,
+        /// Seuil de répétitions qui gagne la Race. Inerte hors `Spam`.
+        spam_threshold: u32,
+        /// Plafond de temps de Spam, en secondes. Inerte hors `Spam`.
+        spam_time_cap_s: u32,
     },
     /// Top de départ partagé : t=0 pour TOUS les clients (cale les horloges locales).
     RaceStart { start_at_epoch_ms: i64 },
-    /// Position d'un adversaire (rendu temps réel).
-    PlayerProgress { player_id: PlayerId, chars_done: u32 },
+    /// Position d'un adversaire (rendu temps réel). `reps` porte son compte de répétitions
+    /// sous Spam (ADR 0016), 0 partout ailleurs — c'est ce que la piste affiche à la place
+    /// du WPM dans ce mode, la répétition étant la grandeur qui décide de la victoire.
+    PlayerProgress { player_id: PlayerId, chars_done: u32, reps: u32 },
     /// Scoreboard autoritaire d'un joueur ayant fini (recompute serveur). `forfeit`
     /// distingue une VRAIE arrivée d'un abandon : la piste affiche « abandon » plutôt
     /// que « 0 wpm » pendant la course (le podium, lui, lit RaceOver). `failed_percent`
     /// distingue un Échec Master (ADR 0013) — jamais les deux à la fois.
     PlayerFinished { player_id: PlayerId, wpm: f64, forfeit: bool, failed_percent: Option<i64> },
+    /// Élimination floor is lava (ADR 0015) : ce joueur vient de brûler, à `at_ms` depuis
+    /// t=0. Diffusé AVANT que son log n'arrive — c'est ce message qui le lui demande, en
+    /// lui disant d'arrêter de taper. `PlayerFinished` suivra quand le log sera recompté.
+    ///
+    /// Plusieurs `PlayerBurned` peuvent tomber sur le même tic (égalité : les deux
+    /// brûlent). Le survivant n'a pas d'événement à lui : il déduit qu'il a gagné en
+    /// voyant qu'il ne reste que lui de vivant — il connaît les partants et les brûlés.
+    PlayerBurned { player_id: PlayerId, at_ms: f64 },
+    /// Arrêt d'une Race sous Spam (ADR 0016) : quelqu'un a verrouillé le seuil de
+    /// répétitions, ou le plafond de temps a expiré. Un seul message pour les deux — le
+    /// mode ne les distingue pas non plus, et personne n'a besoin de savoir lequel des
+    /// deux a claqué pour arrêter de taper.
+    ///
+    /// Diffusé UNE fois, à TOUT LE MONDE (contrairement à `PlayerBurned`, qui vise un
+    /// joueur) : c'est ce message qui demande à chacun son log. Il ne désigne AUCUN
+    /// vainqueur, délibérément — le seul classement est celui du recompute serveur qui
+    /// suit, dans `RaceOver`. Une déclaration de répétitions gonflée peut donc arrêter la
+    /// Race trop tôt, jamais la gagner.
+    SpamStop,
     /// Fin de course : les résultats COMPLETS, dans l'ordre du classement (ADR 0010).
     /// L'ordre du tableau EST le classement — il n'y a pas de champ d'ordre séparé.
     /// `play_of_the_game` porte les deux logs du duel le plus serré (ADR 0011), ou

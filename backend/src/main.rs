@@ -18,6 +18,7 @@
 mod discord;
 mod domain;
 mod quote;
+mod rate_limit;
 mod store;
 mod ws;
 
@@ -27,14 +28,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use axum::{
     async_trait,
     extract::{ws::WebSocketUpgrade, FromRequestParts, Query, State},
-    http::{header::AUTHORIZATION, request::Parts, StatusCode},
+    http::{
+        header::{AUTHORIZATION, CONTENT_SECURITY_POLICY, REFERRER_POLICY, X_CONTENT_TYPE_OPTIONS},
+        request::Parts, HeaderValue, StatusCode,
+    },
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
 use sqlx::sqlite::SqlitePool;
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::{
+    services::{ServeDir, ServeFile},
+    set_header::SetResponseHeaderLayer,
+};
 
 use discord::{AuthError, DiscordConfig, Identity};
 use domain::replay::{compute_scoreboard, ScoreInput};
@@ -43,6 +50,7 @@ use domain::types::{
     SubmitRunResponse, TokenRequest, TokenResponse,
 };
 use quote::{QuoteClient, QuoteResponse};
+use rate_limit::{RateLimiter, API_PER_MIN, QUOTE_PER_MIN, TOKEN_PER_MIN, WS_PER_MIN};
 
 #[derive(Clone)]
 struct AppState {
@@ -50,11 +58,14 @@ struct AppState {
     identity: Arc<Identity>,
     quotes: Arc<QuoteClient>,
     rooms: ws::Rooms,
+    limits: Arc<RateLimiter>,
 }
 
 #[tokio::main]
 async fn main() {
-    // Charge backend/.env si présent (sinon on lit l'environnement du process tel quel).
+    // Charge le `.env` du projet si présent — `dotenvy` cherche dans le dossier courant
+    // puis remonte les parents, donc le `.env` de la RACINE est trouvé depuis `backend/`.
+    // Sinon on lit l'environnement du process tel quel.
     let _ = dotenvy::dotenv();
 
     let pool = store::init_pool().await;
@@ -64,7 +75,8 @@ async fn main() {
     // Clôt les courses anormalement longues (issue #24) ; `quotes` sert à regénérer le
     // texte de la Room close depuis sa Source (ADR 0009).
     ws::spawn_watchdog(rooms.clone(), quotes.clone());
-    let state = AppState { pool, identity, quotes, rooms };
+    let state =
+        AppState { pool, identity, quotes, rooms, limits: Arc::new(RateLimiter::new()) };
 
     // Build statique de Vite (origine unique). Surcoûtable via STATIC_DIR.
     let static_dir =
@@ -85,7 +97,21 @@ async fn main() {
         .route("/ws", get(ws_handler))
         .with_state(state)
         // Tout ce qui ne matche pas une route API → fichiers statiques (puis index.html).
-        .fallback_service(spa);
+        .fallback_service(spa)
+        // Posées APRÈS le fallback : elles couvrent aussi les fichiers statiques, donc
+        // le document HTML — le seul endroit où une CSP sert vraiment (#152).
+        .layer(SetResponseHeaderLayer::overriding(
+            CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(CSP),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            REFERRER_POLICY,
+            HeaderValue::from_static("no-referrer"),
+        ));
 
     let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
     let addr = format!("127.0.0.1:{port}");
@@ -96,16 +122,46 @@ async fn main() {
     axum::serve(listener, app).await.expect("serve");
 }
 
+/// CSP servie avec CHAQUE réponse (issue #152).
+///
+/// Dans l'iframe Discord, `{clientId}.discordsays.com` applique déjà la sienne — c'est
+/// elle qui impose le préfixe `/.proxy/`. Celle-ci couvre l'autre porte : l'URL du tunnel,
+/// atteignable directement dans un navigateur, où plus rien ne s'applique.
+///
+/// ⚠️ `frame-ancestors` AUTORISE Discord, et doit continuer à le faire : une politique qui
+/// interdit l'encadrement (ou un `X-Frame-Options: DENY`) rend le jeu totalement injouable
+/// — l'Activity N'EST qu'une iframe. C'est la façon la plus rapide de casser le produit en
+/// croyant le durcir.
+///
+/// Le reste suit ce que le code fait déjà :
+///   - `img-src` : les avatars viennent de `cdn.discordapp.com` (`discord.ts: avatarUrl`).
+///   - `connect-src` : même origine (le proxy Discord réécrit `/.proxy/…` avant nous),
+///     plus `wss:` par sécurité — la course entière passe par le WebSocket.
+///   - `style-src 'unsafe-inline'` : les templates posent des `style="--n:…"` et
+///     `style="width:…%"` (barres de progression, sections de réglages).
+const CSP: &str = "default-src 'self'; \
+     img-src 'self' https://cdn.discordapp.com data:; \
+     connect-src 'self' wss:; \
+     style-src 'self' 'unsafe-inline'; \
+     frame-ancestors https://discord.com https://*.discord.com https://*.discordsays.com; \
+     base-uri 'none'; \
+     form-action 'none'";
+
 async fn health() -> &'static str {
     "ok"
 }
 
 /// GET /api/quote — proxy vers API-Ninjas (clé injectée côté serveur). 502 si amont KO.
 /// Authentifié : sans Bearer valide, n'importe qui sur l'URL publique viderait le quota.
+/// Plafond PROPRE, plus serré que celui de l'extracteur : le quota API-Ninjas est mensuel
+/// et partagé par tous les joueurs, un seul suffirait à le vider (#151).
 async fn quote_handler(
     State(state): State<AppState>,
-    AuthPlayer(_player_id): AuthPlayer,
+    AuthPlayer(player_id): AuthPlayer,
 ) -> Result<Json<QuoteResponse>, StatusCode> {
+    if !state.limits.allow("quote", &player_id, QUOTE_PER_MIN) {
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
     state
         .quotes
         .fetch()
@@ -116,10 +172,19 @@ async fn quote_handler(
 
 /// POST /token — échange le code OAuth contre un access_token (secret client serveur).
 /// Nommé « GET /token » par convention Discord ; implémenté en POST car il porte un corps JSON.
+///
+/// ponytail: plafond GLOBAL, pas par joueur — avant l'échange il n'y a pas encore
+/// d'identité, et derrière le tunnel toutes les requêtes portent la même IP (127.0.0.1),
+/// ce qui rendrait un plafond par IP équivalent à celui-ci en moins lisible. Il borne ce
+/// que NOUS envoyons à Discord ; le jour où un reverse proxy de confiance pose un vrai
+/// `X-Forwarded-For`, le passer en clé ici suffit.
 async fn token(
     State(state): State<AppState>,
     Json(req): Json<TokenRequest>,
 ) -> Result<Json<TokenResponse>, StatusCode> {
+    if !state.limits.allow("token", "", TOKEN_PER_MIN) {
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
     let access_token = state
         .identity
         .exchange_code(&req.code)
@@ -146,6 +211,8 @@ async fn submit_run(
         mode_value: req.config.mode_value,
         target_text: req.target_text,
         keystrokes: req.keystrokes,
+        // Solo : personne d'autre que le joueur ne décide de la fin d'un Run (#164).
+        duration_override_ms: None,
     });
 
     // PB précédent du bucket (avant insertion) → verdict.
@@ -197,6 +264,11 @@ async fn ws_handler(
             return auth_status(e).into_response();
         }
     };
+    // Compte les CONNEXIONS : une partie en ouvre une, un réseau qui vacille quelques-unes
+    // de plus. Chacune coûte une résolution d'identité et une place dans la Room (#151).
+    if !state.limits.allow("ws", &player_id, WS_PER_MIN) {
+        return StatusCode::TOO_MANY_REQUESTS.into_response();
+    }
     // Un log de course fait quelques dizaines de Ko ; sans borne (64 Mio par défaut),
     // un Finish géant se recompute sous le verrou global des Rooms.
     ws.max_message_size(256 * 1024)
@@ -313,6 +385,10 @@ async fn post_learn_progress(
 /// Identité du joueur, résolue depuis `Authorization: Bearer <token>` (jamais via le corps).
 /// Extracteur `FromRequestParts` : s'exécute AVANT le parsing du corps JSON → un token
 /// absent renvoie 401 même si le corps est invalide.
+///
+/// C'est aussi le point de passage de TOUS les endpoints authentifiés : le plafond de
+/// requêtes par joueur est posé ici une fois (#151), plutôt que dans chaque handler — un
+/// endpoint ajouté demain est protégé sans rien écrire.
 struct AuthPlayer(String);
 
 #[async_trait]
@@ -331,6 +407,10 @@ impl FromRequestParts<AppState> for AuthPlayer {
             eprintln!("{} {} → auth refusée ({e:?})", parts.method, parts.uri);
             auth_status(e)
         })?;
+        if !state.limits.allow("api", &player_id, API_PER_MIN) {
+            eprintln!("{} {} → plafond atteint pour {player_id}", parts.method, parts.uri);
+            return Err(StatusCode::TOO_MANY_REQUESTS);
+        }
         Ok(AuthPlayer(player_id))
     }
 }
@@ -360,4 +440,23 @@ fn now_nanos() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Deux façons de casser la CSP sans s'en rendre compte : une valeur d'en-tête
+    /// invalide (`from_static` panique alors AU DÉMARRAGE, pas ici), et un durcissement
+    /// bien intentionné de `frame-ancestors` — qui rendrait l'Activity, donc le jeu
+    /// entier, impossible à afficher dans Discord.
+    #[test]
+    fn la_csp_est_valide_et_laisse_discord_encadrer_le_jeu() {
+        let v = HeaderValue::from_static(CSP);
+        assert!(v.to_str().is_ok(), "en-tête illisible");
+        assert!(CSP.contains("frame-ancestors https://discord.com"), "Discord doit rester autorisé à encadrer");
+        assert!(CSP.contains("https://*.discordsays.com"), "l'iframe sert depuis discordsays.com");
+        assert!(!CSP.contains("frame-ancestors 'none'"), "interdirait l'Activity");
+        assert!(CSP.contains("cdn.discordapp.com"), "sans ça, plus aucun avatar");
+    }
 }

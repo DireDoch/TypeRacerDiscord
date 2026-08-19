@@ -29,6 +29,9 @@ export class FreeInput implements InputController {
    *  "letter" bloque toute frappe fausse avant qu'elle n'entre au buffer ; "word"
    *  bloque l'espace tant que le mot courant n'est pas exact. Zen (target vide)
    *  n'a rien à être "juste" contre : jamais bloqué, quelle que soit la valeur. */
+  /** `targetWords` est gardé PAR RÉFÉRENCE, pas copié : un appelant dont le texte
+   *  s'allonge en cours de route (Spam, ADR 0016 — le mot répété sans fin) n'a qu'à
+   *  pousser dedans, sans reconstruire le contrôleur et donc sans perdre sa pile. */
   constructor(targetWords: string[], stopOnError: StopOnError = "off") {
     this.target = targetWords;
     this.stopOnError = targetWords.length > 0 ? stopOnError : "off";

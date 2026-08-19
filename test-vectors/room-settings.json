@@ -1,0 +1,46 @@
+{
+  "_comment": "Domaine de validité et valeurs par défaut des Réglages de salon (CONTEXT.md, issue #202). Lu par backend/src/ws/room_setting.rs ET frontend/src/core/net.test.ts — changer un palier ici, ou dans un seul des deux langages, doit faire échouer les DEUX côtés. Le client OFFRE ces valeurs (ui/lobby-rows.ts), le serveur les REVALIDE (RoomSetting::value_is_valid) : quand les deux divergent, le joueur clique et rien ne bouge, apply_setting répondant Rejected sans aucun événement de retour.",
+
+  "domains": {
+    "wordsLengths": [15, 30, 50],
+    "maxPlayers": [2, 3, 4, 5, 6, 7, 8],
+    "countdown": [3, 5, 7, 10],
+    "lavaInterval": [5, 10, 15, 20],
+    "spamThreshold": [10, 20, 30, 50],
+    "spamTimeCap": [15, 30, 45, 60],
+    "difficulties": ["normal", "master"],
+    "gameModes": ["normal", "floorIsLava", "spam"]
+  },
+
+  "_rejected_comment": "Valeurs hors palier : une frontière de confiance ne se teste que par ce qu'elle REFUSE. « expert » y figure parce qu'Expert n'est pas un Réglage de salon (ADR 0013) — sa condition de déclenchement est inatteignable en Race.",
+  "rejected": {
+    "wordsLengths": [0, 14, 31, 100],
+    "maxPlayers": [0, 1, 9, 999],
+    "countdown": [0, 4, 6, 60],
+    "lavaInterval": [0, 3, 7, 60],
+    "spamThreshold": [0, 17, 100],
+    "spamTimeCap": [0, 10, 90, 300],
+    "difficulties": ["expert"]
+  },
+
+  "_defaults_comment": "Ce qu'une Room neuve porte — et ce que le client affiche AVANT le premier RoomState. Le décompte est passé de 7 à 5 s (#185) sans que les trois replis du client suivent : c'est la dérive qui a motivé ce fichier (#202).",
+  "defaults": {
+    "wordsLength": 30,
+    "maxPlayers": 8,
+    "countdown": 5,
+    "lavaInterval": 10,
+    "spamThreshold": 20,
+    "spamTimeCap": 30,
+    "difficulty": "normal",
+    "gameMode": "normal",
+    "readyCheck": false,
+    "spamWord": null
+  },
+
+  "_spamWord_comment": "Le mot personnalisé de Spam (ADR 0016) : seule la FORME compte, pas le vocabulaire. Pas d'espace — il transformerait « un mot répété » en plusieurs mots cibles et casserait le comptage des répétitions.",
+  "spamWord": {
+    "maxLen": 20,
+    "valid": ["a", "l33t!", "Bonjour", "aaaaaaaaaaaaaaaaaaaa"],
+    "invalid": ["", "deux mots", " ", "saut\nligne", "tab\tulation", "aaaaaaaaaaaaaaaaaaaaa"]
+  }
+}

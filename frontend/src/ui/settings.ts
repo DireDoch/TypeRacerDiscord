@@ -208,6 +208,18 @@ export function sections(prefs: Preferences): SettingSection[] {
       ],
     },
     {
+      title: "Multijoueur",
+      rows: [
+        {
+          key: "hideRaceCode",
+          label: "Masquer le Code de partie",
+          description:
+            "Le code du salon reste caché jusqu'à ce que tu cliques dessus. Activé par défaut : sur un stream, le code s'échappe sans retour possible. Le bouton « Copier » reste disponible dans tous les cas.",
+          control: { kind: "toggle", value: prefs.hideRaceCode },
+        },
+      ],
+    },
+    {
       title: "Son",
       rows: [
         {
