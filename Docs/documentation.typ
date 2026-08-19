@@ -1710,8 +1710,13 @@ qui a rendu le débogage dans Discord possible.
 
 #capture(
   "bandeau-erreur",
-  [Le bandeau d'erreurs. Il n'existe que parce que la console n'existe pas :
-    dans le client Discord, c'est le seul canal de diagnostic disponible.],
+  [Le bandeau d'erreurs, recadré sur la bande elle-même — le reste de l'écran
+    est celui de la capture précédente, et le montrer deux fois n'apprendrait
+    rien. Ici le backend est arrêté : la promesse d'ouverture du WebSocket part
+    en rejet, personne ne la rattrape, et c'est cette bande qui le dit. Elle
+    n'existe que parce que la console n'existe pas — dans le client Discord,
+    c'est le seul canal de diagnostic disponible.],
+  largeur: 100%,
 )
 
 Pour une vraie console, il reste un chemin : ouvrir Discord *au navigateur* et
