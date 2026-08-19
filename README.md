@@ -44,7 +44,8 @@ Voir plus bas pour le détail (`.env`, build de prod, mise en place Discord).
 Prérequis : Rust (cargo) et Node (npm).
 
 ```sh
-# Un seul .env, À LA RACINE du dépôt — `dotenvy` remonte les dossiers parents.
+# UN SEUL .env, à la racine — backend et frontend le lisent tous les deux.
+# (`dotenvy` remonte les dossiers parents ; Vite y est pointé par `envDir`.)
 cp .env.example .env        # optionnel : clés Discord/API-Ninjas (voir le fichier)
 
 # Backend (port 8080) — mode dev automatique si les secrets Discord sont absents

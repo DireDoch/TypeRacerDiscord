@@ -76,7 +76,9 @@ cd ../backend && cargo build --release
 
 ⚠️ `VITE_DISCORD_CLIENT_ID` est **figée à la compilation** par Vite. Sans elle,
 le bundle part en mode dev : tous les joueurs deviennent `dev-player-1`, et ça
-ne se voit qu'une fois déployé.
+ne se voit qu'une fois déployé. Elle vit dans le `.env` de la racine, que Vite
+lit via `envDir` — la passer explicitement comme ci-dessus reste possible et
+prend le dessus.
 
 **b. Passer par une release** (reproductible, et jamais encore exercé)
 
