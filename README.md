@@ -24,6 +24,7 @@ runbook complet du portail Discord (tunnel, URL Mappings, App Testers, pièges).
 
 | Aussi | |
 | --- | --- |
+| [`Docs/DEPLOIEMENT.md`](Docs/DEPLOIEMENT.md) | héberger le jeu en permanence — tunnel nommé, services systemd, publication Discord |
 | [`CONTEXT.md`](CONTEXT.md) | le glossaire de domaine — autorité sur le nommage |
 | [`Docs/API.md`](Docs/API.md) | le contrat HTTP détaillé, corps de requête compris |
 | [`Docs/adr/`](Docs/adr/) | les 19 décisions d'architecture |
