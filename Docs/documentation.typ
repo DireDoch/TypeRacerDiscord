@@ -1969,15 +1969,19 @@ proxy inverse devant, et c'est un choix à poser explicitement.
 
 #capture(
   "ci-jobs",
-  [Les trois travaux verts sur une poussée. Le troisième n'apparaît que sur la
-    branche principale.],
+  [Une poussée sur la branche principale, telle qu'elle s'affiche réellement :
+    `frontend` et `backend` au vert, et *rien d'autre*. Le troisième travail est
+    bien déclaré dans le fichier de workflow, mais aucune exécution du dépôt ne
+    l'a jamais montré — voir @limites. Le champ « Artifacts » vide raconte la
+    même chose.],
 )
 
 #capture(
   "release",
-  [Une version publiée avec son archive. Les notes viennent du fichier de
-    changements du dépôt, pas des titres de commits : une version parle au
-    joueur.],
+  [Une version publiée. Les notes viennent du fichier de changements du dépôt et
+    non des titres de commits — une version parle au joueur, et cela se voit.
+    L'archive, elle, n'y est pas : les trois versions publiées sont antérieures
+    au travail qui devait la produire.],
 )
 
 == Méthode : le modèle de domaine fait autorité sur le nommage
@@ -3007,7 +3011,7 @@ d'identité réel, qui exigent tous un client Discord et un tunnel. Et elle ne
 compile pas ce PDF. Ces vérifications-là sont manuelles, et le sont assumément :
 les automatiser demanderait un client Discord sur un runner, ce qui n'existe pas.
 
-= Limites connues et suites
+= Limites connues et suites <limites>
 
 Ce que le projet ne fait pas, ou fait avec une réserve. Aucune de ces limites
 n'est une surprise : chacune est une conséquence assumée d'un choix décrit plus
@@ -3018,6 +3022,14 @@ haut.
   dans Discord, avatars affichés, aucune violation en console — demandent une
   session de test manuelle dans le client Discord. C'est la seule issue encore
   ouverte du dépôt.
+/ La publication automatisée n'a jamais publié : le travail `release` est écrit,
+  déclaré, et dépend bien des deux autres — mais aucune exécution du dépôt ne
+  l'a jamais fait tourner. Les trois versions publiées (`v0.0.1` à `v0.0.3`)
+  sont antérieures à l'issue #117 qui l'a ajouté, et ne portent donc aucune
+  archive. Le mécanisme est en place et sa garde fonctionne ; ce qui manque est
+  la première version qui la franchisse. C'est aussi pour cette raison que les
+  deux captures de cette section montrent deux travaux et une version sans
+  archive, et non ce que la mécanique produira.
 / Le tunnel change d'adresse : un tunnel rapide `cloudflared` ne garde pas son
   URL, et l'URL Mapping du portail Discord doit être remis à jour à la main à
   chaque session de test. Un tunnel nommé, ou un vrai nom de domaine, réglerait
