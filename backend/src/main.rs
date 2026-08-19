@@ -63,7 +63,9 @@ struct AppState {
 
 #[tokio::main]
 async fn main() {
-    // Charge backend/.env si présent (sinon on lit l'environnement du process tel quel).
+    // Charge le `.env` du projet si présent — `dotenvy` cherche dans le dossier courant
+    // puis remonte les parents, donc le `.env` de la RACINE est trouvé depuis `backend/`.
+    // Sinon on lit l'environnement du process tel quel.
     let _ = dotenvy::dotenv();
 
     let pool = store::init_pool().await;

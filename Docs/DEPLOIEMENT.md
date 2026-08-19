@@ -230,7 +230,7 @@ apparaître.
 ## 6. Avant d'ouvrir aux joueurs
 
 - [ ] **Faire tourner les secrets Discord.** Ils ont traîné en clair dans
-      `backend/.env` sur la machine de développement. Le fichier n'a jamais été
+      `backend/.env` sur la machine de développement (ce fichier a depuis été fusionné dans le `.env` de la racine). Le fichier n'a jamais été
       committé (il est dans `.gitignore`), mais un secret qui a été exposé se
       remplace : *OAuth2 → Reset Secret*, puis mettre à jour
       `/etc/typeracer/env` seulement.

@@ -44,9 +44,11 @@ Voir plus bas pour le détail (`.env`, build de prod, mise en place Discord).
 Prérequis : Rust (cargo) et Node (npm).
 
 ```sh
+# Un seul .env, À LA RACINE du dépôt — `dotenvy` remonte les dossiers parents.
+cp .env.example .env        # optionnel : clés Discord/API-Ninjas (voir le fichier)
+
 # Backend (port 8080) — mode dev automatique si les secrets Discord sont absents
 cd backend
-cp .env.example .env        # optionnel : clés Discord/API-Ninjas (voir le fichier)
 cargo run
 
 # Frontend (port 5173, proxy /api /token /ws → 8080) — dans un 2e terminal
@@ -106,7 +108,7 @@ de tous ses membres à chaque action sensible). Sur <https://discord.com/develop
 
 1. **General Information** : Application ID (= client id, public) ; liens Conditions/
    Confidentialité → `TERMS.md` / `PRIVACY.md` du dépôt GitHub.
-2. **OAuth2** : Reset Secret (→ `backend/.env` uniquement) ; Redirect `https://127.0.0.1`.
+2. **OAuth2** : Reset Secret (→ `.env` de la racine uniquement) ; Redirect `https://127.0.0.1`.
 3. **Activities** : Enable + URL Mappings (voir tunnel ci-dessous).
 4. **Installation** : Guild Install → ouvrir le lien d'installation avec le compte admin
    du serveur → Autoriser.
