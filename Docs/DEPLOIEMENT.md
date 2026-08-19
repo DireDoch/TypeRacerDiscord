@@ -100,49 +100,58 @@ publiée. La première release réelle sera aussi le premier test de la chaîne.
 
 ### Les secrets
 
-```sh
-sudo install -d -m 0755 /etc/typeracer
-sudo tee /etc/typeracer/env >/dev/null <<'EOF'
-DISCORD_CLIENT_ID=…
-DISCORD_CLIENT_SECRET=…
-APININJAS_API_KEY=…
-STATIC_DIR=/srv/typeracer/dist
-DATABASE_URL=sqlite:/var/lib/typeracer/typeracer.db?mode=rwc
-PORT=8080
-EOF
-sudo chmod 600 /etc/typeracer/env
-sudo install -d -o typeracer -g typeracer /var/lib/typeracer
-```
-
-`DATABASE_URL` en **chemin absolu** : sinon la base est créée dans le dossier
-courant du service, qui n'est pas celui auquel tu penses.
+Rien à faire : le binaire lit le `.env` de la racine lui-même. `dotenvy` cherche
+`.env` dans le dossier courant puis remonte les parents, et l'unité pose
+`WorkingDirectory` dans `backend/`. Pas d'`EnvironmentFile` à maintenir en
+double — et pas de risque que systemd et `dotenvy` interprètent différemment la
+même ligne.
 
 ### `typeracer.service`
 
+Le service tourne **depuis le dépôt**, sous le compte `anthonyb`. C'est le plus
+court chemin vers un jeu qui tourne, et c'est assumé : le mode de déploiement du
+projet est une machine personnelle avec un tunnel dessus, pas une flotte.
+
 ```ini
 [Unit]
-Description=TypeRacerDiscord — backend
+Description=TypeRacerDiscord — backend (sert aussi le build du frontend)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=typeracer
-WorkingDirectory=/srv/typeracer
-EnvironmentFile=/etc/typeracer/env
-ExecStart=/srv/typeracer/typeracer-discord-backend
+User=anthonyb
+Group=anthonyb
+
+# WorkingDirectory dans backend/ : deux choses en dépendent.
+#   - `dotenvy` cherche .env ici PUIS remonte les parents → trouve celui de la racine
+#   - STATIC_DIR vaut ../frontend/dist par défaut → le build de Vite
+WorkingDirectory=/home/anthonyb/Documents/Projects/DiscordGames/TypeRacerDiscord/backend
+ExecStart=/home/anthonyb/Documents/Projects/DiscordGames/TypeRacerDiscord/backend/target/release/typeracer-discord-backend
+
+# on-failure et NON always : les Rooms vivent en mémoire, un redémarrage éjecte
+# toute course en cours. On relance sur plantage, jamais par confort.
 Restart=on-failure
 RestartSec=5
 
-# Le binaire n'a besoin de rien d'autre que sa base.
 NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/lib/typeracer
 
 [Install]
 WantedBy=multi-user.target
+```
+
+Ce que ça implique, et qu'il faut savoir : **le service sert ce qu'il y a dans le
+dépôt**. Un `git checkout` ou un `cargo build` change ce qui tourne. Pour isoler,
+il faudrait copier le binaire et `dist/` dans `/srv/typeracer/` et créer un
+compte de service — utile le jour où le dépôt bouge pendant que des gens jouent,
+inutile avant.
+
+Le binaire doit exister avant d'activer le service :
+
+```sh
+cd frontend && npm run build       # VITE_DISCORD_CLIENT_ID vient du .env racine
+cd ../backend && cargo build --release
 ```
 
 ### `cloudflared.service`
@@ -163,8 +172,9 @@ sudo cloudflared service install
 ### Démarrer
 
 ```sh
+sudo cp /tmp/typeracer.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now typeracer cloudflared
+sudo systemctl enable --now typeracer
 systemctl status typeracer cloudflared
 journalctl -u typeracer -f
 ```
