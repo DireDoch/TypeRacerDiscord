@@ -42,12 +42,13 @@
 /// texte, pas une forme vectorielle composable dans le repère de `scene()`. Se
 /// place à côté d'un `canvas()`, jamais dedans.
 #let logo(taille-texte: 1.4cm) = {
-  // Pile de repli, et non une seule famille : c'est celle de `--font-mono` dans
-  // `style.css`. « JetBrainsMono NF » n'est installée que sur la machine qui a
-  // exporté les PNG ; ailleurs Typst retombait sur la SÉRIF par défaut et le
-  // wordmark cessait d'être en chasse fixe — c'est-à-dire cessait d'être celui
-  // du jeu. Consolas est le repli que le CSS nomme déjà.
-  set text(font: ("JetBrainsMono NF", "JetBrains Mono", "Consolas"), weight: "bold", size: taille-texte)
+  // Pile de repli, et non une seule famille : ailleurs que sur la machine qui a
+  // exporté les PNG, Typst retombait sur la SÉRIF par défaut et le wordmark
+  // cessait d'être en chasse fixe — c'est-à-dire cessait d'être celui du jeu.
+  // Les replis sont choisis parmi les monospaces réellement installées, pas
+  // parmi celles que `style.css` nomme : le CSS nomme des polices Windows, et
+  // un repli absent est exactement le bug qu'on corrige ici.
+  set text(font: ("JetBrainsMono NF", "Hack", "DejaVu Sans Mono"), weight: "bold", size: taille-texte)
   stack(
     dir: ltr,
     spacing: taille-texte * 0.12,

@@ -1,6 +1,34 @@
 # TypeRacerDiscord
 A embedded game for playing with your friend in discord
 
+## Documentation
+
+**[`Docs/documentation.pdf`](Docs/documentation.pdf)** — la documentation technique du
+projet : ce que le jeu fait, comment chaque bloc a été construit, et comment le système
+tient debout. Deux versions, même source :
+
+| Fichier | Thème | Pour |
+| --- | --- | --- |
+| [`Docs/documentation.pdf`](Docs/documentation.pdf) | sombre | la lecture à l'écran |
+| [`Docs/documentation-clair.pdf`](Docs/documentation-clair.pdf) | clair | l'impression |
+
+Source Typst unique dans [`Docs/documentation.typ`](Docs/documentation.typ) : une
+variable décide du thème, tout le reste en dérive. Recompiler les deux :
+
+```sh
+./Docs/build.sh
+```
+
+Ce README garde ce que le PDF ne couvre pas volontairement : la mise en place locale et le
+runbook complet du portail Discord (tunnel, URL Mappings, App Testers, pièges).
+
+| Aussi | |
+| --- | --- |
+| [`Docs/DEPLOIEMENT.md`](Docs/DEPLOIEMENT.md) | héberger le jeu en permanence — tunnel nommé, services systemd, publication Discord |
+| [`CONTEXT.md`](CONTEXT.md) | le glossaire de domaine — autorité sur le nommage |
+| [`Docs/API.md`](Docs/API.md) | le contrat HTTP détaillé, corps de requête compris |
+| [`Docs/adr/`](Docs/adr/) | les 19 décisions d'architecture |
+
 ## Démarrage rapide
 
 ```sh
@@ -16,9 +44,12 @@ Voir plus bas pour le détail (`.env`, build de prod, mise en place Discord).
 Prérequis : Rust (cargo) et Node (npm).
 
 ```sh
+# UN SEUL .env, à la racine — backend et frontend le lisent tous les deux.
+# (`dotenvy` remonte les dossiers parents ; Vite y est pointé par `envDir`.)
+cp .env.example .env        # optionnel : clés Discord/API-Ninjas (voir le fichier)
+
 # Backend (port 8080) — mode dev automatique si les secrets Discord sont absents
 cd backend
-cp .env.example .env        # optionnel : clés Discord/API-Ninjas (voir le fichier)
 cargo run
 
 # Frontend (port 5173, proxy /api /token /ws → 8080) — dans un 2e terminal
@@ -34,8 +65,8 @@ exige `APININJAS_API_KEY` (sinon 502 → le Mode Quotes affiche une erreur).
 ## Tests automatisés
 
 ```sh
-cd frontend && npx vitest run   # 28 tests (domaine TS = référence de l'algo)
-cd backend  && cargo test       # 13 tests (parité Rust + store SQLite)
+cd frontend && npx vitest run   # 382 tests (domaine TS = référence de l'algo)
+cd backend  && cargo test       # 159 tests (parité Rust + store SQLite)
 ```
 
 ## Test manuel
@@ -78,7 +109,7 @@ de tous ses membres à chaque action sensible). Sur <https://discord.com/develop
 
 1. **General Information** : Application ID (= client id, public) ; liens Conditions/
    Confidentialité → `TERMS.md` / `PRIVACY.md` du dépôt GitHub.
-2. **OAuth2** : Reset Secret (→ `backend/.env` uniquement) ; Redirect `https://127.0.0.1`.
+2. **OAuth2** : Reset Secret (→ `.env` de la racine uniquement) ; Redirect `https://127.0.0.1`.
 3. **Activities** : Enable + URL Mappings (voir tunnel ci-dessous).
 4. **Installation** : Guild Install → ouvrir le lien d'installation avec le compte admin
    du serveur → Autoriser.

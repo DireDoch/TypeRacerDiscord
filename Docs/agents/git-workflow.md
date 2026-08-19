@@ -66,7 +66,7 @@ merges below safe — they move `main` without publishing anything.
 published bundle silently falls into dev mode — no Embedded App SDK handshake, every
 player becomes `dev-player-1`, and the deployer cannot fix it because the value is
 compiled in. The job refuses to build rather than ship that. The client id is public (it
-sits in cleartext in `frontend/.env.example`); only `DISCORD_CLIENT_SECRET` is a secret,
+sits in cleartext in `.env.example` at the repo root); only `DISCORD_CLIENT_SECRET` is a secret,
 and it stays backend-side. Set it once:
 
 ```

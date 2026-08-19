@@ -161,7 +161,7 @@ jobs:
       # L'archive serait inutilisable comme Activity, et le déployeur ne pourrait rien y
       # faire — la valeur est compilée dedans. `.env` étant gitignoré, la CI ne l'a pas :
       # elle vient d'une variable de dépôt. Le client id est PUBLIC (il est déjà en clair
-      # dans frontend/.env.example) — ce n'est pas un secret, seul le client_secret en est
+      # dans .env.example à la racine) — ce n'est pas un secret, seul le client_secret en est
       # un et il reste côté backend.
       - name: Le client id Discord est-il configuré ?
         if: steps.gate.outputs.publish == 'true'

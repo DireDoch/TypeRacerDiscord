@@ -430,7 +430,7 @@ Ce qui est câblé et testé, par couche. Contrat détaillé : `Docs/API.md`.
   portent une CSP, `nosniff` et `no-referrer` (#152) — la CSP **autorise explicitement
   l'encadrement par Discord** (`frame-ancestors`), l'Activity n'étant qu'une iframe : la
   durcir sur ce point rendrait le jeu invisible. `dotenvy` charge
-  `backend/.env` (sans écraser l'env du shell). Port configurable via `PORT` (défaut 8080).
+  `.env` de la racine — `dotenvy` remonte les dossiers parents (sans écraser l'env du shell). Port configurable via `PORT` (défaut 8080).
 - `ws/` : Phase 2 **livrée** — Rooms indexées par **clé** (salon vocal *ou* Code de partie,
   ADR 0008 : `JoinChannel` crée à la volée, `CreateRoom` tire un code de 5 caractères,
   `JoinCode` ne crée jamais et répond `RoomNotFound`), plafond de 8 présents (`RoomFull`),
