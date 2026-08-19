@@ -13,7 +13,7 @@ un problème de code.
 
 | Bloqueur | Pourquoi | Section |
 | --- | --- | --- |
-| Le **quick tunnel** change d'URL à chaque redémarrage | L'URL Mapping Discord se remet à la main. Un redémarrage de nuit = jeu cassé au matin | [Tunnel nommé](#1-le-tunnel-nommé--le-vrai-préalable) |
+| ~~Le **quick tunnel** change d'URL~~ | **Réglé** — tunnel nommé sur `typperacer.uk` | [Tunnel nommé](#1-le-tunnel-nommé--fait) |
 | Rien ne **redémarre tout seul** | `cargo run` dans un terminal meurt avec la session SSH | [Les deux services](#2-les-deux-services-systemd) |
 | L'Activity n'est **pas publiée** | Seuls les App Testers la voient dans le menu 🚀 | [Publication](#5-côté-discord--qui-peut-jouer) |
 
@@ -23,42 +23,49 @@ pas de serveur frontend : le binaire Rust sert lui-même le build de Vite. Le
 
 ---
 
-## 1. Le tunnel nommé — le vrai préalable
+## 1. Le tunnel nommé — fait
 
-Un `cloudflared tunnel --url …` tire une adresse au hasard à chaque lancement.
-Un **tunnel nommé** garde la sienne : l'URL Mapping Discord se règle une fois et
-plus jamais. Il faut un compte Cloudflare et un domaine (le domaine peut être
-acheté chez eux, ~10 $/an).
+Le domaine est **`typperacer.uk`** (Cloudflare Registrar) et le tunnel est en
+place. Pour mémoire, la séquence qui a été jouée :
 
 ```sh
-cloudflared tunnel login                        # ouvre le navigateur, choisir le domaine
-cloudflared tunnel create typeracer             # crée le tunnel + son fichier d'identifiants
-cloudflared tunnel route dns typeracer typeracer.tondomaine.tld
+cloudflared tunnel login            # → ~/.cloudflared/cert.pem
+                                    #   ⚠️ demande de CHOISIR la zone dans le navigateur
+cloudflared tunnel create typperacer
+cloudflared tunnel route dns typperacer typperacer.uk
 ```
 
-`~/.cloudflared/config.yml` :
+`login` est l'étape que le message d'erreur ne nomme pas : sans `cert.pem`,
+`create` échoue avec « Cannot determine default origin certificate path ». Et
+`login` exige un domaine déjà **Active** dans le compte Cloudflare — c'est là
+que se paie le « jouable n'importe quand ».
+
+| | |
+| --- | --- |
+| Tunnel | `typperacer` — `c0221796-c79e-4bbd-a0ba-a3a22d293b66` |
+| Hostname | `typperacer.uk` (apex, CNAME aplati par Cloudflare) |
+| Identifiants | `~/.cloudflared/c0221796-….json` — **secret**, ne jamais committer |
+| Config | `~/.cloudflared/config.yml` |
 
 ```yaml
-tunnel: typeracer
-credentials-file: /home/anthonyb/.cloudflared/<UUID>.json
+tunnel: c0221796-c79e-4bbd-a0ba-a3a22d293b66
+credentials-file: /home/anthonyb/.cloudflared/c0221796-c79e-4bbd-a0ba-a3a22d293b66.json
 
 ingress:
-  - hostname: typeracer.tondomaine.tld
+  - hostname: typperacer.uk
     service: http://localhost:8080
-  - service: http_status:404
+  - service: http_status:404      # attrape-tout OBLIGATOIRE
 ```
 
-Test avant de continuer :
+Sans la règle attrape-tout finale, `cloudflared` refuse de démarrer.
 
-```sh
-cloudflared tunnel run typeracer
+Vérifié de bout en bout, tunnel et backend lancés à la main :
+
 ```
-
-> **Sans domaine ?** Un quick tunnel peut tenir si tu acceptes de remettre
-> l'URL Mapping à chaque redémarrage. Ce n'est pas compatible avec « jouable
-> n'importe quand ».
-
----
+GET https://typperacer.uk/api/health  → 200
+GET https://typperacer.uk/            → 200   (le jeu)
+bundle servi                          → porte VITE_DISCORD_CLIENT_ID
+```
 
 ## 2. Les deux services systemd
 
@@ -140,14 +147,18 @@ WantedBy=multi-user.target
 
 ### `cloudflared.service`
 
-`cloudflared` pose son unité tout seul :
+`cloudflared` pose son unité tout seul, mais il lit `/etc/cloudflared/config.yml`
+et non celui du dossier personnel — il faut donc y recopier les deux fichiers et
+corriger le chemin `credentials-file` :
 
 ```sh
+sudo install -d -m 0755 /etc/cloudflared
+sudo cp ~/.cloudflared/config.yml /etc/cloudflared/
+sudo cp ~/.cloudflared/c0221796-c79e-4bbd-a0ba-a3a22d293b66.json /etc/cloudflared/
+sudo sed -i 's|/home/anthonyb/.cloudflared|/etc/cloudflared|' /etc/cloudflared/config.yml
+sudo chmod 600 /etc/cloudflared/c0221796-*.json
 sudo cloudflared service install
 ```
-
-Il lit `/etc/cloudflared/config.yml` — y copier le `config.yml` et le fichier
-d'identifiants créés plus haut.
 
 ### Démarrer
 
@@ -202,8 +213,8 @@ C'est ici que se joue vraiment « n'importe quand ».
 
 ### L'URL Mapping (une fois, grâce au tunnel nommé)
 
-**Activities → URL Mappings** : Prefix `/`, Target `typeracer.tondomaine.tld`
-(**sans** `https://`) → Save.
+**Activities → URL Mappings** : Prefix `/`, Target `typperacer.uk`
+(**sans** `https://`) → Save. Grâce au tunnel nommé, c'est la dernière fois.
 
 ### Tant que l'app n'est pas publiée
 
